@@ -54,6 +54,7 @@ import {
   findHangarEntry,
   hangarPermanentLevels,
   normalisePermanentLevels,
+  ownedLevelBearingPowerUpLevels,
   resolveActiveHull,
   resolveActiveLoadout,
   type PermanentUpgradeLevels,
@@ -359,9 +360,11 @@ function carriedWeaponLevels(
  * The hangar's bought **permanent levels** (AH-0MWI5AG1X0007XZH) travel with
  * the loadout: `weaponLevels` names one row per carried weapon (base `1` when
  * the hangar never upgraded it, the bought absolute level otherwise) and
- * `powerUpLevels` carries every persisted
- * level-bearing power-up level, so {@link applyHangarWarDeployment} can grant
- * exactly the levels the player bought.
+ * `powerUpLevels` carries the **selected** level-bearing power-ups (the
+ * `activeLoadout.powerUps` tri-state — absent installs every owned kind, `[]`
+ * installs none, a list installs exactly those), so
+ * {@link applyHangarWarDeployment} can grant exactly the levels the player
+ * bought and chose to install.
  *
  * @param payload — the persistent war payload (never mutated).
  * @param options — target hex, catalogue and seed overrides.
@@ -386,9 +389,18 @@ export function buildHangarDeployment(
   const startLevel = deploymentLevelForAggression(aggression);
   const hullId = resolveActiveHull(payload.hangar);
   const hull = resolveHullDefinition(hullId, catalogue);
-  const loadout = resolveActiveLoadout(payload.hangar);
+  const loadout = resolveActiveLoadout(payload.hangar, catalogue);
   const startingWeapons = resolveStartingWeapons(loadout.startingWeapons, catalogue);
   const levels = hangarPermanentLevels(payload.hangar);
+  // The selected power-ups are the deployment's grant list (tri-state: absent =
+  // every owned level-bearing kind, `[]` = none, a list = exactly those). Each
+  // selected id carries its permanent level (base `1` when never upgraded).
+  const powerUpLevelsById = new Map(
+    ownedLevelBearingPowerUpLevels(payload.hangar).map((row) => [
+      row.id as string,
+      row.level,
+    ]),
+  );
   const seed = normaliseSeed(
     options.seed
       ?? payload.seed + aggression * 104729 + payload.ring.ringIndex,
@@ -404,7 +416,10 @@ export function buildHangarDeployment(
     speedMultiplier: hull?.runStats.speedMultiplier ?? 1,
     startingWeapons,
     weaponLevels: carriedWeaponLevels(startingWeapons, levels),
-    powerUpLevels: levels.powerUps.map((row) => ({ ...row })),
+    powerUpLevels: (loadout.powerUps ?? []).map((id) => ({
+      id: id as PowerUpId,
+      level: powerUpLevelsById.get(id) ?? 1,
+    })),
     modifiers: [...loadout.modifiers],
     // A detached copy: the run resolves captures/ticks against this war, and a
     // caller must never see its own payload mutated by a deployment.
@@ -579,6 +594,28 @@ export function applyHullSpeedToShipConfig(
 }
 
 /**
+ * The combined weapon + power-up ids a deployment actually admits under the
+ * shared six-slot cap, in grant order (weapons first, then power-ups).
+ *
+ * This is the **one** cap predicate the grant and the hangar screen both use:
+ * `applyHangarWarDeployment` grants exactly these ids, and
+ * `buildHangarPowerUpOptions` marks a row installed only when it appears here,
+ * so the displayed loadout can never differ from the flown one (assumption A3,
+ * AH-0MVVF0POV001JNKX).
+ *
+ * @param deployment — the deployment to trim (never mutated).
+ * @returns the admitted ids in grant order.
+ */
+export function admittedDeploymentDropIds(
+  deployment: HangarWarDeployment,
+): string[] {
+  return capDropIdsToSlotPool([
+    ...deployment.startingWeapons,
+    ...deployment.powerUpLevels.map((row) => row.id),
+  ]);
+}
+
+/**
  * Applies a deployment to play state through existing shared seams: the
  * hull's starting lives, the carried weapons and the hangar's bought
  * **permanent levels**.
@@ -642,11 +679,9 @@ export function applyHangarWarDeployment(
 
   // One cap for the whole pre-grant list: the six slots are shared between
   // weapon and power-up kinds, so a deployment can never start a run over the
-  // cap. Weapons come first, preserving today's trimming order.
-  const admitted = capDropIdsToSlotPool([
-    ...deployment.startingWeapons,
-    ...deployment.powerUpLevels.map((row) => row.id),
-  ]);
+  // cap. Weapons come first, preserving today's trimming order. The hangar
+  // screen reads the same helper, so display equals grant.
+  const admitted = admittedDeploymentDropIds(deployment);
 
   for (const id of admitted) {
     if (carried.has(id)) {

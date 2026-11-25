@@ -68,6 +68,7 @@ import {
   UPGRADE_STAT_BUCKETS,
   currentUpgradeLevel,
   hangarPermanentLevels,
+  ownedLevelBearingPowerUpLevels,
   ownsEntry,
   type PermanentUpgradeLevels,
 } from './hangarEconomy';
@@ -222,16 +223,15 @@ function powerUpCatalogueOrder(): ReadonlyMap<string, number> {
 /**
  * The granted power-up rows as suggestion rows, defensives first.
  *
- * The rows are exactly what `buildHangarDeployment` grants
- * (`hangarPermanentLevels(...).powerUps`), so the budget mirrors the grant.
+ * The rows are exactly the fleet's **installable** power-ups — the same union
+ * `buildHangarDeployment` grants when the selection is absent
+ * ({@link ownedLevelBearingPowerUpLevels}), so the budget mirrors the grant.
  * Ordering is defensive-first, then descending permanent level, then catalogue
  * order — deterministic and independent of the stored row order.
  */
-function buildPowerUpPicks(
-  levels: PermanentUpgradeLevels,
-): AutoLoadoutPick[] {
+function buildPowerUpPicks(hangar: HangarState): AutoLoadoutPick[] {
   const order = powerUpCatalogueOrder();
-  const ranked = levels.powerUps.map((row) => ({
+  const ranked = ownedLevelBearingPowerUpLevels(hangar).map((row) => ({
     row,
     defensive: UPGRADE_STAT_BUCKETS[row.id] === 'armour',
     order: order.get(row.id) ?? Number.MAX_SAFE_INTEGER,
@@ -296,7 +296,7 @@ export function selectAutoLoadout(
 
   // The power-up grants the deployment will make; the shared slot rule trims
   // them so the suggestion can never reserve more than the pool holds.
-  const orderedPowerUps = buildPowerUpPicks(levels);
+  const orderedPowerUps = buildPowerUpPicks(hangar);
   const admitted = new Set<string>(
     capDropIdsToSlotPool(orderedPowerUps.map((pick) => pick.id as PowerUpId)),
   );

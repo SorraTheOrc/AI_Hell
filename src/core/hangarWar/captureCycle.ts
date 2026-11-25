@@ -196,6 +196,10 @@ function cloneHangar(hangar: HangarState): HangarState {
     activeLoadout: {
       startingWeapons: [...hangar.activeLoadout.startingWeapons],
       modifiers: [...hangar.activeLoadout.modifiers],
+      // Preserve the power-up selection tri-state (absent stays absent).
+      ...(hangar.activeLoadout.powerUps !== undefined
+        ? { powerUps: [...hangar.activeLoadout.powerUps] }
+        : {}),
     },
   };
 }
@@ -227,6 +231,15 @@ function resolvedDeployedShip(
       modifiers: (ship.modifiers ?? []).filter(
         (id): id is string => toId(id) !== null,
       ),
+      // Power-ups are recorded but never spent, so the flown selection is
+      // carried through only for a faithful `DeployedShip` record.
+      ...(ship.powerUps !== undefined
+        ? {
+            powerUps: (ship.powerUps ?? []).filter(
+              (id): id is string => toId(id) !== null,
+            ),
+          }
+        : {}),
     };
   }
   const loadout = resolveActiveLoadout(hangar);
@@ -234,6 +247,7 @@ function resolvedDeployedShip(
     hullId: resolveActiveHull(hangar),
     startingWeapons: loadout.startingWeapons,
     modifiers: loadout.modifiers,
+    powerUps: loadout.powerUps ?? [],
   };
 }
 

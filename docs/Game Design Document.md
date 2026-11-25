@@ -2480,7 +2480,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle), `shareTelemetryDev` (dev-build only), `controlScheme` (per-player ship control scheme: `asteroids` (default) or `fourDirectional`; a missing, non-string or out-of-union value falls back to `asteroids`; overrides the `ship-config.csv` `controlScheme` for the player and applies to the running game on resume from the in-game Settings and to every subsequent run — see §2.2). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_checkpoint` | **Run checkpoint** (AH-0MVCRBTNF000DK51): auto-written after every mini-boss defeat. Stores the resume level (the level after the defeated mini-boss) and wave 1, plus lives, score, minerals, the **ship's hold capacity** the run had earned, permanent weapon/power-up levels and the run seed. The main menu shows **Continue — Level N** only when a usable checkpoint exists; resuming starts that level at wave 1 with the saved stats and RNG seed and **replays every stored permanent grant through the same shared grant seam live play uses** (AH-0MVSHI07B003BZIP), so the HUD upgrade list and the permanent effect state (shield armed with its absorption budget, permanent Bomb/Smart Bomb/Strike pulses, permanently-open Frenzy/Chrono windows, regenerating consumable charge pools (Shield absorptions, Thorn Field rams, Force Field reflects and Mystery UFO drone spawns — one event per charge — plus the single-use Phase Shift activation and Teleport warp, §4.4.3), Magnet/Mineral Scoop stacks) match a live run that earned the same upgrades — the restored lives are never inflated by the Extra Life replay. **The consumable charge pools and their in-flight recharge timers are persisted as an additive `consumablePools` field** (AH-0MVY3IGRC00954UD, **no schema bump — version stays v3**): one row per permanently owned consumable stores the current charge count and the remaining seconds of every per-charge recharge timer, and the single-use Teleport's readiness clock rides the same mechanism (its one timer; an empty list = ready). On resume the pools and timers are **re-applied through the one shared `PowerUpLevelStore` snapshot/restore seam after the permanent-grant replay and before the lives restore**, so the saved pool is authoritative (the replay's per-level grant can never leak into a saved empty pool) and the resumed run keeps regenerating mid-wait exactly where it stopped — the checkpoint is only a serialiser, never a second charge counter. A legacy payload without the field resumes exactly as before: each owned consumable keeps its single replayed grant and no timers (the additive field is optional for this reason). The save-side six-slot gate also drops a gated-out kind's pool, so a resumed run can never hold charges for a kind it does not own. Temporary field-pickup windows are intentionally **not** persisted and never re-open on resume. **The hold is restored through the shared hold model** (schema **v3**, AH-0MVT1DYO5004UC4P / AH-0MVT1DZRG000Q1US): Continue applies the persisted capacity first, then clamps the saved mineral count into `[0, capacity]` and clears overflow, so a resumed hold is never over-capacity and the next hold-full choice needs a real collection. A payload with no capacity field resumes at the first-hold capacity (its over-capacity minerals are still clamped). Schema **v3** drops the run-scoped `unlockedWeapons` field with the mini-boss wheel rework (AH-0MVLISU03006WDOD AC5), so **any payload stamped with another schema version is rejected as "no checkpoint"** — a pre-wheel save can never resume a run whose reward surface has changed underneath it. **Play Game (New Game)** clears it. Corrupt/invalid payloads load as "no checkpoint" (defensive parse, same fallback discipline as the leaderboard) |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
-| `ai_hell_hangar_war` | **Hangar-war payload** (AH-0MVUXC0M5007LCGV, §8.1): one versioned payload (version `1`) holding the persistent hangar (banked minerals and mini-boss cores, owned hulls/starting weapons/modifiers, the active hull and loadout) **and** the hex ring (ring index, per-hex state and queued attacks) plus the war seed and best score. One key so a defence result can never be written without the hangar state it depends on and a partial ring is never discarded. Defensive parse follows §6.6: an unidentifiable or explicitly unknown-version payload loads as "no save", a usable shape is salvaged field by field, and **migration is decided by field presence** — a hangar-only (pre-ring) save loads as hangar-at-last-valid-state with an empty ring and is stamped with the current version. Slow/failed reads and writes degrade silently and never crash the hangar screen; the store is injectable, so a future backend can replace `localStorage` behind the same `HangarWarStorage` interface |
+| `ai_hell_hangar_war` | **Hangar-war payload** (AH-0MVUXC0M5007LCGV, §8.1): one versioned payload (version `1`) holding the persistent hangar (banked minerals and mini-boss cores, owned hulls/starting weapons/modifiers/level-bearing power-ups, the active hull and loadout — including the optional tri-state `activeLoadout.powerUps` install selection, AH-0MWOV8SMI006W52Z) **and** the hex ring (ring index, per-hex state and queued attacks) plus the war seed and best score. One key so a defence result can never be written without the hangar state it depends on and a partial ring is never discarded. Defensive parse follows §6.6: an unidentifiable or explicitly unknown-version payload loads as "no save", a usable shape is salvaged field by field, and **migration is decided by field presence** — a hangar-only (pre-ring) save loads as hangar-at-last-valid-state with an empty ring and is stamped with the current version. Slow/failed reads and writes degrade silently and never crash the hangar screen; the store is injectable, so a future backend can replace `localStorage` behind the same `HangarWarStorage` interface |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.
 
@@ -3054,6 +3054,34 @@ joins `activeLoadout.startingWeapons` and a modifier joins
 toggles stay available, and a refused purchase changes neither ownership nor
 the loadout.
 
+> **Owned power-ups are installable, and only the selected ones deploy**
+> (AH-0MWOV8SMI006W52Z). A power-up is a permanent passive upgrade, not a
+> flown slot, so the deployment loadout gained an optional
+> `activeLoadout.powerUps: string[]` selection beside `startingWeapons` and
+> `modifiers`. It is **tri-state** and migrated by field presence (no schema
+> bump):
+>
+> - **absent** — a save written before the field, or one the player never
+>   curated — installs **every** owned level-bearing power-up, exactly as
+>   before, so an existing save keeps flying its old kit without a re-fit;
+> - **`[]`** — a deliberate empty selection installs none;
+> - **a list** — installs exactly its owned, catalogue-known, level-bearing
+>   ids (`resolveActiveLoadout` drops unowned, unknown and non-level-bearing
+>   ids, so a corrupt save can never install an unowned power-up).
+>
+> The hangar screen renders every owned level-bearing power-up (`POWER-UP`
+> rows beside the weapons) with the same equipped/off toggle as a weapon and a
+> `toggleHangarPowerUp` handler routed through the economy's `equipLoadout`.
+> The combined selected weapons **and** power-ups still pass through the one
+> shared six-slot trim (`capDropIdsToSlotPool`) at grant time, and the screen
+> model applies the **same** predicate, so the loadout the player sees is the
+> loadout the run flies: a selected kind trimmed by the cap renders `BLOCKED`
+> and non-actionable rather than silently differing. Installed power-ups are
+> **not** spent by `consumeDeployedShip` — they are permanent level purchases,
+> so the one-battle sortie still spends only the flown hull, weapons and
+> modifiers. The boss-aware auto-fit (§ *The auto-fit loadout rule*) installs
+> its granted power-ups through the same selection field.
+
 The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 (`src/core/hangarWar/hangarEconomy.ts`):
 
@@ -3170,8 +3198,12 @@ The suggestion is one shared, pure rule (`selectAutoLoadout` in
    shipped weapon descriptors (`aoe`, `orbit`, `splits`, `bounce`, `hitscan`,
    two or more distinct offset angles), with no second taxonomy.
 4. **Then at least one defensive power-up** — the owned level-bearing power-up
-   rows the deployment auto-grants, defensives (the shipped
-   `UPGRADE_STAT_BUCKETS` `armour` classification) first.
+   rows the deployment installs, defensives (the shipped
+   `UPGRADE_STAT_BUCKETS` `armour` classification) first. Applying the
+   suggestion writes those rows into the explicit `activeLoadout.powerUps`
+   selection, so the auto-loadout selector can install power-ups through the
+   same tri-state field a manual `POWER-UP` toggle writes
+   (AH-0MWOV8SMI006W52Z).
 5. **Then the highest permanent level** — the remaining neutral owned weapons
    fill by descending permanent level, catalogue order breaking ties.
 6. **Bounded by the shared six-slot cap** — every granted power-up row consumes

@@ -359,6 +359,7 @@ describe('active loadout resolution — owned entries only', () => {
     expect(resolveActiveLoadout(hangar)).toEqual({
       startingWeapons: ['wave_laser'],
       modifiers: ['hardened_plating'],
+      powerUps: [],
     });
   });
 
@@ -376,6 +377,7 @@ describe('active loadout resolution — owned entries only', () => {
     expect(resolveActiveLoadout(hangar)).toEqual({
       startingWeapons: [],
       modifiers: [],
+      powerUps: [],
     });
   });
 
@@ -388,6 +390,7 @@ describe('active loadout resolution — owned entries only', () => {
     expect(resolveActiveLoadout(hangar)).toEqual({
       startingWeapons: [],
       modifiers: [],
+      powerUps: [],
     });
   });
 
@@ -433,6 +436,7 @@ describe('active loadout resolution — owned entries only', () => {
     expect(resolveActiveLoadout(equipped)).toEqual({
       startingWeapons: [],
       modifiers: [],
+      powerUps: [],
     });
   });
 });
@@ -1941,6 +1945,9 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     expect(resolveActiveLoadout(consumed)).toEqual({
       startingWeapons: [],
       modifiers: [],
+      // Power-ups are permanent kinds, not spent by a sortie, so the surviving
+      // owned magnet still installs on the next deployment.
+      powerUps: ['magnet'],
     });
     expect(resolvePlayerStrength(consumed)).toBeGreaterThanOrEqual(
       MINIMUM_PLAYER_STRENGTH,

@@ -58,8 +58,13 @@
  * (AH-0MWI5AG1X0007XZH): absence reads as "no upgrade", so every owned kind
  * deploys at its base level `1`. The hangar's **saved ship configurations**
  * (`hangar.savedBuilds`) are the fifth (AH-0MWL8C6FE008G1E7): absent reads as
- * no saved builds, omitted on write when empty. All five are omitted on write
- * when they carry nothing, so a save round-trips byte-for-byte rather than
+ * no saved builds, omitted on write when empty. The deployment loadout's
+ * **power-up install selection** (`hangar.activeLoadout.powerUps`) is the sixth
+ * (AH-0MWOV8SMI006W52Z): absent reads as *"install every owned level-bearing
+ * power-up"* (today's pre-feature behaviour), `[]` is a deliberate empty
+ * selection, and a present list is filtered to owned level-bearing ids on
+ * resolve — so an old save round-trips byte-for-byte (absent stays absent) and
+ * no schema version bump is needed. All six are omitted on write when they carry nothing, so a save round-trips byte-for-byte rather than
  * gaining empty
  * fields.
  *
@@ -181,10 +186,23 @@ function toIdList(value: unknown): string[] {
 /** Parses the active loadout; a missing/wrong-shaped one is simply empty. */
 function parseLoadout(raw: unknown): HangarLoadout {
   const value = isRecord(raw) ? raw : {};
-  return {
+  const loadout: HangarLoadout = {
     startingWeapons: toIdList(value.startingWeapons),
     modifiers: toIdList(value.modifiers),
   };
+  // The power-up selection is the **fourth** additive, presence-migrated field
+  // family: a save written before it landed has no field, so it stays absent
+  // (never defaulted to `[]`) and absence reads as "install every owned". A
+  // present value — including a corrupt one, which `toIdList` collapses to
+  // `[]` — is an explicit selection, so a player can deliberately install none.
+  // No schema version bump is needed (the payload migrates by field presence).
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'powerUps') &&
+    value.powerUps !== undefined
+  ) {
+    loadout.powerUps = toIdList(value.powerUps);
+  }
+  return loadout;
 }
 
 /** One stored saved-build row, structurally validated but with raw level values. */

@@ -262,7 +262,12 @@ describe('decideHangarAction — cheapest useful unlock, seeded', () => {
     expect(action.kind).toBe('deployFromHangar');
     if (action.kind !== 'deployFromHangar') return;
     expect(action.hullId).toBe(broke.hangar.activeHull);
-    expect(action.loadout).toEqual(broke.hangar.activeLoadout);
+    // The resolved loadout carries the tri-state power-up selection; a fresh
+    // fleet owns none, so it resolves to an explicit empty list.
+    expect(action.loadout).toEqual({
+      ...broke.hangar.activeLoadout,
+      powerUps: [],
+    });
   });
 
   it('picks inside the cheapest price tier from the stored seed', () => {

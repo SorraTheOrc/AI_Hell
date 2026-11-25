@@ -28,6 +28,7 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { createSampleHangarWarPayload } from '../../core/hangarWar/fixtures';
+import { resolveActiveLoadout } from '../../core/hangarWar/hangarEconomy';
 import type { HangarWarPayload } from '../../core/hangarWar/types';
 import {
   addBackToIndexButton,
@@ -82,14 +83,19 @@ export function hangarSummaryLines(payload: HangarWarPayload): string[] {
   const { hangar, ring } = payload;
   const held = ring.hexes.filter((hex) => hex.held).length;
   const loadout = hangar.activeLoadout;
+  const resolved = resolveActiveLoadout(hangar);
   const weapons =
     loadout.startingWeapons.length > 0 ? loadout.startingWeapons.join(', ') : 'none';
   const modifiers =
     loadout.modifiers.length > 0 ? loadout.modifiers.join(', ') : 'none';
+  const powerUps =
+    (resolved.powerUps ?? []).length > 0
+      ? (resolved.powerUps ?? []).join(', ')
+      : 'none';
 
   return [
     `Banked salvage: ${hangar.bankedMinerals} minerals · ${hangar.bankedCores} cores`,
-    `Hull ${hangar.activeHull} · starting weapons ${weapons} · modifiers ${modifiers}`,
+    `Hull ${hangar.activeHull} · starting weapons ${weapons} · power-ups ${powerUps} · modifiers ${modifiers}`,
     `Ring ${ring.ringIndex} — ${held}/${ring.hexes.length} hexes held`,
     `Pending attacks: ${payload.pendingAttacks.length} · best score: ${payload.bestScore}`,
   ];

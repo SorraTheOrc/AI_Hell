@@ -110,6 +110,7 @@ import {
   hangarPermanentLevels,
   MAX_PERMANENT_LEVEL,
   MAX_SAVED_BUILD_NAME_LENGTH,
+  ownedLevelBearingPowerUpLevels,
   ownsEntry,
   resolveActiveHull,
   resolveActiveLoadout,
@@ -127,6 +128,7 @@ import type {
   HexRingState,
 } from '../../core/hangarWar/types';
 import {
+  admittedDeploymentDropIds,
   buildHangarDeployment,
   type HangarWarDeployment,
 } from './hangarDeployment';
@@ -145,6 +147,8 @@ import {
   resolveHexMatchup,
   type MatchupGlyph,
 } from '../../core/hangarWar/hexMatchup';
+import { capDropIdsToSlotPool } from '../../powerups/slots';
+import { POWER_UP_CATALOGUE } from '../../powerups/types';
 
 /** Title rendered by the hangar screen (asserted by tests). */
 export const HANGAR_SCREEN_TITLE = 'HANGAR WAR';
@@ -302,6 +306,42 @@ export interface HangarModifierOption {
   /** Full row text as rendered. */
   label: string;
   /** True when toggling this modifier would change the deployment. */
+  actionable: boolean;
+}
+
+/**
+ * One installed power-up option in the deployment selector.
+ *
+ * A power-up is a permanent passive kind, not a flown slot, so its row reports
+ * three facts rather than a boolean `equipped`:
+ *
+ * - `selected` — the kind is in the player's selection
+ *   (`activeLoadout.powerUps`, or the all-owned default when absent);
+ * - `equipped` — the kind is **actually installed**: it is selected *and* it
+ *   survives the shared six-slot trim, which is exactly the set the run
+ *   grants;
+ * - `blocked` — selected but trimmed away by the cap, rendered as a
+ *   non-actionable row so the display never silently differs from the grant
+ *   (assumption A3).
+ */
+export interface HangarPowerUpOption {
+  /** Row key (`power-up:<powerUpId>`). */
+  key: string;
+  /** Power-up id (the catalogue entry id). */
+  id: string;
+  /** Display name from the catalogue. */
+  name: string;
+  /** The permanent level the deployment grants (base `1` when unupgraded). */
+  level: number;
+  /** Whether the kind is in the player's selection. */
+  selected: boolean;
+  /** Whether the deployment actually installs the kind (selected and admitted). */
+  equipped: boolean;
+  /** Selected but trimmed away by the shared six-slot cap (non-actionable). */
+  blocked: boolean;
+  /** Full row text as rendered. */
+  label: string;
+  /** True when toggling this power-up would change the deployed build. */
   actionable: boolean;
 }
 
@@ -641,6 +681,11 @@ export interface HangarScreenModel {
   weaponOptions: HangarWeaponOption[];
   /** Permanent-modifier selector rows, in owned order. */
   modifierOptions: HangarModifierOption[];
+  /**
+   * Installed level-bearing power-up selector rows, in owned order (the
+   * weapon/modifier-style toggle list for the permanent power-up kinds).
+   */
+  powerUpOptions: HangarPowerUpOption[];
   /** The ▶ DEPLOY row (the deployment this loadout launches). */
   deployRow: HangarDeployRow;
   /**
@@ -711,6 +756,11 @@ function clonePayload(payload: HangarWarPayload): HangarWarPayload {
       activeLoadout: {
         startingWeapons: [...payload.hangar.activeLoadout.startingWeapons],
         modifiers: [...payload.hangar.activeLoadout.modifiers],
+        // Preserve the tri-state so an update can never materialise an absent
+        // selection or discard an explicit one.
+        ...(payload.hangar.activeLoadout.powerUps !== undefined
+          ? { powerUps: [...payload.hangar.activeLoadout.powerUps] }
+          : {}),
       },
       ...(payload.hangar.savedBuilds !== undefined
         ? {
@@ -1024,7 +1074,82 @@ export function buildHangarModifierOptions(
   return options;
 }
 
-/** Optional target knobs for {@link buildHangarDeployRow}. */
+/**
+ * Builds the power-up rows for the deployment selector (owned, level-bearing
+ * kinds only), marking each as installed, off or blocked by the shared cap.
+ *
+ * The displayed loadout must equal the granted one (assumption A3), so the
+ * installed/blocked split is read from **the same** deployment the run builds:
+ * `deployment.powerUpLevels` is the resolved selection and
+ * {@link admittedDeploymentDropIds} is the one six-slot trim the grant applies.
+ * An unselected kind that would not be admitted anyway is rendered
+ * non-actionable, so the player is never offered a toggle that changes
+ * nothing in the run.
+ *
+ * @param payload — the payload to present (never mutated).
+ * @param catalogue — the tree to resolve against (injectable for tests).
+ * @param deployment — the resolved deployment (built once by the model);
+ *   defaults to building it from `payload` so the function is total.
+ * @returns the power-up selector rows, in install order.
+ */
+export function buildHangarPowerUpOptions(
+  payload: HangarWarPayload,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  deployment?: HangarWarDeployment,
+): HangarPowerUpOption[] {
+  const owned = ownedLevelBearingPowerUpLevels(payload.hangar);
+  const selected = new Set(
+    resolveActiveLoadout(payload.hangar, catalogue).powerUps ?? [],
+  );
+  const resolved = deployment
+    ?? buildHangarDeployment(payload, { catalogue });
+  const admitted = new Set(admittedDeploymentDropIds(resolved));
+  const currentIds = [
+    ...resolved.startingWeapons,
+    ...resolved.powerUpLevels.map((row) => row.id),
+  ];
+
+  return owned.map((row) => {
+    const entry = findHangarEntry(row.id, catalogue);
+    // The hangar catalogue supplies the nicer display name for a sold kind; a
+    // hex-granted power-up falls back to its shipped catalogue name.
+    const name =
+      entry?.name
+      ?? POWER_UP_CATALOGUE[row.id]?.name
+      ?? row.id;
+    const isSelected = selected.has(row.id);
+    const equipped = admitted.has(row.id);
+    const blocked = isSelected && !equipped;
+    // An unselected kind is selectable only when adding it would actually be
+    // admitted; otherwise the toggle would change nothing in the run.
+    const addable = blocked
+      ? false
+      : equipped || currentIds.includes(row.id)
+        || admittedSetWith(currentIds, row.id).has(row.id);
+    const actionable = blocked ? false : addable;
+    const marker = blocked
+      ? ' — BLOCKED (SLOTS FULL)'
+      : equipped
+        ? ' — EQUIPPED'
+        : ' — OFF';
+    return {
+      key: `power-up:${row.id}`,
+      id: row.id,
+      name,
+      level: row.level,
+      selected: isSelected,
+      equipped,
+      blocked,
+      label: `POWER-UP ${name}${marker}`,
+      actionable,
+    };
+  });
+}
+
+/** The admitted set when `id` is appended to `ids` (one shared cap rule). */
+function admittedSetWith(ids: readonly string[], id: string): Set<string> {
+  return new Set(capDropIdsToSlotPool([...ids, id]));
+}
 export interface BuildHangarDeployRowOptions {
   /**
    * The hex the player chose on the map. Omitted/`null` keeps the existing
@@ -1109,7 +1234,8 @@ export function formatSalvageLine(payload: HangarWarPayload): string {
  * Builds the complete hangar-screen model (pure).
  *
  * Reading order is the focus order: the unlock tree first, then hulls, the
- * starting-weapon loadout, the modifiers and the saved builds, then the
+ * starting-weapon loadout (weapons then the installable `POWER-UP` rows), the
+ * modifiers and the saved builds, then the
  * `⚡ APPLY SUGGESTED BUILDOUT` row, the deployment, the map and the restart
  * rows. Only actionable rows enter the focus order (the buildout row always
  * is).
@@ -1139,6 +1265,18 @@ export function buildHangarScreenModel(
   const unlockRows = buildHangarUnlockRows(payload, catalogue, target);
   const hullOptions = buildHangarHullOptions(payload, catalogue);
   const weaponOptions = buildHangarWeaponOptions(payload, catalogue, target);
+  // The deployment the ▶ DEPLOY row describes, resolved once so the power-up
+  // rows' installed/blocked split is read from exactly the launch the run
+  // builds (`buildHangarDeployRow` resolves the same pure payload).
+  const deployment = buildHangarDeployment(payload, {
+    catalogue,
+    hexId: options.targetHexId ?? null,
+  });
+  const powerUpOptions = buildHangarPowerUpOptions(
+    payload,
+    catalogue,
+    deployment,
+  );
   // The suggestion is fitted against exactly the intel the screen publishes
   // (`bossIntel`), never a second target resolution, so the row's count and
   // the deployed loadout agree with the TARGET INTEL block above them.
@@ -1155,6 +1293,7 @@ export function buildHangarScreenModel(
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
     ...weaponOptions.filter((row) => row.actionable),
+    ...powerUpOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
     ...savedBuildRows.filter((row) => row.actionable),
     // The apply-suggested-buildout row sits with the loadout it replaces and
@@ -1176,6 +1315,7 @@ export function buildHangarScreenModel(
     unlockRows,
     hullOptions,
     weaponOptions,
+    powerUpOptions,
     modifierOptions,
     deployRow,
     suggestedLoadout,
@@ -1341,7 +1481,10 @@ export interface HangarBuildoutApplyResult {
  * `equipLoadout` path — no selection, matchup or ownership rule is re-derived
  * here, and the equipped list is filtered to owned entries by the economy
  * exactly as every manual toggle is. Modifiers are carried across untouched
- * (the suggestion only ever selects starting weapons).
+ * (the suggestion only ever selects starting weapons). The suggestion's
+ * **granted power-ups** become the explicit `activeLoadout.powerUps`
+ * selection, so the auto-loadout selector can install power-ups through the
+ * same tri-state field a manual toggle writes.
  *
  * The selector ignores the current loadout by design (it is a stable fixed
  * point), so a second apply reports `changed: false` and re-applying cannot
@@ -1362,20 +1505,25 @@ export function applyAutoLoadout(
   target: MatchupDefinition | null = null,
 ): HangarBuildoutApplyResult {
   const suggestion = selectAutoLoadout(payload, target, catalogue);
-  const current = resolveActiveLoadout(payload.hangar, catalogue).startingWeapons;
+  const current = resolveActiveLoadout(payload.hangar, catalogue);
   const next = clonePayload(payload);
   next.hangar = equipLoadout(payload.hangar, {
     startingWeapons: [...suggestion.startingWeapons],
     modifiers: payload.hangar.activeLoadout.modifiers,
+    powerUps: suggestion.grantedPowerUps.map((pick) => pick.id),
   });
-  const applied = resolveActiveLoadout(next.hangar, catalogue).startingWeapons;
+  const applied = resolveActiveLoadout(next.hangar, catalogue);
   return {
-    changed:
-      applied.length !== current.length
-      || applied.some((id, index) => id !== current[index]),
+    changed: !sameIds(applied.startingWeapons, current.startingWeapons)
+      || !sameIds(applied.powerUps ?? [], current.powerUps ?? []),
     suggestion,
     payload: next,
   };
+}
+
+/** Whether two id lists are equal in order and content. */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
 /**
@@ -1399,6 +1547,9 @@ export function toggleHangarWeapon(
   next.hangar = equipLoadout(payload.hangar, {
     startingWeapons: requested,
     modifiers: payload.hangar.activeLoadout.modifiers,
+    // Carry the raw tri-state through untouched so a weapon toggle never
+    // materialises an absent selection or drops an explicit one.
+    powerUps: payload.hangar.activeLoadout.powerUps,
   });
   const applied = resolveActiveLoadout(next.hangar).startingWeapons;
   return {
@@ -1429,10 +1580,65 @@ export function toggleHangarModifier(
   next.hangar = equipLoadout(payload.hangar, {
     startingWeapons: payload.hangar.activeLoadout.startingWeapons,
     modifiers: requested,
+    // Preserve the raw power-up tri-state across a modifier toggle.
+    powerUps: payload.hangar.activeLoadout.powerUps,
   });
   const applied = resolveActiveLoadout(next.hangar).modifiers;
   return {
     ok: equipped ? !applied.includes(modifierId) : applied.includes(modifierId),
+    reason: null,
+    payload: next,
+  };
+}
+
+/**
+ * Toggles one owned level-bearing power-up in the deployment selection (pure).
+ *
+ * The selection is read through `resolveActiveLoadout`, so the first toggle on
+ * a save without the field starts from **every owned power-up** (today's
+ * behaviour) and then writes an explicit list — deselecting one keeps the
+ * rest selected. The write routes through `equipLoadout`, which filters the
+ * list to owned, catalogue-known, level-bearing ids, so a corrupt or stale id
+ * can never be installed. An empty selection (`[]`) is legal: the player may
+ * deploy with no power-up installed.
+ *
+ * Toggling changes the **selection**, not the six-slot accounting; the
+ * deployment's shared cap still trims what the run actually grants, and the
+ * screen marks a selected-but-trimmed row `blocked` through the same rule.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param powerUpId — the owned power-up id to toggle.
+ * @returns the fresh payload and whether the requested change landed.
+ */
+export function toggleHangarPowerUp(
+  payload: HangarWarPayload,
+  powerUpId: string,
+): HangarUpdateResult {
+  const ownedPowerUps = ownedLevelBearingPowerUpLevels(payload.hangar).map(
+    (row) => row.id as string,
+  );
+  // An unowned/unknown/non-level-bearing id is a no-op that leaves the raw
+  // tri-state untouched (absent stays absent), so a stale UI can never
+  // materialise a selection from an id the economy would drop.
+  if (!ownedPowerUps.includes(powerUpId)) {
+    return { ok: false, reason: null, payload: clonePayload(payload) };
+  }
+  const current = resolveActiveLoadout(payload.hangar).powerUps ?? [];
+  const selected = current.includes(powerUpId);
+  const requested = selected
+    ? current.filter((id) => id !== powerUpId)
+    : [...current, powerUpId];
+  const next = clonePayload(payload);
+  next.hangar = equipLoadout(payload.hangar, {
+    startingWeapons: payload.hangar.activeLoadout.startingWeapons,
+    modifiers: payload.hangar.activeLoadout.modifiers,
+    powerUps: requested,
+  });
+  const applied = resolveActiveLoadout(next.hangar).powerUps ?? [];
+  return {
+    ok: selected
+      ? !applied.includes(powerUpId)
+      : applied.includes(powerUpId),
     reason: null,
     payload: next,
   };
@@ -1766,6 +1972,8 @@ export interface HangarScreenHandlers {
   onEquipHull(hullId: string): void;
   /** Toggle an owned starting weapon in the loadout. */
   onToggleWeapon(weaponId: string): void;
+  /** Toggle an owned level-bearing power-up in the deployment selection. */
+  onTogglePowerUp(powerUpId: string): void;
   /** Toggle an owned permanent modifier on the loadout. */
   onToggleModifier(modifierId: string): void;
   /**
@@ -1904,7 +2112,7 @@ const SECTION_Y = 118;
 const ROW_START_Y = 144;
 
 /** Vertical step between rows in either column. */
-export const HANGAR_ROW_STEP = 18;
+export const HANGAR_ROW_STEP = 16;
 
 /**
  * Y positions of the target-intel block (top-left, above the unlock tree).
@@ -1928,6 +2136,8 @@ export interface HangarRightColumnLayout {
   readonly hullRowY: readonly number[];
   readonly loadoutHeadingY: number;
   readonly weaponRowY: readonly number[];
+  /** Y of each installed power-up row (in the LOADOUT block, after weapons). */
+  readonly powerUpRowY: readonly number[];
   readonly modifierHeadingY: number;
   readonly modifierRowY: readonly number[];
   /** Y of the `SAVED BUILDS` heading (below the modifiers). */
@@ -1949,7 +2159,7 @@ export interface HangarRightColumnLayout {
 export function hangarRightColumnLayout(
   model: Pick<
     HangarScreenModel,
-    'hullOptions' | 'weaponOptions' | 'modifierOptions' | 'savedBuildRows'
+    'hullOptions' | 'weaponOptions' | 'powerUpOptions' | 'modifierOptions' | 'savedBuildRows'
   >,
 ): HangarRightColumnLayout {
   const hullRowY = model.hullOptions.map(
@@ -1960,8 +2170,17 @@ export function hangarRightColumnLayout(
   const weaponRowY = model.weaponOptions.map(
     (_, index) => loadoutHeadingY + 26 + index * HANGAR_ROW_STEP,
   );
+  // Power-ups share the LOADOUT block, listed after the weapons, so the extra
+  // section needs no second heading (the layout already holds a lot of rows).
+  const powerUpRowY = model.powerUpOptions.map(
+    (_, index) =>
+      loadoutHeadingY
+      + 26
+      + (model.weaponOptions.length + index) * HANGAR_ROW_STEP,
+  );
+  const loadoutRows = model.weaponOptions.length + model.powerUpOptions.length;
   const modifierHeadingY =
-    loadoutHeadingY + 26 + model.weaponOptions.length * HANGAR_ROW_STEP + 10;
+    loadoutHeadingY + 26 + loadoutRows * HANGAR_ROW_STEP + 10;
   const modifierRowY = model.modifierOptions.map(
     (_, index) => modifierHeadingY + 26 + index * HANGAR_ROW_STEP,
   );
@@ -1974,6 +2193,7 @@ export function hangarRightColumnLayout(
     hullRowY,
     loadoutHeadingY,
     weaponRowY,
+    powerUpRowY,
     modifierHeadingY,
     modifierRowY,
     savedBuildHeadingY,
@@ -1994,6 +2214,7 @@ export function hangarLowestRowY(model: HangarScreenModel): number {
     ...model.unlockRows.map((_, index) => hangarUnlockRowY(index)),
     ...right.hullRowY,
     ...right.weaponRowY,
+    ...right.powerUpRowY,
     ...right.modifierRowY,
     ...right.savedBuildRowY,
   ];
@@ -2264,6 +2485,22 @@ export function renderHangarScreen(
       option.matchup,
       handlers?.onToggleWeapon
         ? () => handlers.onToggleWeapon!(option.id)
+        : undefined,
+    );
+  });
+  // Power-ups share the LOADOUT block (labelled `POWER-UP`), so a permanent
+  // passive kind is toggled with the same affordance as a weapon without a
+  // second heading (the right column is height-constrained).
+  model.powerUpOptions.forEach((option, index) => {
+    addRow(
+      RIGHT_X,
+      right.powerUpRowY[index],
+      option.key,
+      option.label,
+      option.actionable,
+      null,
+      handlers?.onTogglePowerUp
+        ? () => handlers.onTogglePowerUp!(option.id)
         : undefined,
     );
   });

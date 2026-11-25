@@ -104,6 +104,7 @@ describe('GymHangar', () => {
       ...shipped.unlockRows.map((row) => row.key),
       ...shipped.hullOptions.map((option) => option.key),
       ...shipped.weaponOptions.map((option) => option.key),
+      ...shipped.powerUpOptions.map((option) => option.key),
       ...shipped.modifierOptions.map((option) => option.key),
       ...shipped.savedBuildRows.map((row) => row.key),
       shipped.buildoutRow.key,
@@ -114,6 +115,32 @@ describe('GymHangar', () => {
     // Read-only: no row is actionable, so none is interactive either.
     expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
     expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
+  });
+
+  it('renders the installable power-up rows from the same model, read-only (AH-0MWOV8SMI006W52Z)', async () => {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.unlockedPowerUps = ['bomb', 'magnet'];
+    payload.hangar.powerUpLevels = [
+      { id: 'bomb', level: 1 },
+      { id: 'magnet', level: 1 },
+    ];
+
+    const scene = await bootHangar({ payload });
+    const shipped = buildHangarScreenModel(payload);
+
+    // The gym model is the game's model, power-up rows included.
+    expect(scene.getModel()).toEqual(shipped);
+    expect(scene.getModel().powerUpOptions.map((option) => option.id)).toEqual([
+      'bomb',
+      'magnet',
+    ]);
+    // No handler supplies `onTogglePowerUp`, so the rows render read-only.
+    for (const id of ['bomb', 'magnet']) {
+      const row = scene.getRows().find((entry) => entry.key === `power-up:${id}`);
+      expect(row, `power-up row ${id}`).toBeDefined();
+      expect(row!.actionable).toBe(false);
+      expect(row!.text.input).toBeNull();
+    }
   });
 
   it('publishes the target intel through the shared model, read-only (AH-0MWMT4QXF0095CBN)', async () => {

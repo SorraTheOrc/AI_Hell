@@ -481,7 +481,14 @@ backend):
   "unlockedStartingWeapons": ["spread", "waveLaser"],
   "ownedModifiers": ["extra-life", "fast-recharge"],
   "activeHull": "hull-2",
-  "activeLoadout": { "startingWeapons": ["spread"], "modifiers": ["extra-life"] },
+  // `powerUps` is optional and tri-state (AH-0MWOV8SMI006W52Z): absent means
+  // "install every owned level-bearing power-up" (the pre-feature behaviour),
+  // `[]` installs none, a list installs exactly those owned level-bearing ids.
+  "activeLoadout": {
+    "startingWeapons": ["spread"],
+    "modifiers": ["extra-life"],
+    "powerUps": ["bomb", "magnet"]
+  },
   "threatTierCleared": 2,          // progress toward the final assault
   "bestScore": 18200
 }

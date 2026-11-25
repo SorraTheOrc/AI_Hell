@@ -15,7 +15,7 @@
  * applies every change with a pure updater from `./hangarScreen`
  * ({@link purchaseHangarEntry}, {@link upgradeHangarKind},
  * {@link equipHangarHull}, {@link toggleHangarWeapon},
- * {@link toggleHangarModifier}); it then persists
+ * {@link toggleHangarPowerUp}, {@link toggleHangarModifier}); it then persists
  * the payload through `hangarWarStore.saveHangarWarPayload`. No purchase rule,
  * price or loadout decision lives in this file.
  *
@@ -134,6 +134,7 @@ import {
   savedBuildRowKey,
   SAVE_BUILD_ROW_KEY,
   toggleHangarModifier,
+  toggleHangarPowerUp,
   toggleHangarWeapon,
   upgradeHangarKind,
   RESTART_CONFIRM_TIMEOUT_MS,
@@ -349,6 +350,7 @@ export class HangarScene extends Phaser.Scene {
       onUpgrade: (kindId) => this.upgrade(kindId),
       onEquipHull: (hullId) => this.equipHull(hullId),
       onToggleWeapon: (weaponId) => this.toggleWeapon(weaponId),
+      onTogglePowerUp: (powerUpId) => this.togglePowerUp(powerUpId),
       onToggleModifier: (modifierId) => this.toggleModifier(modifierId),
       onDeploy: (hexId) => this.deploy(hexId),
       onOpenMap: () => this.openMap(),
@@ -448,6 +450,23 @@ export class HangarScene extends Phaser.Scene {
       this.persist();
     }
     this.rebuildKeepingFocus(`weapon:${weaponId}`);
+    return result.ok;
+  }
+
+  /**
+   * Toggles an owned level-bearing power-up in the deployment selection and
+   * persists it (the `POWER-UP` rows, beside the weapons). The selection is
+   * read through the shared economy rule, so the first toggle on an un-curated
+   * save starts from every owned power-up and writes an explicit list.
+   */
+  togglePowerUp(powerUpId: string): boolean {
+    this.disarmRestart();
+    const result = toggleHangarPowerUp(this.payload, powerUpId);
+    if (result.ok) {
+      this.payload = result.payload;
+      this.persist();
+    }
+    this.rebuildKeepingFocus(`power-up:${powerUpId}`);
     return result.ok;
   }
 
