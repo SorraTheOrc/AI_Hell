@@ -173,6 +173,62 @@ describe('bot-tuning.json bundled baseline (AH-0MV9LCWVI002TOK7)', () => {
   });
 });
 
+describe('store Export surface (AH-0MWW4UK5M009Q36R)', () => {
+  /** The exported store state, parsed exactly as the store reads it back. */
+  function exportedState() {
+    const state = parseBotTuningStateBlob(freshExportBlob());
+    if (state === null) throw new Error('the store Export blob did not parse');
+    return state;
+  }
+
+  it('exports every registered numeric field and toggle for every config', () => {
+    // The Export is what a designer commits back as the bundled baseline, so it
+    // must always carry the **complete** registry surface. A field added to the
+    // gym but missing from the store's coercion would silently disappear from
+    // the exported file and the round-trip would drift from the committed one
+    // (AH-0MWW4UK5M009Q36R: the holdFire* knobs vanished this way).
+    const state = exportedState();
+    for (const config of state.configs) {
+      for (const field of BOT_TUNING_NUMERIC_FIELDS) {
+        expect(
+          typeof config.values[field.group][field.key],
+          `${config.name}.${field.key} must survive the Export as a number`,
+        ).toBe('number');
+      }
+      for (const toggle of BOT_TUNING_TOGGLES) {
+        expect(
+          typeof config.values[toggle.group][toggle.key],
+          `${config.name}.${toggle.key} must survive the Export as a boolean`,
+        ).toBe('boolean');
+      }
+    }
+  });
+
+  it('exports the hold-fire knobs the committed Default baseline authors', () => {
+    // The three holdFire* keys (AH-0MWW2PFU8001J0PM) are authored in the
+    // committed baseline; the Export must reproduce them with identical values
+    // instead of dropping them from the coerced state.
+    const state = exportedState();
+    const def = state.configs.find((config) => config.name === DEFAULT_BOT_TUNING_NAME);
+    expect(def).toBeDefined();
+    const committed = rawConfigs().find(
+      (config) => config.name === DEFAULT_BOT_TUNING_NAME,
+    )!;
+    const authored = (committed.values as { competent: Record<string, unknown> }).competent;
+    for (const key of [
+      'holdFireEnabled',
+      'holdFireHorizonSeconds',
+      'holdFireLineRadiusPx',
+    ]) {
+      expect(authored[key], `Default must author ${key}`).toBeDefined();
+      expect(
+        def!.values.competent[key],
+        `the Export must carry ${key} with the authored value`,
+      ).toBe(authored[key]);
+    }
+  });
+});
+
 describe('motion-model knobs in the bundled baseline (AH-0MWM0CCJE000AANE)', () => {
   const CLASSES = ['chaser', 'diver', 'patroller', 'formation', 'roamer'] as const;
 
