@@ -86,6 +86,28 @@ const TEST_DWELL_MS = 800;
  */
 const DWELL_MARGIN_MS = 500;
 
+/**
+ * Run seed pinned for the demo tests that assert **live physics** — where the
+ * outcome depends on the run's seeded field (bot engagement geometry, wave-1
+ * spawns) rather than on the demo seam itself (AH-0MWW6Y9JO009UJN3).
+ *
+ * `MenuScene.startDemo()` (like the attract timer) otherwise lets `PlayScene`
+ * draw a fresh `randomSeed()`, so the AC1 displacement assertion and the
+ * asteroids-scheme rotation assertion passed or failed depending on that draw:
+ * the full-suite gate caught `expected 0 to be greater than 5` when the drawn
+ * seed produced no committed movement inside the window. This is the same
+ * seed-dependent flake class the `PlayScene` suite removed with its
+ * deterministic-boot rule (AH-0MVXWEEJM00813GK) — a boot whose seed is not
+ * explicit cannot be reproduced. Seed `1` matches that suite's pinned seed;
+ * change this constant to reproduce a failure with the seed a run reports.
+ */
+const DETERMINISTIC_DEMO_SEED = 1;
+
+/** Starts the demo through the menu seam with the pinned run seed. */
+function startSeededDemo(menu: MenuScene, demoDwellMs?: number): void {
+  menu.startDemo(demoDwellMs, DETERMINISTIC_DEMO_SEED);
+}
+
 // The shipped default control scheme is `asteroids`; keyboard-movement
 // assertions need the four-directional scheme the rest of the PlayScene suite
 // seeds (AH-0MUBZU8IL0067GOU).
@@ -191,7 +213,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
   it('AC1 — the demo bot drives the ship through the live shared input path', async () => {
     const menu = await bootMenu();
-    menu.startDemo();
+    startSeededDemo(menu);
     await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -202,12 +224,17 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     // Tick the live scene with no keyboard input: the bot must move the ship
     // (it engages the wave-1 formation / seeks pickups).  The exact direction
     // depends on the run-seeded field, so assert real movement rather than a
-    // specific heading.
+    // specific heading.  The wait is bounded (5 s of simulated time) rather
+    // than one exact second, because the governor holds a steering commit for
+    // a human reaction cadence and the opening decision may be an aim-only
+    // stance before the ship engages; the seed is pinned, so the budget is
+    // deterministic and the failure message names the seed for reproduction
+    // (AH-0MWW6Y9JO009UJN3).
     const player = play.getPlayer()!;
     const beforeX = player.x;
     const beforeY = player.y;
     let maxDisplacement = 0;
-    for (let i = 0; i < 60; i += 1) {
+    for (let i = 0; i < 300 && maxDisplacement <= 5; i += 1) {
       play.tick(1 / 60);
       maxDisplacement = Math.max(
         maxDisplacement,
@@ -215,7 +242,25 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       );
     }
 
-    expect(maxDisplacement).toBeGreaterThan(5);
+    expect(
+      maxDisplacement,
+      `the demo bot never moved the ship (run seed ${play.getRunSeed()}, ` +
+        `max displacement ${maxDisplacement.toFixed(3)} px)`,
+    ).toBeGreaterThan(5);
+  });
+
+  it('AC1 — a pinned demo run seed reaches the live scene (reproducible runs)', async () => {
+    const menu = await bootMenu();
+    const seed = 987654321;
+    menu.startDemo(undefined, seed);
+    await wait(booted!.game, 150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    // The optional seed rides the ordinary scene-start payload, so a caller
+    // that needs a reproducible attract run (a physics assertion, a capture)
+    // pins it without a second seam (AH-0MWW6Y9JO009UJN3).
+    expect(play.isDemoMode()).toBe(true);
+    expect(play.getRunSeed()).toBe(seed);
   });
 
   it('AC14 — the live scene exposes its wave timer state to the bot snapshot', async () => {
@@ -798,7 +843,9 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     it('rotates the hull under asteroid controls (a four-directional ship never turns)', async () => {
       const menu = await bootMenu();
-      menu.startDemo();
+      // Seeded: the assertion depends on the run-seeded field, exactly like the
+      // AC1 displacement check (AH-0MWW6Y9JO009UJN3).
+      startSeededDemo(menu);
       await wait(booted!.game, 150);
 
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
