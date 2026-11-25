@@ -58,14 +58,22 @@
  * Nothing in that chain imports this module at runtime: the only back-edges are
  * **type-only** (`core/csv`'s `import type` of `weapons.ts`, and
  * `core/hangarWar/grantAliases`'s `import type` of this module), which are
- * erased. {@link validateHangarCatalogue} is `applyWeaponCatalogueGuards`'
+ * erased. Guard (e) adds two more **one-way** runtime reads:
+ * `data/hangarCatalogue → core/hangarWar/grantAliases` (the shared alias table,
+ * which itself imports this module only as a type) and
+ * `data/hangarCatalogue → data/hexRingDefinitions` (the authored grants, whose
+ * own `core/hangarWar/hexRing` import is type-only), so neither closes a cycle.
+ * {@link validateHangarCatalogue} is `applyWeaponCatalogueGuards`'
  * counterpart: it runs at catalogue build time and fails loudly with an
- * actionable diagnostic rather than silently skipping an uncovered weapon.
+ * actionable diagnostic rather than silently skipping an uncovered weapon or
+ * an un-itemised hex grant.
  *
  * @module src/data/hangarCatalogue
  */
 
 import type { DefenceSkill } from '../core/hangarWar/types';
+import { resolveGrantAlias } from '../core/hangarWar/grantAliases';
+import { HEX_RING_DEFINITIONS } from './hexRingDefinitions';
 import type { PowerUpId } from '../powerups/types';
 import { WEAPON_CATALOGUE } from '../utils/weapons';
 import type { WeaponDefinition, WeaponId } from '../utils/weapons';
@@ -445,6 +453,27 @@ export const AUTHORED_ENTRIES: readonly HangarEntry[] = [
  */
 export const HANGAR_EXCLUDED_WEAPON_IDS: readonly WeaponId[] = ['cannon'];
 
+/**
+ * Authored hex-grant ids that intentionally resolve to **no** catalogue entry.
+ *
+ * A hex may pay a flat, effect-free strength grant the unlock tree does not
+ * itemise (there is nothing to own, display or equip). Guard (e) is the only
+ * reader of this list, so an authored grant that falls outside both the
+ * catalogue and this allowlist fails the build rather than leaving the player
+ * owning an invisible weapon.
+ *
+ * The three entries belong to AH-0MWWARIW6003F7OV ("Ring-2 modifier grants
+ * have no hangar catalogue entry"), which owns either a catalogue entry or a
+ * `GRANT_ALIASES` re-point for them; removing an id here is that item's
+ * follow-up. The authored `extra-life` grant needs no entry: it resolves through
+ * its alias to `hardened_plating`, so it is checked like any other grant.
+ */
+export const HEX_GRANT_EFFECT_FREE_ALLOWLIST: readonly string[] = Object.freeze([
+  'armour-plating',
+  'systems-upgrade',
+  'firepower-up',
+]);
+
 /** One authored weapon economy row — a price and ring gate, never derived. */
 export interface WeaponUnlockEconomyRow {
   /** Salvage cost of the unlock. */
@@ -588,6 +617,12 @@ export interface HangarCatalogueGuardInput {
   >;
   /** Weapon ids deliberately not itemised; defaults to the shipped list. */
   readonly exclusions?: readonly string[];
+  /**
+   * Authored hex grant ids to check, **replacing** the shipped list. Defaults
+   * to every `HEX_RING_DEFINITIONS` `grants` value, so a fixture can inject a
+   * drifting grant and prove guard (e) rejects it.
+   */
+  readonly hexGrants?: readonly string[];
 }
 
 /** Builds one error diagnostic with the catalogue's house-style message shape. */
@@ -621,10 +656,14 @@ function hangarDiagnostic(
  *   shipped, non-excluded weapon id, so a stale/typo'd row fails closed rather
  *   than silently promoting nothing;
  * - **(d) weapon id resolves** — every weapon entry's `weaponId` is a shipped
- *   runtime weapon.
- *
- * Guard (e) (authored hex grants) lands with the grant item; this guard
- * deliberately ignores that input for now.
+ *   runtime weapon;
+ * - **(e) authored hex grants resolve** — every `HEX_RING_DEFINITIONS`
+ *   `grants` id resolves to a catalogue entry (through the shared
+ *   {@link resolveGrantAlias} table or directly), or is on the documented
+ *   {@link HEX_GRANT_EFFECT_FREE_ALLOWLIST}. This is the referential-integrity
+ *   guard that was missing: without it a hex could award an id the catalogue
+ *   cannot display, leaving the player owning a weapon they can never see,
+ *   equip or fly.
  *
  * @param input — optional injected fixtures (defaults to the shipped data).
  */
@@ -732,6 +771,34 @@ export function validateHangarCatalogue(
           'weaponId',
           `hangar entry ${entry.id} points at weapon ${entry.weaponId}, which ` +
             'is not in the runtime weapon catalogue',
+        ),
+      );
+    }
+  }
+
+  // (e) Every authored hex grant resolves to a catalogue entry (or is on the
+  // documented effect-free allowlist). The authored id may be an alias
+  // (`waveLaser` → `wave_laser`) or a catalogue id; either way the player must
+  // end up owning an entry the hangar can show, equip and deploy.
+  const hexGrants =
+    input.hexGrants ??
+    HEX_RING_DEFINITIONS.map((definition) => definition.grants);
+  const allowlistedGrants = new Set(HEX_GRANT_EFFECT_FREE_ALLOWLIST);
+  const entryIds = new Set(entries.map((entry) => entry.id));
+  for (const authored of hexGrants) {
+    if (typeof authored !== 'string') continue;
+    const id = authored.trim();
+    if (id === '') continue;
+    if (allowlistedGrants.has(id)) continue;
+    const entryId = resolveGrantAlias(id)?.entryId ?? id;
+    if (!entryIds.has(entryId)) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'hexGrant',
+          `authored hex grant ${id} resolves to no hangar catalogue entry ` +
+            `(looked for ${entryId}) — derive/add the entry, point the grant at ` +
+            'an existing id, or add it to HEX_GRANT_EFFECT_FREE_ALLOWLIST with a reason',
         ),
       );
     }

@@ -391,6 +391,9 @@ describe('hangar catalogue — the authored power-up unlock (AH-0MWKT12BT001106T
  * guards (a)/(b)/(d) and the capture resolver; the economy item for the
  * economy/retune specs and guard (c); the grant item for guard (e).
  *
+ * Guard (e) landed with AH-0MWWI3O2S0015GHM, which flipped its
+ * `it.fails(...)` wrapper to a plain `it(...)`.
+ *
  * Pinned contract (turning these green means implementing exactly this
  * surface):
  *
@@ -738,7 +741,9 @@ describe('hangar catalogue — WEAPON_UNLOCK_ECONOMY (parent AC3)', () => {
  * Mirroring `applyWeaponCatalogueGuards`, each guard drives a deliberately
  * broken fixture and must report a **non-empty, actionable** diagnostic naming
  * the offending id instead of silently skipping it. Guard (e) is the one that
- * was missing: `rapid` fails it today. RED until the guards land.
+ * was missing: before AH-0MWWI3O2S0015GHM an authored grant such as `rapid`
+ * resolved to no catalogue entry and left the player owning an invisible
+ * weapon.
  */
 describe('hangar catalogue — fail-closed build guards', () => {
   it('(a) full coverage: a weapon with no entry fails loudly', () => {
@@ -822,7 +827,16 @@ describe('hangar catalogue — fail-closed build guards', () => {
     ).toBeGreaterThan(0);
   });
 
-  it.fails('(e) every authored hex grant resolves to an entry or the allowlist', () => {
+  it('(e) every authored hex grant resolves to an entry or the allowlist', () => {
+    // The shipped authored grants all resolve now (this is the spec that `rapid`
+    // failed before the derivation landed): the shipped tree carries no
+    // guard-(e) diagnostic.
+    const shipped = validateHangarCatalogue();
+    expect(
+      shipped.diagnostics.filter((entry) => entry.field === 'hexGrant'),
+      'the shipped authored grants must all resolve',
+    ).toEqual([]);
+
     // A drifting grant id fails closed, naming the offender.
     const drifted = validateHangarCatalogue({ hexGrants: ['ghost_grant'] });
     expect(drifted.ok).toBe(false);

@@ -65,6 +65,7 @@ import {
   buildHangarRestartRow,
   buildHangarScreenModel,
   buildHangarUnlockRows,
+  buildHangarWeaponOptions,
   equipHangarHull,
   formatRingLine,
   hangarAttractDecision,
@@ -411,6 +412,79 @@ describe('hangar screen model (pure)', () => {
       expect(broke.hullId).toBe('hull-1');
       expect(broke.loadout.startingWeapons).toEqual(['spread']);
     }
+  });
+});
+
+// ── Hex-granted weapons are visible and equippable ───────────────
+// (AH-0MWWI3O2S0015GHM, parent AH-0MWW6PNA5008NC91 AC4)
+//
+// A captured hex records its award in `unlockedWeapons`; the derivation makes
+// every hex-granted weapon a catalogue entry, so the unlock tree shows a named
+// owned row and the deployment selector offers a real loadout slot. These
+// payloads hold the ids exactly as an **existing save** written before the fix
+// does, proving the save lights up without a migration.
+
+describe('hex-granted weapons appear in the hangar (AH-0MWWI3O2S0015GHM)', () => {
+  /** The five weapons an authored hex awards by id (grant-only in the tree). */
+  const HEX_GRANTED_WEAPON_IDS = [
+    'rapid',
+    'arc',
+    'broadside',
+    'dual',
+    'nova',
+  ];
+
+  /** A payload whose fleet already holds every hex-granted weapon id. */
+  function payloadHoldingHexWeapons(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.unlockedWeapons = [
+      ...payload.hangar.unlockedWeapons,
+      ...HEX_GRANTED_WEAPON_IDS,
+    ];
+    return payload;
+  }
+
+  it('renders a named owned unlock row for every hex-granted weapon', () => {
+    const rows = buildHangarUnlockRows(payloadHoldingHexWeapons());
+    for (const id of HEX_GRANTED_WEAPON_IDS) {
+      const row = rows.find((candidate) => candidate.id === id);
+      expect(row, `unlock row for ${id}`).toBeDefined();
+      expect(row!.kind).toBe('weapon');
+      expect(row!.name.trim().length).toBeGreaterThan(0);
+      expect(row!.label).toContain(row!.name);
+      // An owned level-bearing weapon is an upgrade affordance, never a
+      // purchase row (`buyable`/`gated`/`unaffordable`).
+      expect([
+        'owned',
+        'upgradable',
+        'upgrade-unaffordable',
+        'capped',
+      ]).toContain(row!.state);
+    }
+  });
+
+  it('offers every hex-granted weapon as a loadout slot', () => {
+    const options = buildHangarWeaponOptions(payloadHoldingHexWeapons());
+    for (const id of HEX_GRANTED_WEAPON_IDS) {
+      const option = options.find((candidate) => candidate.id === id);
+      expect(option, `weapon option for ${id}`).toBeDefined();
+      expect(option!.name.trim().length).toBeGreaterThan(0);
+      expect(option!.actionable).toBe(true);
+    }
+  });
+
+  it('equips a hex-granted weapon through the shared toggle', () => {
+    const payload = payloadHoldingHexWeapons();
+    const result = toggleHangarWeapon(payload, 'rapid');
+    expect(result.ok).toBe(true);
+    expect(result.payload.hangar.activeLoadout.startingWeapons).toContain(
+      'rapid',
+    );
+    expect(
+      buildHangarWeaponOptions(result.payload).find(
+        (candidate) => candidate.id === 'rapid',
+      )!.equipped,
+    ).toBe(true);
   });
 });
 
