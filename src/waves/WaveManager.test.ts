@@ -1045,10 +1045,22 @@ describe('WaveManager — elite spawning & determinism (AH-0MWU665DM00669U0)', (
     ];
   }
 
-  it('ships the seeded budget off: no spawn is flagged by default', () => {
+  it('fields the shipped seeded budget by default and none at chance 0', () => {
     const wm = new WaveManager(eliteCampaign(3));
-    wm.setRunSeed(4242);
     wm.beginGame(2);
+
+    // The shipped 15 % budget is live: over seeds, some level-2 plan carries
+    // exactly one flagged spawn.
+    const flagged = new Set<number>();
+    for (let seed = 1; seed <= 60; seed += 1) {
+      wm.setRunSeed(seed);
+      flagged.add(wm.planSpawns().filter((spawn) => spawn.elite).length);
+    }
+    expect([...flagged].some((count) => count > 0)).toBe(true);
+
+    // The elite-free baseline is an explicit override, not the default.
+    wm.setRunSeed(4242);
+    wm.setEliteWaveChance(0);
     expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(0);
   });
 
@@ -1156,7 +1168,14 @@ describe('WaveManager — elite spawning & determinism (AH-0MWU665DM00669U0)', (
     expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(0);
     wm.setEliteWaveChance(5);
     expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(1);
+    // Junk restores the **shipped** budget, which is now the 15 % default:
+    // match a fresh manager rather than assuming "off".
+    const fresh = new WaveManager(eliteCampaign(1));
+    fresh.setRunSeed(4242);
+    fresh.beginGame(2);
     wm.setEliteWaveChance(Number.NaN);
-    expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(0);
+    expect(wm.planSpawns().map((spawn) => spawn.elite)).toEqual(
+      fresh.planSpawns().map((spawn) => spawn.elite),
+    );
   });
 });

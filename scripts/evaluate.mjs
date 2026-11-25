@@ -83,6 +83,8 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     level: null,
     scaleLevels: true,
     forceFields: true,
+    // `null` keeps the shipped `ELITE_WAVE_CHANCE` (AH-0MWU667OG00287SY).
+    eliteWaveChance: null,
     // Full-campaign batch mode is the default (AC1); `--skirmish` opts back
     // into the legacy single-level skirmish (AC2).
     campaign: true,
@@ -185,6 +187,15 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
         options.forceFields = raw === 'on';
         break;
       }
+      case '--elite-chance': {
+        const raw = next();
+        const chance = Number(raw);
+        if (!Number.isFinite(chance) || chance < 0 || chance > 1) {
+          throw new Error(`--elite-chance expects a number in [0, 1] (got '${raw}')`);
+        }
+        options.eliteWaveChance = chance;
+        break;
+      }
       case '--video':
         options.video = true;
         break;
@@ -240,6 +251,9 @@ Options:
   --force-fields <on|off>  Enemy force fields: on (default) resolves the barrier at the run
                        level; off resolves it at level 1 so a pre-change hull-only baseline is
                        captured with identical harness code and seeds
+  --elite-chance <0..1>  Override the seeded elite (anomaly) budget in full-campaign mode;
+                       omitted keeps the shipped ELITE_WAVE_CHANCE, 0 captures the elite-free
+                       baseline and 0.15 is the proposed shipped budget (AH-0MWU667OG00287SY)
   --video              Also emit the side-by-side capture plan (AC4)
   --json               Print the machine-readable report instead of text
   --help               Show this help

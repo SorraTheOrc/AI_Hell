@@ -1,15 +1,16 @@
 /**
  * Campaign-level elite spawning tests (AH-0MWU665DM00669U0).
  *
- * Pins the rules end to end over the shipped campaign: the arcade data
- * authors no elite and ships the budget off, level 1 never fields one, every
- * other eligible wave fields at most one (through the real `WaveManager`
- * spawn plan), and the choice is a pure function of the run seed while the
- * campaign variety/signature audit is unaffected.
+ * Pins the rules end to end over the shipped campaign: no wave authors an
+ * elite and the seeded budget ships on (15 %, AH-0MWU667OG00287SY), level 1
+ * never fields one, every other eligible wave fields at most one (through the
+ * real `WaveManager` spawn plan), and the choice is a pure function of the run
+ * seed while the campaign variety/signature audit is unaffected.
  *
  * The test registry gives every counted campaign archetype an elite
- * behaviour because the shipped CSV intentionally authors none until the
- * balance gate clears (parent AC9).
+ * behaviour so every eligible wave is capable; the shipped CSV authors the
+ * variant axis on its ordinary archetypes (`src/enemyRosterDocs.test.ts`
+ * guards those cells).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -113,29 +114,35 @@ function campaignSignature(seed: number): string[] {
 describe('eliteSpawn campaign — shipped arcade data (AC2)', () => {
   afterEach(() => resetConfigStore());
 
-  it('authors no elite anywhere and ships the budget off', () => {
-    expect(LEVELS.flatMap((level) => level.waves).every((wave) => wave.elite === undefined)).toBe(true);
-    expect(ELITE_WAVE_CHANCE).toBe(0);
+  it('authors no wave elite and ships the seeded budget on (15 %)', () => {
+    // The shipped campaign never authors an elite; the seeded budget is the
+    // shipping path (enabled by the measured balance gate).
+    expect(
+      LEVELS.flatMap((level) => level.waves).every((wave) => wave.elite === undefined),
+    ).toBe(true);
+    expect(ELITE_WAVE_CHANCE).toBe(0.15);
 
-    // Even with elite-capable archetypes and 100 waves, the shipped default
-    // plans none at any seed.
     seedConfigStore(eliteCampaignConfigs());
-    const configFor = (key: string) =>
-      ({ ...(DEFAULT_ENEMY_CONFIGS[key] ?? DEFAULT_ENEMY_CONFIGS.scout), key });
+    const configFor = loadEnemyConfig;
+    let granted = 0;
     for (const seed of [1, 2, 3]) {
       for (const { level, wave, globalWaveIndex } of campaignWaves()) {
-        expect(
-          planEliteSpawn({
-            level,
-            globalWaveIndex,
-            runSeed: seed,
-            wave,
-            chance: ELITE_WAVE_CHANCE,
-            configFor,
-          }),
-        ).toBeNull();
+        const plan = planEliteSpawn({
+          level,
+          globalWaveIndex,
+          runSeed: seed,
+          wave,
+          chance: ELITE_WAVE_CHANCE,
+          configFor,
+        });
+        if (!plan) continue;
+        granted += 1;
+        // Never on the onboarding level, and never on an ineligible wave.
+        expect(level).not.toBe(ELITE_EXEMPT_LEVEL);
+        expect(hasEligibleGroup(wave, configFor)).toBe(true);
       }
     }
+    expect(granted).toBeGreaterThan(0);
   });
 });
 

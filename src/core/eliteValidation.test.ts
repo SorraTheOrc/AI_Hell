@@ -238,10 +238,12 @@ describe('blank eliteBehaviour reproduces today behaviour (AC4)', () => {
     ).toBe(true);
   });
 
-  it('the shipped scout seed loads neutrally without throwing', () => {
+  it('a shipped row with blank elite cells loads neutrally without throwing', () => {
     resetConfigStore();
 
-    const config = loadEnemyConfig('scout');
+    // `boss` ships blank elite cells (the balance gate authored the variant
+    // axis on the ordinary archetypes, never the encounter).
+    const config = loadEnemyConfig('boss');
 
     expect(config.eliteBehaviour).toBeUndefined();
     expect(config.eliteBonusHp).toBeUndefined();
@@ -358,9 +360,9 @@ describe('CSV codec and column-order wiring (AC1/AC2)', () => {
   });
 });
 
-// ── AC1/AC4: the shipped CSV stays neutral and valid ─────────────────
+// ── AC1/AC4: the shipped CSV authors a valid variant axis ────────────
 
-describe('shipped enemy-config CSV is elite-neutral (AC1/AC4)', () => {
+describe('shipped enemy-config CSV authors a valid elite axis (AC1/AC4)', () => {
   const csvText = fs.readFileSync(
     path.resolve(process.cwd(), 'src/data/enemy-configs.csv'),
     'utf8',
@@ -371,14 +373,11 @@ describe('shipped enemy-config CSV is elite-neutral (AC1/AC4)', () => {
     expect(csvText).toContain('eliteBonusHp');
   });
 
-  it('gives every committed row blank elite cells that validate as neutral', () => {
+  it('validates every committed row and authors at least one elite variant', () => {
     const rows = parseCsvRows(csvText);
     expect(rows.length).toBeGreaterThan(0);
 
     for (const row of rows) {
-      expect(row.eliteBehaviour ?? '', row.key).toBe('');
-      expect(row.eliteBonusHp ?? '', row.key).toBe('');
-
       const result = validateEliteArchetype({
         key: row.key,
         eliteBehaviour: row.eliteBehaviour,
@@ -386,6 +385,20 @@ describe('shipped enemy-config CSV is elite-neutral (AC1/AC4)', () => {
       });
       expect(result.ok, `${row.key}: ${result.errors.map((e) => e.message).join('; ')}`)
         .toBe(true);
+    }
+
+    // The balance-evidence item (AH-0MWU667OG00287SY) authors the variant
+    // axis on ordinary counted archetypes, leaving the encounter/hazards
+    // neutral — an authored id on an uncounted hazard would fail above.
+    const authored = rows.filter((row) => (row.eliteBehaviour ?? '') !== '');
+    expect(authored.length).toBeGreaterThanOrEqual(3);
+    for (const row of authored) {
+      expect(ELITE_BEHAVIOURS as readonly string[], row.key).toContain(
+        row.eliteBehaviour,
+      );
+      const bonus = Number(row.eliteBonusHp);
+      expect(bonus, row.key).toBeGreaterThanOrEqual(1);
+      expect(bonus, row.key).toBeLessThanOrEqual(3);
     }
   });
 });

@@ -31,67 +31,25 @@
  */
 
 import { playEliteDeathSound } from '../audio/effects';
-import { levelScalingProgress } from './levelScaling';
-import { DEFAULT_RULES, type GameRules } from './rules';
+import {
+  ELITE_MINERAL_BUMP_MAX,
+  ELITE_MINERAL_BUMP_MIN,
+  eliteMineralBump,
+  resolveEliteReward,
+  type EliteReward,
+} from './eliteRewardRules';
 import { loadSettings, type SettingsRecord } from './settingsStore';
 
-/** Smallest guaranteed mineral bump an elite pays (level 1). */
-export const ELITE_MINERAL_BUMP_MIN = 2;
-
-/** Largest guaranteed mineral bump an elite pays (campaign maximum). */
-export const ELITE_MINERAL_BUMP_MAX = 4;
-
-/** The reward resolved for one destroyed elite. */
-export interface EliteReward {
-  /**
-   * Always `true`: an elite bypasses the ordinary per-kill chance roll and
-   * draws from the shared pool. Expressing the guarantee as data (rather than
-   * an implicit scene rule) is what the kill seam reads.
-   */
-  readonly guaranteedDrop: true;
-  /** Guaranteed minerals the wreck pays on top of its ordinary re-drop. */
-  readonly mineralBump: number;
-}
-
-/**
- * The guaranteed mineral bump for an elite killed at `level`.
- *
- * Interpolates {@link ELITE_MINERAL_BUMP_MIN} → {@link ELITE_MINERAL_BUMP_MAX}
- * with the shared level-scaling progress, rounded to a whole number and
- * clamped to the authored range. Level 1 is the minimum (the onboarding level
- * never spawns an elite, so this is also the neutral value) and the campaign
- * maximum is the maximum; the curve is monotonically non-decreasing.
- *
- * @param level — the live campaign level (clamped by the shared curve).
- * @param rules — rules supplying the scaling span; defaults to
- *   {@link DEFAULT_RULES}.
- * @returns An integer in `[ELITE_MINERAL_BUMP_MIN, ELITE_MINERAL_BUMP_MAX]`.
- */
-export function eliteMineralBump(
-  level: number,
-  rules: GameRules = DEFAULT_RULES,
-): number {
-  const t = levelScalingProgress(level, rules);
-  const bump = Math.round(
-    ELITE_MINERAL_BUMP_MIN +
-      (ELITE_MINERAL_BUMP_MAX - ELITE_MINERAL_BUMP_MIN) * t,
-  );
-  return Math.min(ELITE_MINERAL_BUMP_MAX, Math.max(ELITE_MINERAL_BUMP_MIN, bump));
-}
-
-/**
- * Resolves the complete reward for one destroyed elite.
- *
- * @param level — the live campaign level.
- * @param rules — rules supplying the scaling span; defaults to
- *   {@link DEFAULT_RULES}.
- */
-export function resolveEliteReward(
-  level: number,
-  rules: GameRules = DEFAULT_RULES,
-): EliteReward {
-  return { guaranteedDrop: true, mineralBump: eliteMineralBump(level, rules) };
-}
+// The pure reward rules live in `eliteRewardRules.ts` so the headless
+// evaluation arena can import them without the audio/settings seam; they are
+// re-exported here so every scene/test keeps the one `eliteReward` surface.
+export {
+  ELITE_MINERAL_BUMP_MAX,
+  ELITE_MINERAL_BUMP_MIN,
+  eliteMineralBump,
+  resolveEliteReward,
+};
+export type { EliteReward };
 
 /** The SFX settings slice the elite death cue honours. */
 export type EliteCueSettings = Pick<SettingsRecord, 'sfxMuted' | 'sfxVolume'>;

@@ -1053,6 +1053,45 @@ reward overlay (§4.4.4) appears.
 - **Fires**: **Never** — `shootEnabled` is a no-op and its effective shot
   pattern is `none`.
 
+#### Elite (anomaly) variants (AH-0MWL7P1AO003LKXT)
+
+An **elite** is not a new archetype: it is **one ordinary, counted spawn** of an
+existing E1–E7 / classic-roster archetype elevated to a variant for a single
+wave. The axis is authored per archetype in
+[`src/data/enemy-configs.csv`](../src/data/enemy-configs.csv) by the
+`eliteBehaviour` / `eliteBonusHp` columns, validated **loudly at load** by
+[`src/core/eliteVocabulary.ts`](../src/core/eliteVocabulary.ts) (an unknown
+behaviour id, an out-of-range bonus, or an elite on an uncounted hazard fails
+when the config loads, not when it spawns).
+
+- **One bounded extra behaviour.** An elite carries exactly one mechanic,
+  implemented once in
+  [`src/scenes/core/eliteMechanics.ts`](../src/scenes/core/eliteMechanics.ts)
+  and shared by the game and the formation gyms:
+  - `splitter` — on death it releases two ordinary children of its own
+    archetype (counted wave enemies, so the wave cannot clear early);
+  - `reinforced` — it spawns behind the shipped force-field layer with one
+    extra field hit (`enemyForceFieldHits` + 1);
+  - `volatile` — on death it leaves a short radial burst of its own bullets.
+- **Bonus hit points.** `eliteBonusHp` adds **1–3** to the archetype's hull
+  through `eliteBonusHealth`, applied by the shared enemy factory.
+- **One per wave, never on the onboarding level.** A wave may author one elite;
+  otherwise a seeded budget (`ELITE_WAVE_CHANCE`) grants one. Wave accounting
+  is unchanged — the elite **is** one of the wave's counted spawns, never an
+  asteroid-style hazard — and **level 1 never spawns one**. The plan is a pure
+  function of the run seed and the wave's index
+  ([`src/waves/eliteSpawn.ts`](../src/waves/eliteSpawn.ts)), so the same seed
+  replays the same elite in the same slot.
+- **A real, legible reward.** An elite always drops from the shared power-up
+  pool (bypassing the ordinary per-kill chance roll) and pays a level-scaled
+  guaranteed mineral bump (2 → 4, `src/core/eliteRewardRules.ts`), announced by
+  its own death cue. The wave-opening cue names it and an `ELITE` tag tracks
+  its hull while it lives (`src/waves/eliteAnnounce.ts`), so prioritising it is
+  a decision the player can make.
+- **Balance evidence.** The seeded budget, the measured same-seed before/after
+  batch and the enable decision live in
+  [`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
+
 #### Classic-arcade roster (research epic AH-0MUYAQ6YH0010G52)
 
 Alongside the E1–E7 roster, eight archetypes selected from the classic arcade
@@ -2001,11 +2040,19 @@ multiplied — a graze awards no score of its own, only tier progress.
   formation-gym divergence and the same-seed before/after bot-batch evidence
   live in [`docs/BALANCING.md`](./BALANCING.md) (AH-0MVHT1M6O003PU7P).
 
-  > **Proposed, not shipped (backlog §8.3):** a third, *content* axis —
-  > **anomaly (elite) variants** of counted archetypes, each with one bounded
-  > extra behaviour and a guaranteed reward, level-1 exempt — is proposed in
-  > §8.3 (Anomaly (elite) enemies and wave twists, AH-0MWL7P1AO003LKXT). The two
-  > axes above stay normative until that item lands.
+  - **A third, content axis — elite (anomaly) variants**
+    (AH-0MWL7P1AO003LKXT): at most **one counted spawn per wave** is elevated
+    to an elite — an existing archetype with one bounded extra behaviour
+    (`splitter` / `reinforced` / `volatile`) and 1–3 bonus hit points (§4.1).
+    A wave may author its elite; otherwise the seeded budget
+    `ELITE_WAVE_CHANCE` grants one on that share of eligible waves, derived
+    per wave from the run seed (`src/waves/eliteSpawn.ts`) so it is
+    deterministic and never perturbs the formation/variety draws.
+    **Level 1 never spawns an elite**, so onboarding and the experience-target
+    baseline keep their calibration. The axis changes no archetype *set*; it adds a
+    priority target and a guaranteed reward (§4.1), and its same-seed
+    before/after evidence is recorded in
+    [`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
 - If the player runs out of lives (3 starting; up to 5 with Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.
@@ -4378,6 +4425,14 @@ retained as the original proposal.
 
 **Work item:** Anomaly (elite) enemies and wave twists (AH-0MWL7P1AO003LKXT).
 
+**Landed:** the normative rules are now §4.1 *Elite (anomaly) variants* (the
+authored variant axis and its three bounded behaviours) and §4.6 (the third
+difficulty axis, level-1 exempt); the shipped budget is
+`ELITE_WAVE_CHANCE = 0.15` and the measured same-seed before/after evidence plus
+the enable decision are recorded in
+[`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
+The text below is retained as the original proposal.
+
 - **Tier:** inner loop (a wave).
 - **Gap:** the campaign's 100 waves are built from one fixed archetype roster
   with difficulty rising on two axes only — enemy count and a falling per-kill
@@ -4395,8 +4450,10 @@ retained as the original proposal.
 - **Legibility:** the wave's opening cue names the elite and a tag tracks its hull
   while it lives, so prioritising it is a decision the player can make.
 - **Gating measurement:** the same-seed bot batch inside the experience-target
-  bands, and a re-measured `docs/BALANCING.md` level-scaling table recorded on the
-  item before the shipped default rises above zero.
+  bands — **cleared** (survival, minerals and avoidable hits all in band with
+  elites on), so the shipped default rose to the proposed 15 %; the two
+  `--elite-chance` commands, the per-metric verdict and the enable decision are
+  recorded in [`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
 
 #### Beat-locked soundtrack and intensity mix — ranked 6, already planned
 

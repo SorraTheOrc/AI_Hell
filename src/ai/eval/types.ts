@@ -372,6 +372,20 @@ export interface ArenaConfig {
    */
   readonly campaignLevels?: readonly LevelDefinition[];
   /**
+   * Override the **seeded elite (anomaly) budget** for full-campaign mode
+   * (AH-0MWU667OG00287SY). Omitted → the shipped `ELITE_WAVE_CHANCE`
+   * (`src/waves/eliteSpawn.ts`), so a batch plays the shipped posture; a
+   * number (0..1) forwards through `WaveManager.setEliteWaveChance`, which is
+   * what lets the balance-evidence batch measure the mechanic **with elites
+   * on** while the shipped default is still gated. `0` is the pre-change
+   * baseline and produces records byte-identical to the elite-free harness.
+   *
+   * Only full-campaign mode plans elites (the shared `WaveManager` owns the
+   * per-wave stream); the per-level harness plan has no campaign wave index
+   * and stays elite-free as a documented fidelity boundary.
+   */
+  readonly eliteWaveChance?: number;
+  /**
    * Resolved balance configuration (enemy archetypes, ship, difficulty
    * curves) built through the shared config loaders. When omitted,
    * `runArena` resolves it from the shared config store (seed defaults before

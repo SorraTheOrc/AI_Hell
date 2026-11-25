@@ -258,6 +258,16 @@ import {
 } from '../../core/levelScaling';
 import { enemyForceFieldHits } from '../../core/enemyForceField';
 import { DEFAULT_RULES } from '../../core/rules';
+import {
+  applyEliteDeathBehaviour,
+  eliteBonusHealth,
+  eliteForceFieldHits,
+  ELITE_VOLATILE_BURST_LIFETIME,
+  type EliteBurstShot,
+  type EliteSplitOffset,
+} from '../../scenes/core/eliteMechanics';
+import { resolveEliteReward } from '../../core/eliteRewardRules';
+import type { EliteBehaviour } from '../../core/eliteVocabulary';
 import { defaultCandidatePool } from '../../core/difficultySequencer';
 import { isNonBlockingHazard } from '../../scenes/core/waveTimeout';
 import {
@@ -413,6 +423,13 @@ interface Hostile {
   alive: boolean;
   archetype: string;
   isAsteroid: boolean;
+  /**
+   * The authored elite (anomaly) behaviour, or `null` for an ordinary spawn
+   * (AH-0MWU667OG00287SY). Non-null marks the wave's elite: the same counted
+   * archetype with the authored bonus hit points, whose one bounded death
+   * behaviour is driven by the shared dispatcher.
+   */
+  eliteBehaviour: EliteBehaviour | null;
   /**
    * Campaign wave index this hostile belongs to; `-1` for hostiles outside
    * wave accounting (the seeded reservoir and the asteroid shadow-hazard).
@@ -689,6 +706,8 @@ interface HostileSpec {
   y: number;
   archetype: string;
   isAsteroid: boolean;
+  /** True when the shared wave plan reserved this spawn as the wave's elite. */
+  elite?: boolean;
 }
 
 /** The internal mutable arena state. */
@@ -1477,6 +1496,52 @@ export function resolveArenaEvolution(
 }
 
 /**
+ * The spawn-time face of an elite (anomaly) variant
+ * (AH-0MWU667OG00287SY): the hit pool, the force-field hits and the authored
+ * behaviour, resolved through the **shared** elite modules the game and the
+ * gyms run (`eliteBonusHealth`, `eliteForceFieldHits`). Pure, so the arena's
+ * elite spawn is testable without simulating a run.
+ *
+ * An `elite` flag on an archetype that authors no `eliteBehaviour` stays an
+ * ordinary spawn: an elite is data-driven, never a harness invention.
+ *
+ * @param enemy - The archetype's resolved config (undefined → harness default).
+ * @param options.level - Campaign level for the force-field curve.
+ * @param options.elite - True when the shared wave plan reserved this spawn.
+ * @param options.forceFields - `false` resolves every field at level 1
+ *   (the documented hull-only baseline), exactly like the non-elite path.
+ */
+export interface ArenaHostileStats {
+  /** The authored behaviour, or `null` for an ordinary spawn. */
+  readonly eliteBehaviour: EliteBehaviour | null;
+  /** Spawn hit points: the archetype hull plus any authored elite bonus. */
+  readonly health: number;
+  /** Force-field hits resolved through the shared curve (0 when disabled). */
+  readonly fieldHits: number;
+}
+
+export function resolveArenaHostileStats(
+  enemy: EnemyConfig | undefined,
+  options: { level: number; elite?: boolean; forceFields?: boolean },
+): ArenaHostileStats {
+  const baseHealth = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
+  const behaviour =
+    options.elite === true && enemy?.eliteBehaviour
+      ? enemy.eliteBehaviour
+      : null;
+  const health = behaviour
+    ? eliteBonusHealth(baseHealth, enemy?.eliteBonusHp)
+    : baseHealth;
+  const fieldHits =
+    enemy && (options.forceFields ?? true)
+      ? behaviour
+        ? eliteForceFieldHits(behaviour, options.level, enemy)
+        : enemyForceFieldHits(options.level, enemy)
+      : 0;
+  return { eliteBehaviour: behaviour, health, fieldHits };
+}
+
+/**
  * Runs one headless arena run for `policy` (AC1).
  *
  * The returned {@link ArenaRunResult.records} are telemetry-shaped and can be
@@ -1582,9 +1647,17 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     : null;
   // The seeded elite budget (AH-0MWU665DM00669U0) derives its per-wave
   // streams from the same run seed, so a re-run of a seed replays the same
-  // elite decisions. Ships off (`ELITE_WAVE_CHANCE = 0`); the balance harness
-  // raises it through `setEliteWaveChance` once the evidence gate clears.
+  // elite decisions. The shipped chance now fields elites; the evidence seam
+  // can still force `0` for the elite-free baseline or any other share.
   campaignManager?.setRunSeed(config.seed);
+  // The elite (anomaly) budget seam (AH-0MWU667OG00287SY): an explicit
+  // `eliteWaveChance` forwards to the shared `WaveManager`, so the balance
+  // batch can replay the evidence with elites on, or capture the elite-free
+  // baseline (`0`) with identical harness code. Omitted → the shipped
+  // `ELITE_WAVE_CHANCE`.
+  if (typeof config.eliteWaveChance === 'number' && Number.isFinite(config.eliteWaveChance)) {
+    campaignManager?.setEliteWaveChance(config.eliteWaveChance);
+  }
   // A dedicated seeded stream for campaign formation/spawner positioning
   // (independent of the reservoir, governor and sim streams).
   const campaignRng = campaignEnabled ? createSeededRng(config.seed) : null;
@@ -1761,8 +1834,18 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // the game — the per-level plan carries each wave's gate
     // (AH-0MWFDQ9EY004NO4X).
     const enemy = enemyByKey.get(spec.archetype);
-    const health = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
     const radius = positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS);
+    // Elite (anomaly) variants (AH-0MWU667OG00287SY): the shared wave plan
+    // flags exactly one counted spawn per elite wave; the spawn then resolves
+    // the variant through the SAME shared seams the game and gyms run. A flag
+    // on an archetype with no authored behaviour stays an ordinary spawn.
+    const eliteStats = resolveArenaHostileStats(enemy, {
+      level: campaignEnabled && campaignManager ? campaignManager.level : resolvedLevel,
+      elite: spec.elite === true,
+      forceFields: config.forceFields ?? true,
+    });
+    const health = eliteStats.health;
+    const eliteBehaviour = eliteStats.eliteBehaviour;
     // Force-field hits for evidence mode (epic AH-0MVJ8W4GE007OMNT, AC5):
     // resolved from the SAME shared curve as the game and the level gym, so
     // a before/after bot batch reflects the barrier's durability cost. The
@@ -1775,12 +1858,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // pre-change (hull-only) baseline is captured with identical harness
     // code and seeds. `fieldHits` is `0` for unshielded hostiles, so the
     // hull-only model is unchanged wherever no enemy carries a field.
-    const fieldHits = enemy && (config.forceFields ?? true)
-      ? enemyForceFieldHits(
-          campaignEnabled && campaignManager ? campaignManager.level : resolvedLevel,
-          enemy,
-        )
-      : 0;
+    const fieldHits = eliteStats.fieldHits;
     // Movement class resolution goes through the **bot-side** map
     // (AH-0MWM0C40V002ISCA): the harness and the bot's hazard predictor must
     // never disagree about a hostile's class. Only an enabled class gets a
@@ -1807,6 +1885,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       alive: true,
       archetype: spec.archetype,
       isAsteroid: spec.isAsteroid,
+      eliteBehaviour,
       wave,
       radius,
       getHitRadius: () => radius,
@@ -1867,7 +1946,13 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     if (!manager || !rng) return;
     for (const spawn of manager.planSpawns(rng)) {
       spawnHostile(
-        { x: spawn.x, y: spawn.y, archetype: spawn.enemyKey, isAsteroid: false },
+        {
+          x: spawn.x,
+          y: spawn.y,
+          archetype: spawn.enemyKey,
+          isAsteroid: false,
+          elite: spawn.elite === true,
+        },
         nextHostileId(),
         -1,
         spawn.shootEnabled,
@@ -1975,6 +2060,48 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         archetype: hostile.archetype,
       },
     );
+    const supplyLevel = campaignEnabled ? campaignManager!.level : resolvedLevel;
+    // Elite (anomaly) death behaviour (AH-0MWU667OG00287SY): the shared
+    // dispatcher decides *how many* and *where*; these seams only perform the
+    // shipped spawn. Splitter children are ordinary counted spawns, so they
+    // are registered with the shared manager **before** the parent's death is
+    // accounted — the alive count never dips to zero and the wave cannot clear
+    // early. Volatile shots join the live enemy-bullet list, so the shared
+    // collision pass can hit the player with them.
+    let eliteOutcome: { children: number; bullets: number } = {
+      children: 0,
+      bullets: 0,
+    };
+    if (hostile.eliteBehaviour) {
+      const splitHost = {
+        spawnSplitChild: (offset: EliteSplitOffset): void => {
+          spawnHostile(
+            {
+              x: hostile.x + offset.x,
+              y: hostile.y + offset.y,
+              archetype: hostile.archetype,
+              isAsteroid: false,
+            },
+            nextHostileId(),
+            hostile.wave,
+            hostile.shotProbability > 0,
+          );
+          // Full-campaign waves gate on the shared manager's alive count.
+          if (campaignEnabled) campaignManager?.registerDynamicSpawn(1);
+        },
+        spawnVolatileBullet: (shot: EliteBurstShot): void => {
+          world.enemyBullets.push({
+            x: hostile.x,
+            y: hostile.y,
+            vx: shot.vx,
+            vy: shot.vy,
+            lifetime: ELITE_VOLATILE_BURST_LIFETIME,
+            elapsed: 0,
+          });
+        },
+      };
+      eliteOutcome = applyEliteDeathBehaviour(hostile.eliteBehaviour, splitHost);
+    }
     // Campaign modes: the **real per-kill drop rule** (the shared
     // levelScaling module) replaces the seeded power-up reservoir. The
     // level is the wave's current campaign level (identified before the
@@ -1984,13 +2111,37 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // level-scaled Extra Life chance — at most one generic drop plus one
     // Extra Life per kill.
     if (realSupplyMode) {
-      const supplyLevel = campaignEnabled ? campaignManager!.level : resolvedLevel;
-      if (simRng() < powerUpDropChance(supplyLevel, DEFAULT_RULES)) {
+      if (hostile.eliteBehaviour) {
+        // An elite always pays: the ordinary per-kill roll is bypassed and
+        // one drop is guaranteed from the same pool (`resolveEliteReward`).
+        world.drops.push({ x: hostile.x, y: hostile.y });
+      } else if (simRng() < powerUpDropChance(supplyLevel, DEFAULT_RULES)) {
         world.drops.push({ x: hostile.x, y: hostile.y });
       }
       if (hostile.isAsteroid && simRng() < extraLifeDropChance(supplyLevel, DEFAULT_RULES)) {
         world.drops.push({ x: hostile.x, y: hostile.y });
       }
+    }
+    // The reward's evidence event. The arena models the reward **decision**
+    // (guaranteed drop + level-scaled bump, the same resolver the game reads)
+    // but not kill-time mineral payouts: the harness mineral supply is the
+    // seeded harvest, and the ordinary per-kill re-drop is likewise not
+    // modelled. Modelling only the elite's bump would overstate its share of
+    // an economy the arena does not otherwise simulate, so `mineralsCollected`
+    // stays comparable with the pre-elite baseline (documented in
+    // docs/BALANCING.md).
+    if (hostile.eliteBehaviour) {
+      const reward = resolveEliteReward(supplyLevel, DEFAULT_RULES);
+      pushEvent(tick, 'elite_killed', {
+        x: hostile.x,
+        y: hostile.y,
+        archetype: hostile.archetype,
+        behaviour: hostile.eliteBehaviour,
+        children: eliteOutcome.children,
+        bullets: eliteOutcome.bullets,
+        guaranteedDrop: reward.guaranteedDrop,
+        mineralBump: reward.mineralBump,
+      });
     }
     // Wave/level progression is driven exclusively by the shared manager
     // (full-campaign mode). Asteroids and lane traffic are non-blocking

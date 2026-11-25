@@ -152,8 +152,8 @@ export interface WaveDefinition {
    * groups and its archetype must declare an elite behaviour, otherwise no
    * elite is planned — a bad authoring value never spawns a broken elite.
    * Absent (the default) leaves the wave to the seeded budget in
-   * `./eliteSpawn.ts`, which ships off (`ELITE_WAVE_CHANCE = 0`). Level 1
-   * never spawns an elite regardless of this field.
+   * `./eliteSpawn.ts` (shipped `ELITE_WAVE_CHANCE = 0.15`). Level 1 never
+   * spawns an elite regardless of this field.
    */
   elite?: string;
 }

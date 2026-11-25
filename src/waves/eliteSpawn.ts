@@ -59,12 +59,14 @@ import type { WaveDefinition } from './Formations';
 /**
  * Share of eligible waves the seeded budget grants an elite to.
  *
- * Ships **off** (`0`): the mechanic is authored/off in the arcade campaign
- * until the same-seed bot batch clears the experience-target bands (parent
- * AC9, AH-0MWU667OG00287SY). Raising this above zero is gated on that
- * evidence being recorded, and is a one-line change here.
+ * Ships **on** at the proposed **15 %**. It was authored/off (`0`) until the
+ * same-seed bot batch cleared the experience-target bands (parent AC9); the
+ * evidence and the enable decision are recorded in
+ * `docs/BALANCING.md` (AH-0MWU667OG00287SY). The shipped campaign authors the
+ * variant axis on its ordinary archetypes (`src/data/enemy-configs.csv`), so
+ * this budget is what fields a seeded elite. Level 1 stays exempt regardless.
  */
-export const ELITE_WAVE_CHANCE = 0;
+export const ELITE_WAVE_CHANCE = 0.15;
 
 /** The onboarding level that never spawns an elite (parent AC2, level 1). */
 export const ELITE_EXEMPT_LEVEL = 1;

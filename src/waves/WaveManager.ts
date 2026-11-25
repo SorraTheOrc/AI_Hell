@@ -120,8 +120,9 @@ export class WaveManager {
   private runSeed = 0;
   /**
    * Live elite budget share. Defaults to the shipped
-   * {@link ELITE_WAVE_CHANCE} (`0`, off); tests and the balance-evidence
-   * harness raise it through {@link WaveManager.setEliteWaveChance}.
+   * {@link ELITE_WAVE_CHANCE} (15 %); tests and the balance-evidence harness
+   * override it through {@link WaveManager.setEliteWaveChance}, including `0`
+   * for an elite-free baseline.
    */
   private eliteWaveChance = ELITE_WAVE_CHANCE;
 
@@ -177,10 +178,10 @@ export class WaveManager {
 
   /**
    * Overrides the seeded elite budget share (default
-   * {@link ELITE_WAVE_CHANCE}, `0`). A tuning and test seam mirroring the
-   * scene's other `set*` seams; the shipped value stays `0` until the
-   * balance evidence clears (parent AC9). Non-finite values restore the
-   * shipped default, and the value is clamped to `[0, 1]`.
+   * {@link ELITE_WAVE_CHANCE}, 15 %). A tuning and test seam mirroring the
+   * scene's other `set*` seams; `0` captures the elite-free baseline used by
+   * the balance evidence (parent AC9). Non-finite values restore the shipped
+   * default, and the value is clamped to `[0, 1]`.
    */
   setEliteWaveChance(chance: number): void {
     this.eliteWaveChance = Number.isFinite(chance)

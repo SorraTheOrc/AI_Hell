@@ -79,16 +79,23 @@ function plan(
 }
 
 describe('eliteSpawn — shipped defaults (AC2)', () => {
-  it('ships ELITE_WAVE_CHANCE at zero and level 1 as the exempt level', () => {
-    expect(ELITE_WAVE_CHANCE).toBe(0);
+  it('ships ELITE_WAVE_CHANCE at 15 % and level 1 as the exempt level', () => {
+    // Enabled by the measured balance gate (AH-0MWU667OG00287SY).
+    expect(ELITE_WAVE_CHANCE).toBe(0.15);
     expect(ELITE_EXEMPT_LEVEL).toBe(1);
+  });
+
+  it('the shipped default fields an elite on some waves', () => {
+    // A live budget, not a decorative constant: some seeded waves grant one.
+    const granted = Array.from({ length: 50 }, (_, index) =>
+      plan({ chance: ELITE_WAVE_CHANCE, runSeed: index + 1 }),
+    );
+    expect(granted.some((result) => result !== null)).toBe(true);
   });
 
   it('resolves no elite and spends nothing when the budget is off', () => {
     const resolve = vi.fn(ELITE_CONFIG);
-    expect(
-      plan({ chance: ELITE_WAVE_CHANCE, configFor: resolve }),
-    ).toBeNull();
+    expect(plan({ chance: 0, configFor: resolve })).toBeNull();
     // Off means byte-for-byte unchanged: no config lookup, hence no draw.
     expect(resolve).not.toHaveBeenCalled();
   });
