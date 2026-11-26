@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.2.0 (2026-11-26)
+> **Release focus:** This release focuses on deepening the hex-based combat and progression systems, with elemental strengths and weaknesses now affecting damage, captured hexes banking minerals and rewarding equippable weapons, and new weapon fusion and loadout customization options. It also improves the demo bot's reliability and behavior, adds elite enemies and escalating Ring 1 difficulty, and polishes promo video rendering.
+### Features
+- Your hangar now auto-equips strong weapons against the upcoming boss. (AH-0MWOROJYT004WPSD)
+- Collecting minerals now plays a quiet chime that rises in pitch with each pickup. (AH-0MWNHEIV90047V91)
+- Hex strengths and weaknesses now change combat: counter weapons hit harder, resisted ones barely scratch. (AH-0MWL5376H001WJFZ)
+- Winning a hex now banks real minerals into your hangar war, shown on the defence report. (AH-0MWEVNBMM000QFO2)
+- Weapons you earn from captured hexes now actually show up in your hangar, ready to equip and fly. (AH-0MWW6PNA5008NC91)
+- Promos now render through a single maintained video tool, so highlight videos stay reliable. (AH-0MWOUY9IK004QWCU)
+- Styled bots now fly as competently as they mimic your style. (AH-0MWLCGWUF00631UX)
+- Demo bot now pauses 2.5s on upgrade choices and shows its pick during the countdown. (AH-0MWL7SU2Q009GEJ2)
+- See a clear battle results screen after each hex fight, showing your rewards or the enemy's weaknesses. (AH-0MWMFGXD6005WTMN)
+- Combine two weapons to fuse them into a powerful evolved weapon with a unique attack. (AH-0MWL7OWPF003E4TP)
+- Held hexes now pay minerals every sortie, scaled by aggression, shown in the report. (AH-0MWL8CDGN005878A)
+- Choose which owned power-ups your deployment installs, so you fly exactly the loadout you see. (AH-0MWOV8SMI006W52Z)
+- Promo clips now cross-fade at a consistent 300 ms for smoother, more polished transitions. (AH-0MWLYWYGK004JR2A)
+- Elite enemies now appear in later waves with special abilities and bonus rewards. (AH-0MWL7P1AO003LKXT)
+- Speed Boost now only increases your fire rate, so your ship handles normally while it's active. (AH-0MWLU8A7P001O391)
+### Bug Fixes
+- Bot Tuning exports now keep every setting, so saved tuning files no longer silently lose options. (AH-0MWW4UK5M009Q36R)
+- Fixed an intermittent test failure so demo mode runs reliably. (AH-0MWW6Y9JO009UJN3)
+- Demo mode's human-like steering check no longer fails randomly, so demo runs stay reliable. (AH-0MWPD1IH8005GHSK)
+- The demo bot now only fires when a target is actually in range and in its line of fire, so no more shooting at empty space. (AH-0MWPOET5A002IPTP)
+- Weapons won from hex captures now actually appear in your hangar and can be equipped. (AH-0MWWARFUK009KQM7)
+### Other
+- Ring 1 now ramps up as you clear it, with each capture raising the challenge. (AH-0MWFDQ9EY004NO4X)
+- Ring 2's evening now correctly shows 57 minutes against its 60–180 minute budget. (AH-0MWFDQCFV007BZE5)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.23 (2026-11-21)
 > **Release focus:** This release focuses on deepening the hex-map strategy layer with unique Ring 2 personalities, a Ring 1 landmark and special mission, and clearer hex intel and war status displays. It also overhauls battle preparation and progression through per-battle loadout selection, instant ship purchases, saveable builds, and permanent weapon and bot upgrades.
 ### Features
