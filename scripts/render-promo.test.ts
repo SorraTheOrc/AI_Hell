@@ -192,6 +192,29 @@ describe('capture:promo vidc handoff (AH-0MWPD4VV300828HE)', () => {
     expect(argv).toContain('--timeline');
   });
 
+  it('invents no vidc default other than the explicit fade duration', () => {
+    // AC2: resolution, frame rate and output format are vidc's own defaults
+    // until the caller selects them, so a render never silently re-encodes to a
+    // geometry this repo picked. The one default this driver *does* set is the
+    // cross-fade — explicit, and present exactly once (AC1).
+    const argv = buildVidcArgv(parseArgs([]));
+    for (const flag of ['--resolution', '--fps', '--format']) {
+      expect(argv).not.toContain(flag);
+    }
+    expect(argv.filter((entry) => entry === '--fade-duration')).toHaveLength(1);
+    expect(argv[argv.indexOf('--fade-duration') + 1]).toBe(DEFAULT_FADE_DURATION);
+
+    // ...and a selected value is forwarded rather than dropped.
+    const selected = buildVidcArgv(
+      parseArgs(['--resolution', '1280x720', '--fps', '60', '--format', '16:9']),
+    );
+    expect(selected[selected.indexOf('--resolution') + 1]).toBe('1280x720');
+    expect(selected[selected.indexOf('--fps') + 1]).toBe('60');
+    expect(selected[selected.indexOf('--format') + 1]).toBe('16:9');
+    // The fade default is still on the command line alongside the selections.
+    expect(selected.filter((entry) => entry === '--fade-duration')).toHaveLength(1);
+  });
+
   it('derives the document name from the output stem and keeps it beside the captures', () => {
     const options = parseArgs(['--dir', 'clips', '--output', 'clips/final-cut.mp4']);
     expect(resolveOutputPaths(options)).toEqual({
