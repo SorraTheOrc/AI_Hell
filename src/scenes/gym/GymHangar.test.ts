@@ -41,8 +41,16 @@ import {
 import {
   buildHangarScreenModel,
   HANGAR_STRONG_MARKER,
+  HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+  HANGAR_UNLOCK_VISIBLE_ROWS,
   HANGAR_WEAK_MARKER,
+  hangarUnlockMaxScroll,
 } from '../hangarWar/hangarScreen';
+import {
+  HANGAR_CATALOGUE,
+  isPurchasableEntry,
+  type HangarEntry,
+} from '../../data/hangarCatalogue';
 import { createRingState } from '../../core/hangarWar/hexRing';
 import { resolveHexCapture } from '../../core/hangarWar/captureCycle';
 import { bankedSalvageFromHangar, runSalvageFromRun } from '../../core/hangarWar/salvageBanking';
@@ -115,6 +123,59 @@ describe('GymHangar', () => {
     // Read-only: no row is actionable, so none is interactive either.
     expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
     expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
+  });
+
+  it('renders the same scrolling unlock tree the game does (AH-0MWWI3ONJ004QRR9)', async () => {
+    // A catalogue where every weapon is for sale holds the full 23-row tree
+    // while the right-hand loadout stays at the owned weapons. The gym is
+    // read-only, so this proves the shared renderer — not a gym copy — windows
+    // and scrolls the grown tree.
+    const catalogue: HangarEntry[] = HANGAR_CATALOGUE.map((entry) =>
+      entry.kind === 'weapon' && !isPurchasableEntry(entry)
+        ? { ...entry, minRing: 1, price: { minerals: 1, cores: 0 } }
+        : entry,
+    );
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.unlockedHulls = [
+      'hull-1',
+      'hull-2',
+      'hull-3',
+      'hull-4',
+    ];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+
+    const scene = await bootHangar({ payload, catalogue });
+    const model = scene.getModel();
+    expect(model.unlockRows).toHaveLength(23);
+    // Read-only: the same rows, none actionable.
+    expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+
+    const unlockRows = model.unlockRows.map(
+      (row) => scene.getRows().find((candidate) => candidate.key === row.key)!,
+    );
+    // The window starts on the first page; the rest is hidden, not drawn over
+    // the fixed bottom block.
+    const visible = unlockRows.filter((row) => row.text.visible);
+    expect(visible).toHaveLength(HANGAR_UNLOCK_VISIBLE_ROWS);
+    for (const row of visible) {
+      expect(row.text.y).toBeLessThanOrEqual(HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y);
+    }
+
+    // Scrolling the shared screen reaches the last row (pointer navigation).
+    expect(scene.scrollUnlockRows(HANGAR_UNLOCK_VISIBLE_ROWS)).toBe(
+      hangarUnlockMaxScroll(model),
+    );
+    const lastRow = unlockRows.at(-1)!;
+    expect(lastRow.text.visible).toBe(true);
+    expect(lastRow.text.y).toBeLessThanOrEqual(
+      HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+    );
   });
 
   it('renders the installable power-up rows from the same model, read-only (AH-0MWOV8SMI006W52Z)', async () => {

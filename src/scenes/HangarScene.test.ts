@@ -34,13 +34,14 @@ import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import { createRingState } from '../core/hangarWar/hexRing';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import type { HangarEntry } from '../data/hangarCatalogue';
-import { HANGAR_CATALOGUE } from '../data/hangarCatalogue';
+import { HANGAR_CATALOGUE, isPurchasableEntry } from '../data/hangarCatalogue';
 import { MAX_PERMANENT_LEVEL } from '../core/hangarWar/hangarEconomy';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
 import {
   BUILDOUT_ROW_KEY,
+  HANGAR_BUILDOUT_ROW_Y,
   HANGAR_SCREEN_TITLE,
   HANGAR_DEPLOY_ROW_Y,
   HANGAR_INTEL_FIRST_LINE_Y,
@@ -54,6 +55,10 @@ import {
   HANGAR_STRONG_MARKER,
   HANGAR_UNLOCKS_HEADING_Y,
   HANGAR_UNLOCK_ROW_START_Y,
+  HANGAR_UNLOCK_SCROLL_INDICATOR_Y,
+  HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+  HANGAR_UNLOCK_VIEWPORT_TOP_Y,
+  HANGAR_UNLOCK_VISIBLE_ROWS,
   HANGAR_WEAK_BACKGROUND,
   HANGAR_WEAK_COLOR,
   HANGAR_WEAK_MARKER,
@@ -70,6 +75,8 @@ import {
   formatRingLine,
   hangarAttractDecision,
   hangarLowestRowY,
+  hangarRightColumnLayout,
+  hangarUnlockMaxScroll,
   purchaseHangarEntry,
   renderHangarScreen,
   restartHangarWar,
@@ -772,7 +779,9 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
       targetHexId: 'hex-r1-6',
     });
 
-    // The single-sourced geometry fits the worst-case (full catalogue) model.
+    // This authored ring owns four weapons, so its tree fits one window. The
+    // full 23-row roster that overflows is covered by the scrolling spec below;
+    // either way the window geometry stays above the fixed block.
     expect(hangarLowestRowY(model)).toBeLessThan(HANGAR_RESTART_ROW_Y);
     expect(HANGAR_ROW_STEP).toBeGreaterThan(0);
     expect(HANGAR_INTEL_FIRST_LINE_Y + 2 * HANGAR_INTEL_LINE_STEP).toBeLessThan(
@@ -780,6 +789,10 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
     );
     expect(HANGAR_UNLOCKS_HEADING_Y).toBeLessThan(HANGAR_UNLOCK_ROW_START_Y);
     expect(HANGAR_UNLOCK_ROW_START_Y).toBeLessThan(HANGAR_RESTART_ROW_Y);
+    expect(HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y).toBeLessThan(HANGAR_BUILDOUT_ROW_Y);
+    expect(HANGAR_UNLOCK_SCROLL_INDICATOR_Y).toBeLessThan(
+      HANGAR_BUILDOUT_ROW_Y,
+    );
 
     const scene = await bootHangarForRender(payload);
     const view = renderHangarScreen(scene, model);
@@ -799,6 +812,201 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
     } finally {
       view.destroy();
     }
+  });
+});
+
+// ── The grown unlock tree scrolls (AH-0MWWI3ONJ004QRR9) ──────────
+//
+// The full derived roster is 23 unlock rows, which is taller than the space
+// above the fixed bottom block. These specs pin the scrolling window, the
+// pointer affordances and the keyboard auto-scroll, and prove the last row is
+// reachable without any row colliding with the buildout/deploy/map/restart
+// block. The catalogue is injected with every weapon purchasable so the tree
+// holds 23 rows while the right-hand loadout stays at the four owned weapons:
+// this isolates the unlock geometry the item is about.
+describe('hangar unlock tree scrolling (AH-0MWWI3ONJ004QRR9)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** A catalogue where every weapon is for sale, so the tree holds 23 rows. */
+  function fullRosterCatalogue(): HangarEntry[] {
+    return HANGAR_CATALOGUE.map((entry) =>
+      entry.kind === 'weapon' && !isPurchasableEntry(entry)
+        ? { ...entry, minRing: 1, price: { minerals: 1, cores: 0 } }
+        : entry,
+    );
+  }
+
+  /** Ring 1 with every non-weapon collectible, funded so rows are activatable. */
+  function fullRosterPayload(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['spread'],
+      modifiers: [],
+    };
+    payload.hangar.bankedMinerals = 10_000;
+    payload.hangar.bankedCores = 100;
+    return payload;
+  }
+
+  /** Boots the scene with the injected payload and catalogue. */
+  async function bootWithRoster(): Promise<HangarScene> {
+    booted = await bootScene([HangarScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: fullRosterPayload(),
+      storage: null,
+      catalogue: fullRosterCatalogue(),
+    });
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: HangarScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('fits the 23-row tree into a scrolling window above the fixed block', async () => {
+    const payload = fullRosterPayload();
+    const catalogue = fullRosterCatalogue();
+    const model = buildHangarScreenModel(payload, catalogue, {
+      targetHexId: 'hex-r1-6',
+    });
+
+    expect(model.unlockRows).toHaveLength(23);
+    // The **unscrolled** geometry overflows — that is why the tree scrolls —
+    // but the visible window, its pointer cue and the right column stay clear
+    // of the fixed block.
+    expect(hangarLowestRowY(model)).toBeGreaterThan(HANGAR_BUILDOUT_ROW_Y);
+    expect(HANGAR_UNLOCK_VIEWPORT_TOP_Y).toBe(HANGAR_UNLOCK_ROW_START_Y);
+    expect(HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y).toBeLessThan(HANGAR_BUILDOUT_ROW_Y);
+    expect(HANGAR_UNLOCK_SCROLL_INDICATOR_Y).toBeGreaterThan(
+      HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+    );
+    expect(HANGAR_UNLOCK_SCROLL_INDICATOR_Y).toBeLessThan(HANGAR_BUILDOUT_ROW_Y);
+    const right = hangarRightColumnLayout(model);
+    const rightLowest = Math.max(
+      ...right.hullRowY,
+      ...right.weaponRowY,
+      ...right.powerUpRowY,
+      ...right.modifierRowY,
+      ...right.savedBuildRowY,
+    );
+    expect(rightLowest).toBeLessThan(HANGAR_RESTART_ROW_Y);
+
+    const scene = await bootWithRoster();
+    // A read-only render of the same model (the gym's path) exercises the
+    // pointer affordances without the scene's handlers.
+    const view = renderHangarScreen(scene, model);
+    try {
+      const unlockRows = model.unlockRows.map(
+        (row) => view.rows.find((candidate) => candidate.key === row.key)!,
+      );
+      // Only the first window is visible; the rest is hidden, not drawn over
+      // the fixed block.
+      const visibleRows = unlockRows.filter((row) => row.text.visible);
+      expect(visibleRows).toHaveLength(HANGAR_UNLOCK_VISIBLE_ROWS);
+      for (const row of visibleRows) {
+        expect(row.text.y).toBeGreaterThanOrEqual(HANGAR_UNLOCK_VIEWPORT_TOP_Y);
+        expect(row.text.y).toBeLessThanOrEqual(HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y);
+      }
+      expect(Math.max(...visibleRows.map((row) => row.text.y))).toBeLessThan(
+        HANGAR_BUILDOUT_ROW_Y,
+      );
+
+      // A pointer click pages the window to the end, revealing the last row.
+      expect(view.scrollControls.up.visible).toBe(false);
+      expect(view.scrollControls.down.visible).toBe(true);
+      view.scrollControls.down.emit('pointerdown');
+      expect(view.getUnlockScroll()).toBe(hangarUnlockMaxScroll(model));
+      const lastRow = unlockRows.at(-1)!;
+      expect(lastRow.text.visible).toBe(true);
+      expect(lastRow.text.y).toBeGreaterThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_TOP_Y,
+      );
+      expect(lastRow.text.y).toBeLessThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+      );
+      expect(view.scrollControls.up.visible).toBe(true);
+      expect(view.scrollControls.down.visible).toBe(false);
+
+      // Scrolling back returns to the first row (no row is stranded).
+      view.scrollControls.up.emit('pointerdown');
+      expect(view.getUnlockScroll()).toBe(0);
+      expect(unlockRows[0].text.visible).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it('keeps every keyboard-focused unlock row inside the visible window', async () => {
+    const scene = await bootWithRoster();
+    const model = scene.getModel();
+    expect(model.unlockRows).toHaveLength(23);
+
+    const actionable = model.unlockRows.filter((row) => row.actionable);
+    // More actionable rows than one page, so focus must actually scroll.
+    expect(actionable.length).toBeGreaterThan(HANGAR_UNLOCK_VISIBLE_ROWS);
+
+    let scrolled = false;
+    for (const row of actionable) {
+      expect(scene.focusRow(row.key), `focus ${row.key}`).toBe(true);
+      expect(scene.getFocusedKey()).toBe(row.key);
+      const rendered = scene
+        .getRows()
+        .find((candidate) => candidate.key === row.key)!;
+      expect(rendered.text.visible, `${row.key} visible`).toBe(true);
+      expect(rendered.text.y).toBeGreaterThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_TOP_Y,
+      );
+      expect(rendered.text.y).toBeLessThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+      );
+      if (scene.getUnlockScroll() > 0) scrolled = true;
+    }
+    expect(scrolled).toBe(true);
+  });
+
+  it('auto-scrolls as Tab walks the focus order past the first page', async () => {
+    const scene = await bootWithRoster();
+    const model = scene.getModel();
+    const first = model.unlockRows.find((row) => row.actionable)!;
+    expect(scene.focusRow(first.key)).toBe(true);
+
+    let scrolled = false;
+    for (let step = 0; step < model.focusOrder.length + 2; step += 1) {
+      const key = scene.getFocusedKey();
+      if (key?.startsWith('buy:')) {
+        const rendered = scene
+          .getRows()
+          .find((candidate) => candidate.key === key)!;
+        expect(rendered.text.visible, `${key} visible`).toBe(true);
+        expect(rendered.text.y).toBeLessThanOrEqual(
+          HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+        );
+      }
+      if (scene.getUnlockScroll() > 0) scrolled = true;
+      pressKey(scene, { key: 'Tab' });
+    }
+    expect(scrolled).toBe(true);
   });
 });
 

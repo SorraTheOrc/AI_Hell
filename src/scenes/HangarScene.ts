@@ -928,4 +928,18 @@ export class HangarScene extends Phaser.Scene {
   activateFocused(): void {
     this.view?.activateFocused();
   }
+
+  /** The first visible unlock row (the scroll offset, in rows). */
+  getUnlockScroll(): number {
+    return this.view?.getUnlockScroll() ?? 0;
+  }
+
+  /**
+   * Scrolls the unlock tree by `delta` rows (positive = down). The grown tree
+   * scrolls instead of colliding with the fixed bottom block, so a pointer or
+   * keyboard seam can reveal every row (AH-0MWWI3ONJ004QRR9).
+   */
+  scrollUnlockRows(delta: number): number {
+    return this.view?.scrollUnlockRows(delta) ?? 0;
+  }
 }

@@ -2062,6 +2062,27 @@ export interface HangarScreenView {
   focusRow(key: string): boolean;
   /** Activates the focused row (what Enter/Space does). */
   activateFocused(): void;
+  /**
+   * The first unlock-tree row currently visible (the scroll offset, in rows).
+   * `0` when the whole tree fits or nothing has scrolled.
+   */
+  getUnlockScroll(): number;
+  /**
+   * Scrolls the unlock tree by `delta` rows (positive = down), clamped to the
+   * model. Returns the applied offset so a caller can assert the clamp.
+   */
+  scrollUnlockRows(delta: number): number;
+  /** Whether `key` is an unlock row inside the visible window (test seam). */
+  isUnlockRowVisible(key: string): boolean;
+  /**
+   * The pointer scroll affordances rendered beside the unlock tree. They are
+   * not model rows (so the keyboard focus order is unchanged), but a pointer
+   * user can click them to reveal the rows either side of the window.
+   */
+  readonly scrollControls: {
+    readonly up: Phaser.GameObjects.Text;
+    readonly down: Phaser.GameObjects.Text;
+  };
   /** Destroys the rendered objects and detaches the keyboard listener. */
   destroy(): void;
 }
@@ -2129,6 +2150,72 @@ export const HANGAR_UNLOCK_ROW_START_Y = 210;
 /** The Y of unlock-tree row `index` (single-sourced with the renderer). */
 export function hangarUnlockRowY(index: number): number {
   return HANGAR_UNLOCK_ROW_START_Y + index * HANGAR_ROW_STEP;
+}
+
+/**
+ * The unlock tree is taller than the space above the fixed bottom block at the
+ * full 23-row roster, so it renders through a fixed-height **viewport** and
+ * scrolls instead of colliding with the buildout/restart/map/deploy rows
+ * (AH-0MWWI3ONJ004QRR9).
+ *
+ * The window holds 12 rows (12 × 16 px = 192 px), ending one row step above the
+ * pointer scroll affordance and two steps above the top bottom-block slot
+ * (`HANGAR_BUILDOUT_ROW_Y`). Every constant is single-sourced with the renderer
+ * and the layout spec, so a future roster change cannot silently reintroduce
+ * the collision.
+ */
+export const HANGAR_UNLOCK_VISIBLE_ROWS = 12;
+
+/** The Y of the first row inside the unlock viewport (the top of the window). */
+export const HANGAR_UNLOCK_VIEWPORT_TOP_Y = HANGAR_UNLOCK_ROW_START_Y;
+
+/** The Y of the last row that fits inside the unlock viewport. */
+export const HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y =
+  HANGAR_UNLOCK_ROW_START_Y
+  + (HANGAR_UNLOCK_VISIBLE_ROWS - 1) * HANGAR_ROW_STEP;
+
+/**
+ * The Y of the pointer scroll affordance, directly beneath the viewport and
+ * above the fixed bottom block.
+ */
+export const HANGAR_UNLOCK_SCROLL_INDICATOR_Y =
+  HANGAR_UNLOCK_ROW_START_Y + HANGAR_UNLOCK_VISIBLE_ROWS * HANGAR_ROW_STEP;
+
+/**
+ * The largest scroll offset (in rows) the unlock viewport allows. `0` when the
+ * whole tree fits, so callers can treat a scrollable list and a short one alike.
+ */
+export function hangarUnlockMaxScroll(
+  model: Pick<HangarScreenModel, 'unlockRows'>,
+): number {
+  return Math.max(0, model.unlockRows.length - HANGAR_UNLOCK_VISIBLE_ROWS);
+}
+
+/**
+ * The scroll offset that keeps unlock row `index` inside the visible window.
+ *
+ * Pure and total: the renderer, the pointer affordances and the navigation
+ * spec share this one rule, so a focused row can never be scrolled out of view.
+ * The returned offset is not clamped to the model's maximum — the caller clamps
+ * it once against {@link hangarUnlockMaxScroll}.
+ */
+export function hangarUnlockScrollForFocus(
+  index: number,
+  scroll: number,
+): number {
+  if (index < scroll) return index;
+  if (index >= scroll + HANGAR_UNLOCK_VISIBLE_ROWS) {
+    return index - HANGAR_UNLOCK_VISIBLE_ROWS + 1;
+  }
+  return scroll;
+}
+
+/** Whether unlock row `index` is inside the window at scroll offset `scroll`. */
+export function hangarUnlockRowVisible(
+  index: number,
+  scroll: number,
+): boolean {
+  return index >= scroll && index < scroll + HANGAR_UNLOCK_VISIBLE_ROWS;
 }
 
 /** The right-hand column's section and row geometry (single-sourced). */
@@ -2202,11 +2289,14 @@ export function hangarRightColumnLayout(
 }
 
 /**
- * The lowest row Y the model renders above the fixed bottom-row block.
+ * The lowest row Y the **unscrolled** model geometry reaches.
  *
- * A layout assertion pins it below {@link HANGAR_RESTART_ROW_Y} (the top
- * bottom-row slot), so the intel section and the marked rows can never collide
- * with the deploy/map/restart rows.
+ * This is the height the tree would occupy without a viewport: at the full
+ * 23-row roster it extends past the fixed bottom block, which is exactly why
+ * the renderer scrolls the unlock tree (AH-0MWWI3ONJ004QRR9). The layout spec
+ * therefore asserts overflow against this value and checks that the *visible
+ * window* ({@link HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y}) and the right column stay
+ * above {@link HANGAR_RESTART_ROW_Y}.
  */
 export function hangarLowestRowY(model: HangarScreenModel): number {
   const right = hangarRightColumnLayout(model);
@@ -2430,8 +2520,74 @@ export function renderHangarScreen(
     focusManager.register(text, action);
   };
 
-  // ── Unlock tree (left column) ──────────────────────────────────
+  // ── Unlock tree (left column, scrollable viewport) ──────────────
+  // The full roster (23 rows) is taller than the space above the fixed bottom
+  // block, so the tree renders through a fixed 12-row window and scrolls. The
+  // window, keyboard focus auto-scroll and pointer affordances below share the
+  // one geometry in `hangarScreen` (AH-0MWWI3ONJ004QRR9).
   heading(scene, objects, LEFT_X, HANGAR_UNLOCKS_HEADING_Y, 'UNLOCKS');
+
+  // Pointer scroll affordances. They are deliberately **not** model rows and
+  // not registered with the FocusManager, so the shipped keyboard focus order
+  // (and every test pinning it) is unchanged; a keyboard-only player reaches
+  // the same rows through focus auto-scroll below.
+  const scrollUp = scene.add
+    .text(LEFT_X + 130, HANGAR_UNLOCKS_HEADING_Y, '', {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: HEADING_COLOR,
+    })
+    .setInteractive({ useHandCursor: true });
+  const scrollDown = scene.add
+    .text(LEFT_X + 130, HANGAR_UNLOCK_SCROLL_INDICATOR_Y, '', {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: HEADING_COLOR,
+    })
+    .setInteractive({ useHandCursor: true });
+  objects.push(scrollUp, scrollDown);
+
+  const unlockRefs: Phaser.GameObjects.Text[] = [];
+  let unlockScroll = 0;
+  const maxUnlockScroll = (): number => hangarUnlockMaxScroll(model);
+  const clampUnlockScroll = (value: number): number =>
+    Math.min(Math.max(0, value), maxUnlockScroll());
+  const unlockIndexFor = (key: string): number =>
+    model.unlockRows.findIndex((row) => row.key === key);
+  const applyUnlockScroll = (): void => {
+    unlockScroll = clampUnlockScroll(unlockScroll);
+    unlockRefs.forEach((text, index) => {
+      text.setVisible(hangarUnlockRowVisible(index, unlockScroll));
+      text.y =
+        HANGAR_UNLOCK_VIEWPORT_TOP_Y
+        + (index - unlockScroll) * HANGAR_ROW_STEP;
+    });
+    const moreAbove = unlockScroll > 0;
+    const moreBelow = unlockScroll < maxUnlockScroll();
+    scrollUp.setText(moreAbove ? '▲ MORE' : '').setVisible(moreAbove);
+    scrollDown.setText(moreBelow ? '▼ MORE' : '').setVisible(moreBelow);
+  };
+  const scrollUnlockRows = (delta: number): number => {
+    unlockScroll = clampUnlockScroll(unlockScroll + delta);
+    applyUnlockScroll();
+    return unlockScroll;
+  };
+  const ensureUnlockVisible = (key: string | null): void => {
+    if (key === null) return;
+    const index = unlockIndexFor(key);
+    if (index < 0) return;
+    unlockScroll = clampUnlockScroll(
+      hangarUnlockScrollForFocus(index, unlockScroll),
+    );
+    applyUnlockScroll();
+  };
+  scrollUp.on('pointerdown', () => {
+    scrollUnlockRows(-HANGAR_UNLOCK_VISIBLE_ROWS);
+  });
+  scrollDown.on('pointerdown', () => {
+    scrollUnlockRows(HANGAR_UNLOCK_VISIBLE_ROWS);
+  });
+
   model.unlockRows.forEach((row, index) => {
     // An owned level-bearing row is an **upgrade** row: it activates the
     // next-level purchase, not the (already-owned) unlock. Every other
@@ -2455,7 +2611,10 @@ export function renderHangarScreen(
       row.matchup,
       action,
     );
+    unlockRefs.push(rendered.byKey.get(row.key)!.text);
   });
+  // Position the initial window (and hide the rows below the fold).
+  applyUnlockScroll();
 
   // ── Deployment selector (right column) ─────────────────────────
   const right = hangarRightColumnLayout(model);
@@ -2646,11 +2805,30 @@ export function renderHangarScreen(
     return focusable[index]?.key ?? null;
   };
 
+  // Pointer scroll: a wheel over the screen moves the unlock window by one row
+  // (only when the tree overflows, so a short list is never interceptable).
+  const onWheel = (
+    _pointer: Phaser.Input.Pointer,
+    _over: readonly Phaser.GameObjects.GameObject[],
+    _deltaX: number,
+    deltaY: number,
+  ): void => {
+    if (maxUnlockScroll() === 0) return;
+    scrollUnlockRows(deltaY > 0 ? 1 : -1);
+  };
+  scene.input?.on('wheel', onWheel);
+
   focusManager.attachKeyboard(scene);
-  if (options?.onFocusChange) {
-    const onFocusChange = options.onFocusChange;
-    focusManager.setFocusChangeListener(() => onFocusChange(focusedKey()));
-  }
+  // Always observe focus: an unlock row that gains keyboard focus is scrolled
+  // back into the window before the external listener reports it, so the grown
+  // tree can never hide the focused row from a keyboard-only player.
+  focusManager.setFocusChangeListener(() => {
+    const key = focusedKey();
+    ensureUnlockVisible(key);
+    options?.onFocusChange?.(key);
+  });
+  // Seed the window: the default focus may be a row below the first page.
+  ensureUnlockVisible(focusedKey());
 
   return {
     model,
@@ -2661,13 +2839,22 @@ export function renderHangarScreen(
       const index = focusable.findIndex((row) => row.key === key);
       if (index < 0) return false;
       focusManager.setFocusedIndex(index);
+      ensureUnlockVisible(key);
       return true;
     },
     activateFocused(): void {
       focusManager.activateFocused();
     },
+    getUnlockScroll: () => unlockScroll,
+    scrollUnlockRows,
+    isUnlockRowVisible(key: string): boolean {
+      const index = unlockIndexFor(key);
+      return index >= 0 && hangarUnlockRowVisible(index, unlockScroll);
+    },
+    scrollControls: { up: scrollUp, down: scrollDown },
     destroy(): void {
       focusManager.shutdown();
+      scene.input?.off('wheel', onWheel);
       for (const object of rendered.objects) object.destroy();
       rendered.objects.length = 0;
       rendered.rows.length = 0;
