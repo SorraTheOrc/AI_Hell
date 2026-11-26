@@ -269,8 +269,10 @@ function isShippedWeapon(id: string): id is WeaponId {
  * 5. otherwise an upgrade, recorded as a hangar modifier.
  *
  * Total: a missing/blank grant resolves to `null` (the hex grants nothing), and
- * an unknown upgrade id is still recorded — never dropped — because the design
- * lets hexes grant strength the catalogue has not itemised yet.
+ * an unknown upgrade id is still recorded — never dropped — as a
+ * defence-in-depth fallback. Every **authored** grant resolves to a catalogue
+ * entry (guard (e) in `hangarCatalogue`), so the fallback is never the path a
+ * weapon reward takes.
  *
  * @param grantId — the authored `grants` value (or anything at all).
  * @param catalogue — the hangar tree to resolve against (defaults to shipped).

@@ -520,7 +520,8 @@ describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () =
 
   it('falls back to the strongest itemised hull when a grant is not in the catalogue', () => {
     // A hull grant the catalogue does not itemise (`hull-9`) is owned but
-    // contributes no run stats, exactly like `rapid` / `core-bank`.
+    // contributes no run stats, exactly like the capture cycle's defence-in-depth
+    // fallback for any unknown upgrade id.
     const ownership: RingLoadoutOwnership = {
       hulls: ['hull-1', 'hull-2', 'hull-9'],
       weapons: [],

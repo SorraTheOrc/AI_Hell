@@ -3542,9 +3542,9 @@ slice deferred:
 - **Granted entries.** A hex's authored `grants` id is resolved into the hangar's
   owned sets by one alias/catalogue mapping (`waveLaser` → `wave_laser`,
   `extra-life` → `hardened_plating`, shipped weapon ids, `hull-…` ids, and any
-  other id as an upgrade). Ring 1 grants the Bulwark hull, the Wave Laser and
-  Ricochet starting weapons, the `rapid` strength entry, Extra Life and —
-  through its special mission — the grant-only `hull-4`; ring 2 grants further
+  other id as an upgrade). Ring 1 grants the Bulwark hull, the Wave Laser,
+  Ricochet and Rapid starting weapons, Extra Life and — through its special
+  mission — the grant-only `hull-4`; ring 2 grants further
   hulls (`hull-2`, `hull-3`), weapons
   (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
   `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.

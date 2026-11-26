@@ -390,7 +390,8 @@ item list:
   loadout.
 - **Entering ring 2** — ring 1's six grants: the `ricochet`, `rapid` and
   `wave_laser` weapons, the `hull-2` hull, `hardened_plating` and the
-  effect-free `core-bank` upgrade.
+  grant-only `hull-4` special-mission hull (which replaced the `core-bank`
+  grant no authored hex carries any more).
 - **Equip convention (deterministic)** — every owned weapon is equipped,
   trimmed by the shared six-slot cap (`capDropIdsToSlotPool`); the strongest
   owned hull is active (entering ring 2 that is `hull-2`: 4 lives, 0.85 speed;
@@ -401,8 +402,10 @@ item list:
   catalogue entry**: the catalogue derives one weapon entry per
   `src/data/weapons.csv` row bar the documented `cannon` exclusion, and its
   build-time guards fail closed on an authored weapon grant with no entry, so a
-  granted weapon is owned **and** deployable. A grant that intentionally carries
-  no run stat is on the short effect-free allowlist; the `resolveHexGrant`
+  granted weapon is owned **and** deployable — ring 2's `arc`, `broadside`,
+  `dual`, `nova` and `rapid` grants included. A grant that intentionally carries
+  no run stat is on the short effect-free allowlist (`armour-plating`,
+  `systems-upgrade`, `firepower-up`); the `resolveHexGrant`
   "catalogue does not itemise" fallback remains only as defence-in-depth for a
   hypothetical future uncatalogued grant (a `hull-9`) — it is no longer a path a
   weapon grant can take.

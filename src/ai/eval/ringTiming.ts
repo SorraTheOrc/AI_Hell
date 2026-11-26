@@ -92,14 +92,18 @@
  * - **Entering ring *n*** — the starter kit plus every grant of the previous
  *   rings, earned in the same plan order (ring 2: the `ricochet`, `rapid` and
  *   `wave_laser` weapons, the `hull-2` hull, `hardened_plating`, and the
- *   effect-free `core-bank` modifier).
+ *   grant-only `hull-4` special-mission hull, which replaced the old
+ *   `core-bank` grant).
  * - **Equip convention (deterministic)** — every owned weapon is equipped
  *   (trimmed by the shipped `capDropIdsToSlotPool` six-slot cap), the
  *   **strongest owned hull** is active (most starting lives, then speed), and
  *   every owned `extra-lives` modifier is applied, capped at `MAX_LIVES`. A
- *   grant the catalogue does not itemise (`hull-9`, `rapid`, `core-bank`) is
- *   owned but contributes no run stats — the same "recorded but effect-free"
- *   rule the shipped capture cycle uses.
+ *   hypothetical grant the catalogue does not itemise (a future `hull-9`) is
+ *   owned but contributes no run stats — the capture cycle's defence-in-depth
+ *   fallback. Every **authored** grant resolves to a catalogue entry (guard (e)
+ *   in `hangarCatalogue`), so the five weapon grants (`rapid`, `arc`,
+ *   `broadside`, `dual`, `nova`) are equipped and deployable like any other
+ *   owned weapon.
  *
  * The loadout is an **explicit model input** ({@link
  * RingTimingOptions.ownership}, default {@link ringEntryOwnership}) and reaches
@@ -829,9 +833,9 @@ function ownedHullDefinition(
  * lives first, then the faster hull, then catalogue order (deterministic).
  *
  * A hull grant the catalogue does not itemise (a future `hull-9`) is owned but
- * supplies no run stats, exactly as `rapid` / `core-bank` are recorded as
- * effect-free modifiers, so it cannot invent lives the deployment path would
- * not grant.
+ * supplies no run stats, exactly as the capture cycle's defence-in-depth
+ * fallback records an unknown upgrade, so it cannot invent lives the deployment
+ * path would not grant.
  */
 function strongestOwnedHull(
   ownedHulls: readonly string[],
