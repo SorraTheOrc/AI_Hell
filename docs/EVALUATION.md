@@ -397,9 +397,15 @@ item list:
   once ring 2's `hex-r2-3` is captured it is `hull-3`: 5 lives, 0.8 speed,
   AH-0MWF0CUS3009M5SY, scaled through the shared `scaleShipConfigForHull` helper
   a shipped deployment uses); every owned `extra-lives` modifier applies,
-  capped at the run's 5 lives. A grant the catalogue does not itemise (a future
-  `hull-9`) is owned but contributes no run stats — the same "recorded but
-  effect-free" rule the capture cycle uses.
+  capped at the run's 5 lives. **Every authored hex grant now resolves to a
+  catalogue entry**: the catalogue derives one weapon entry per
+  `src/data/weapons.csv` row bar the documented `cannon` exclusion, and its
+  build-time guards fail closed on an authored weapon grant with no entry, so a
+  granted weapon is owned **and** deployable. A grant that intentionally carries
+  no run stat is on the short effect-free allowlist; the `resolveHexGrant`
+  "catalogue does not itemise" fallback remains only as defence-in-depth for a
+  hypothetical future uncatalogued grant (a `hull-9`) — it is no longer a path a
+  weapon grant can take.
 
 The loadout changes the run's **starting** state only: the aggression model, the
 deployment window and every retry/exposure allowance below are unchanged, and

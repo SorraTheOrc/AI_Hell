@@ -553,7 +553,9 @@ upgrade.
 
 ### Minimal first slice
 
-**One** extra hull, **three** unlockable starting weapons, **one** bankable
+**One** extra hull, the **shipped weapon roster derived into the unlock tree**
+(one entry per `src/data/weapons.csv` row bar the documented `cannon`
+exclusion — a small purchasable set plus grant-only entries), **one** bankable
 currency (minerals banked at checkpoint moments) and **one** threat tier for a
 final assault. If "lose the run, keep the salvage, buy a better ship" already
 feels like progress, the tree can grow; if it does not, more unlocks will not
@@ -1362,8 +1364,8 @@ shipped build:
 ### Minimal first slice
 
 **Candidate B's MVP plus one ring of hexes**: the hangar from B (one extra hull,
-three unlockable starting weapons, one banked currency, one threat tier) plus a
-**single ring of six hexes** around the hangar, with the algorithmic defence
+the shipped weapon roster derived into the unlock tree, one banked currency,
+one threat tier) plus a **single ring of six hexes** around the hangar, with the algorithmic defence
 resolver, one frontier tick that can retake a hex, known-ahead boss/weapon intel
 for the ring, and **one boss-granted weapon on the ring's hardest hex**. The
 slice is budgeted at **5–15 minutes per hex deployment** (six hexes →

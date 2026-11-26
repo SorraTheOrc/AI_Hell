@@ -4,10 +4,14 @@
  *
  * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D, *New systems
  * required* (hulls, starting weapons, permanent modifiers) and *Persistence and
- * save model*; the epic (`AH-0MVU3VNJI00066YE`, AC1) fixes the contents: **one
- * extra hull, three unlockable starting weapons and one permanent modifier**,
- * on top of the minimal starting kit (one basic hull and its starting weapon,
- * owned but not equipped by default — AH-0MVZJ6V1J001DA9D). The post-MVP
+ * save model*; the epic (`AH-0MVU3VNJI00066YE`, AC1) fixed the original
+ * contents — **one extra hull, three unlockable starting weapons and one
+ * permanent modifier** — on top of the minimal starting kit (one basic hull and
+ * its starting weapon, owned but not equipped by default — AH-0MVZJ6V1J001DA9D).
+ * The weapon half has since grown past that original three: every shipped
+ * weapon is **derived** into the tree (see *Derivation, exclusions and guards*
+ * below), so the unlock tree tracks `src/data/weapons.csv` rather than a fixed
+ * hand-authored count. The post-MVP
  * special-reward hull (`hull-3`, AH-0MWF0CUS3009M5SY) is the one deliberate
  * addition: **extra hit points**, expressed with today's {@link HullDefinition}
  * / {@link HullRunStats} fields and granted by the ring-2 special mission

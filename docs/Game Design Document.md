@@ -3130,7 +3130,16 @@ the loadout.
 > its granted power-ups through the same selection field.
 
 The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
-(`src/core/hangarWar/hangarEconomy.ts`):
+(`src/core/hangarWar/hangarEconomy.ts`). Weapon rows are **derived** from the
+shipped roster rather than hand-authored: the catalogue builds one entry per
+`src/data/weapons.csv` row bar the documented `cannon` exclusion, so a new CSV
+weapon appears in the tree with no code change. Price and ring gate stay
+authored — `WEAPON_UNLOCK_ECONOMY` promotes a derived entry to purchasable, and
+its absence means **grant-only** (zero price, never sold) — so retuning a weapon
+can never reprice the tree. The four purchasable weapon rows are listed below;
+the eleven further derived weapons ship grant-only, and a hex-granted weapon is
+owned, displayed and deployable the moment it is captured (AH-0MWWI3KIO001DY5C,
+AH-0MWWI3L3Z006LX3Z; their price ladder is AH-0MWWGFDE1001FW4J):
 
 | Entry | Kind | Price (minerals / cores) | Effect |
 |---|---|---|---|

@@ -874,3 +874,63 @@ describe('EVALUATION.md quotes the committed per-deployment means (AH-0MWFDQCFV0
     expect(evaluation).not.toMatch(/\|\s*Measured runs\s*\|/i);
   });
 });
+
+/**
+ * The hangar unlock tree's weapon rows are **derived** from the shipped roster
+ * (parent AH-0MWW6PNA5008NC91, AC11/AC13). The docs once stated a fixed
+ * "three unlockable starting weapons" tree size; that count went stale when
+ * every shipped weapon became a derived catalogue entry. These guards pin the
+ * corrected wording so a hand-authored count cannot silently drift back.
+ */
+describe('The derived hangar weapon roster is documented, not a fixed count (AH-0MWWI3KIO001DY5C)', () => {
+  const CATALOGUE_PATH = path.resolve(
+    process.cwd(),
+    'src/data/hangarCatalogue.ts',
+  );
+
+  it('the catalogue module header documents the derivation, exclusion and import direction', () => {
+    const text = fs.readFileSync(CATALOGUE_PATH, 'utf8');
+    expect(text).toMatch(/Derivation, exclusions and guards/);
+    expect(text).toMatch(/Import direction \(no cycle/);
+    expect(text).toContain('HANGAR_EXCLUDED_WEAPON_IDS');
+    expect(text).toMatch(/tracks `src\/data\/weapons\.csv`/);
+  });
+
+  it.each([
+    ['the outer-loop catalogue', DOC_PATH],
+    ['the README', README_PATH],
+    ['the Game Design Document', GDD_PATH],
+  ])('%s no longer claims a fixed three-weapon unlock tree', (_label, filePath) => {
+    const text = fs.readFileSync(filePath, 'utf8');
+    expect(text).not.toMatch(/three unlockable starting weapons/i);
+    expect(text).not.toMatch(/three starting weapons/i);
+  });
+
+  it('the outer-loop catalogue states the roster is derived from weapons.csv', () => {
+    const text = fs.readFileSync(DOC_PATH, 'utf8');
+    expect(text).toContain('weapons.csv');
+    expect(text).toMatch(/derived into the unlock tree/i);
+    // The single documented exclusion keeps the promise honest.
+    expect(text).toMatch(/`cannon`/);
+  });
+
+  it('the README states the derived roster instead of a fixed weapon count', () => {
+    const text = fs.readFileSync(README_PATH, 'utf8');
+    expect(text).toContain('src/data/weapons.csv');
+    expect(text).toMatch(/grant-only derived row/i);
+    expect(text).toMatch(/`rapid`/);
+  });
+
+  it('the Game Design Document states the derived roster and the grant-only default', () => {
+    const text = fs.readFileSync(GDD_PATH, 'utf8');
+    expect(text).toMatch(/builds one entry per\s+`src\/data\/weapons\.csv` row/i);
+    expect(text).toMatch(/grant-only/i);
+    expect(text).toMatch(/four purchasable weapon rows/i);
+  });
+
+  it('EVALUATION.md no longer claims a granted weapon can be uncatalogued', () => {
+    const text = fs.readFileSync(EVALUATION_PATH, 'utf8');
+    expect(text).not.toMatch(/A grant the catalogue does not itemise/i);
+    expect(text).toMatch(/derives one weapon entry per/i);
+  });
+});
