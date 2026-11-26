@@ -206,6 +206,33 @@ describe('buildHangarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(deployment.startLevel).toBe(9);
   });
 
+  it('ramps the target hex\'s aggression with the ring\'s capture progress (AH-0MWFDQ9EY004NO4X)', () => {
+    // The producer's ruling: a ring is relatively low at 0 owned hexes and
+    // rises \"a little\" as the player takes hexes in it. The deployment is the
+    // place the ramp lands, so the tinted aggression must be visible here — it
+    // is the number the hangar screen shows and PlayScene launches at.
+    const fresh = fieldedPayload();
+    // A fresh ring (one of three hexes held) is below the first ramp step, so
+    // the authored aggression stands (the ramp is proportional, not per hex).
+    expect(
+      buildHangarDeployment(fresh, { hexId: 'hex-hard' }).aggression,
+    ).toBe(8);
+
+    const captured = fieldedPayload();
+    captured.ring.hexes = captured.ring.hexes.map((hex) => {
+      if (hex.id !== 'hex-hard') return { ...hex, held: true };
+      return hex;
+    });
+    const ramped = buildHangarDeployment(captured, { hexId: 'hex-hard' });
+    // Two of three hexes held: one point of the authored two-point ramp, so the
+    // weapon hex deploys at the frontier ceiling and one level higher.
+    expect(ramped.aggression).toBe(9);
+    expect(ramped.startLevel).toBe(deploymentLevelForAggression(9));
+    expect(ramped.startLevel).toBeGreaterThan(
+      deploymentLevelForAggression(8),
+    );
+  });
+
   it('derives the same seed for the same war and target', () => {
     const first = buildHangarDeployment(fieldedPayload());
     const second = buildHangarDeployment(fieldedPayload());

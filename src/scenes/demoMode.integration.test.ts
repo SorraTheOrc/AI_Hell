@@ -50,6 +50,11 @@ import {
   mayThrust,
   resolveCompetentTunables,
 } from '../ai/framework/competent';
+import {
+  deriveTurnAlignSeconds,
+  resolveAimAlignSeconds,
+} from '../ai/framework/competent/tunables';
+import { PLAYER_BULLET_SPEED } from '../core/constants';
 import type { ShipConfig } from '../core/configTypes';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -80,6 +85,28 @@ const TEST_DWELL_MS = 800;
  * frame and scene transition add a few frames on top of the timer).
  */
 const DWELL_MARGIN_MS = 500;
+
+/**
+ * Run seed pinned for the demo tests that assert **live physics** — where the
+ * outcome depends on the run's seeded field (bot engagement geometry, wave-1
+ * spawns) rather than on the demo seam itself (AH-0MWW6Y9JO009UJN3).
+ *
+ * `MenuScene.startDemo()` (like the attract timer) otherwise lets `PlayScene`
+ * draw a fresh `randomSeed()`, so the AC1 displacement assertion and the
+ * asteroids-scheme rotation assertion passed or failed depending on that draw:
+ * the full-suite gate caught `expected 0 to be greater than 5` when the drawn
+ * seed produced no committed movement inside the window. This is the same
+ * seed-dependent flake class the `PlayScene` suite removed with its
+ * deterministic-boot rule (AH-0MVXWEEJM00813GK) — a boot whose seed is not
+ * explicit cannot be reproduced. Seed `1` matches that suite's pinned seed;
+ * change this constant to reproduce a failure with the seed a run reports.
+ */
+const DETERMINISTIC_DEMO_SEED = 1;
+
+/** Starts the demo through the menu seam with the pinned run seed. */
+function startSeededDemo(menu: MenuScene, demoDwellMs?: number): void {
+  menu.startDemo(demoDwellMs, DETERMINISTIC_DEMO_SEED);
+}
 
 // The shipped default control scheme is `asteroids`; keyboard-movement
 // assertions need the four-directional scheme the rest of the PlayScene suite
@@ -186,7 +213,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
   it('AC1 — the demo bot drives the ship through the live shared input path', async () => {
     const menu = await bootMenu();
-    menu.startDemo();
+    startSeededDemo(menu);
     await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -197,12 +224,17 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     // Tick the live scene with no keyboard input: the bot must move the ship
     // (it engages the wave-1 formation / seeks pickups).  The exact direction
     // depends on the run-seeded field, so assert real movement rather than a
-    // specific heading.
+    // specific heading.  The wait is bounded (5 s of simulated time) rather
+    // than one exact second, because the governor holds a steering commit for
+    // a human reaction cadence and the opening decision may be an aim-only
+    // stance before the ship engages; the seed is pinned, so the budget is
+    // deterministic and the failure message names the seed for reproduction
+    // (AH-0MWW6Y9JO009UJN3).
     const player = play.getPlayer()!;
     const beforeX = player.x;
     const beforeY = player.y;
     let maxDisplacement = 0;
-    for (let i = 0; i < 60; i += 1) {
+    for (let i = 0; i < 300 && maxDisplacement <= 5; i += 1) {
       play.tick(1 / 60);
       maxDisplacement = Math.max(
         maxDisplacement,
@@ -210,7 +242,25 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       );
     }
 
-    expect(maxDisplacement).toBeGreaterThan(5);
+    expect(
+      maxDisplacement,
+      `the demo bot never moved the ship (run seed ${play.getRunSeed()}, ` +
+        `max displacement ${maxDisplacement.toFixed(3)} px)`,
+    ).toBeGreaterThan(5);
+  });
+
+  it('AC1 — a pinned demo run seed reaches the live scene (reproducible runs)', async () => {
+    const menu = await bootMenu();
+    const seed = 987654321;
+    menu.startDemo(undefined, seed);
+    await wait(booted!.game, 150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    // The optional seed rides the ordinary scene-start payload, so a caller
+    // that needs a reproducible attract run (a physics assertion, a capture)
+    // pins it without a second seam (AH-0MWW6Y9JO009UJN3).
+    expect(play.isDemoMode()).toBe(true);
+    expect(play.getRunSeed()).toBe(seed);
   });
 
   it('AC14 — the live scene exposes its wave timer state to the bot snapshot', async () => {
@@ -425,7 +475,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
-    play.openMineralChoice();
+    const offered = play.openMineralChoice();
     await wait(booted!.game, 80);
 
     const overlay = booted!.game.scene.getScene(
@@ -433,25 +483,43 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     ) as MineralChoiceScene;
     expect(overlay).toBeTruthy();
 
-    // The bot auto-selects after the human-like delay: the choice is made but
-    // NOT yet applied — the beat-locked 3-2-1 countdown is running ("3"
-    // shown), and play stays paused.
+    // The bot auto-selects the first option after the human-like delay: the
+    // choice is made but NOT yet applied — the beat-locked 3-2-1 countdown is
+    // running ("3" shown), and play stays paused.
     await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + 120);
     expect(overlay.getCountdownText()).toBe('3');
     expect(play.isMineralChoiceOpen()).toBe(true);
     expect(play.isPaused()).toBe(true);
 
-    // After one beat the countdown advances to "2", still not applied.
+    // AC2 — the chosen title is rendered under the numeral for the life of
+    // the countdown (the title-readout contract lands with
+    // AH-0MWLCME4100655UR).
+    const overlayWithTitle = overlay as MineralChoiceScene & {
+      getCountdownTitle(): string | null;
+    };
+    expect(
+      typeof overlayWithTitle.getCountdownTitle,
+      'MineralChoiceScene must expose getCountdownTitle() (AH-0MWLCME4100655UR)',
+    ).toBe('function');
+    expect(overlayWithTitle.getCountdownTitle()).toBe(offered[0].name);
+    const titleText = findText(overlay, offered[0].name);
+    expect(titleText.visible).toBe(true);
+
+    // After one beat the countdown advances to "2", still not applied; the
+    // title stays up with it.
     await wait(booted!.game, 800);
     expect(overlay.getCountdownText()).toBe('2');
     expect(play.isMineralChoiceOpen()).toBe(true);
+    expect(overlayWithTitle.getCountdownTitle()).toBe(offered[0].name);
 
     // The countdown completes and the run resumes on the beat after "1" —
-    // same selection → countdown → resume path as a human choice.
+    // same selection → countdown → resume path as a human choice — and the
+    // title goes with the numeral.
     await wait(booted!.game, HOLD_FULL_COUNTDOWN_DURATION_MS);
     expect(play.isMineralChoiceOpen()).toBe(false);
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
     expect(play.isPaused()).toBe(false);
+    expect(overlayWithTitle.getCountdownTitle()).toBeNull();
   });
 
   it('AC1 — the demo bot takes the first option even when an Extra Life is offered', async () => {
@@ -775,7 +843,9 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     it('rotates the hull under asteroid controls (a four-directional ship never turns)', async () => {
       const menu = await bootMenu();
-      menu.startDemo();
+      // Seeded: the assertion depends on the run-seeded field, exactly like the
+      // AC1 displacement check (AH-0MWW6Y9JO009UJN3).
+      startSeededDemo(menu);
       await wait(booted!.game, 150);
 
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -1193,6 +1263,88 @@ describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
     // parity invariant the test exists for.
     expect(storeTunables.playerSpeed).toBe(COMPETENT_BOT_TUNABLES.playerSpeed);
     expect(storeTunables.frictionDeceleration).toBe(getCurrentBotTuningConfig().values.competent['frictionDeceleration']);
+  });
+});
+
+describe('Demo live aim physics (AH-0MWR04ZDU0005O8J)', () => {
+  let booted: BootedGame | null = null;
+
+  /** Boots a live PlayScene demo (asteroids scheme, the shipped default). */
+  async function bootDemo(): Promise<PlayScene> {
+    seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, GymBotTuning]);
+    booted.game.scene.start('PlayScene', { demo: true, seed: 42 });
+    await wait(booted!.game, 150);
+    return booted.game.scene.getScene('PlayScene') as PlayScene;
+  }
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("AC2 — the demo snapshot carries the ship's live rotation config and shot speed", async () => {
+    const play = await bootDemo();
+    const player = play.getPlayer()!;
+    const snapshot = buildBotSnapshot(play as unknown as BotSnapshotScene);
+    // The aim solve's inputs arrive through the snapshot seam from the live
+    // ship, never a bot-layer constant (AH-0MWR04ZDU0005O8J · AC2).
+    expect(snapshot.player?.rotation).toEqual(player.getRotationConfig());
+    expect(snapshot.player?.shotSpeed).toBe(player.getProjectileSpeed());
+    expect(player.getProjectileSpeed()).toBe(PLAYER_BULLET_SPEED);
+  });
+
+  it('AC2 — the demo derives the alignment term from the live rotation model (live wins)', async () => {
+    const play = await bootDemo();
+    // The bundled tuning leaves the alignment constant at its compiled default,
+    // so the live rotation model supplies the turn time for the shipped demo.
+    const tunables = resolveCompetentTunables(
+      toCompetentOverrides(defaultBotTuningValues()),
+    );
+    expect(tunables.aimLeadAlignSeconds).toBe(
+      COMPETENT_BOT_TUNABLES.aimLeadAlignSeconds,
+    );
+    const player = play.getPlayer()!;
+    const shipped = resolveAimAlignSeconds(tunables, player.getRotationConfig());
+    expect(shipped).toBeCloseTo(
+      deriveTurnAlignSeconds(player.getRotationConfig()),
+      12,
+    );
+    // ...which is not the constant: the live value is genuinely in use.
+    expect(shipped).not.toBe(COMPETENT_BOT_TUNABLES.aimLeadAlignSeconds);
+
+    // Re-tune the live ship to a faster top rate: the derived turn time grows
+    // with no wiring beyond the snapshot seam (explicit override > live >
+    // compiled default).
+    const custom: ShipConfig = {
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsRotationSpeed: 6,
+    };
+    player.setConfig(custom);
+    play.tick(1 / 60);
+    const after = buildBotSnapshot(play as unknown as BotSnapshotScene);
+    expect(after.player?.rotation).toEqual(player.getRotationConfig());
+    const slower = resolveAimAlignSeconds(tunables, after.player?.rotation);
+    expect(slower).toBeCloseTo(
+      deriveTurnAlignSeconds(player.getRotationConfig()),
+      12,
+    );
+    expect(slower).toBeGreaterThan(shipped);
+  });
+
+  it('AC2 — the tuning gym supplies the same live values as the game (parity)', async () => {
+    await bootDemo();
+    booted!.game.scene.start(GYM_BOT_TUNING_SCENE_KEY, { seed: 42 });
+    await wait(booted!.game, 150);
+    const gym = booted!.game.scene.getScene(GYM_BOT_TUNING_SCENE_KEY) as GymBotTuning;
+    const gymPlayer = gym.getShip()!;
+    const gymSnapshot = gym.getBotSnapshot();
+    // No per-scene derivation: the gym reads the same live seam the game does.
+    expect(gymSnapshot.player?.rotation).toEqual(gymPlayer.getRotationConfig());
+    expect(gymSnapshot.player?.shotSpeed).toBe(gymPlayer.getProjectileSpeed());
   });
 });
 

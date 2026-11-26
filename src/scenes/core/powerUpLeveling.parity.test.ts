@@ -75,7 +75,7 @@ const GYM_HOST = 'pu-level-parity-gym-host';
 const OBSERVABLE: Record<PowerUpId, (registry: EffectsRegistry) => number> = {
   shield: (r) => r.shieldAbsorptionsRemaining(),
   bomb: (r) => r.bombRange(),
-  speed_boost: (r) => r.speedMultiplier(),
+  speed_boost: (r) => r.fireRateMultiplier(),
   // Readiness is binary for both single-use kinds (Phase Shift parent
   // AH-0MW6O1690007P2SL, Teleport parent AH-0MVY096RT006QMF4): 1 while the
   // one activation is ready, 0 while it recharges — there is no stored count.

@@ -6,6 +6,11 @@
  * profile. These are pure-function tests over hand-built feature vectors, so
  * every mapping has an exact expected value and the safety envelope is probed
  * with adversarial inputs.
+ *
+ * The governor's turn/aim knobs are covered too
+ * (AH-0MWLCGWUF00631UX): the calmer flight model added them, so the fit must
+ * move them with the human's cadence/hold features and stand-off instead of
+ * silently leaving the bot on a governor it no longer flies.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -21,9 +26,11 @@ import {
   MAX_BAND_BASE,
   MIN_BAND_BASE,
   SURVIVAL_GAP,
+  aimDeadbandFor,
   defaultFit,
   enforceSafety,
   fitStyle,
+  inputRapidity,
   targetBandTilt,
 } from './fitting';
 
@@ -137,6 +144,172 @@ describe('fitStyle feature mapping (AC2)', () => {
 
   it('is deterministic for the same profile', () => {
     expect(fitStyle(features())).toEqual(fitStyle(features()));
+  });
+});
+
+describe('fitStyle governor turn/aim knobs (AH-0MWLCGWUF00631UX)', () => {
+  /**
+   * The calmer flight model (AH-0MWJ1680Z001QYV2) added the travel deadband,
+   * the aim deadband, the reversal hysteresis and the turn-press hold to the
+   * governor. The fit must move them with the human's cadence/hold features and
+   * stand-off, so a styled bot flies the same governor a human does.
+   */
+  it('reproduces the shipped governor at a typical human sample', () => {
+    const fit = fitStyle(
+      features({
+        inputChangesPerSecond: 4,
+        meanHoldSeconds: 0.3,
+        engagementDistanceEnemy: 160,
+      }),
+    );
+    // 4 input changes/s is the anchor cadence: shipped 0.16 rad / 0.25 rad.
+    expect(fit.humanInput.alignmentToleranceRad).toBeCloseTo(0.16, 6);
+    expect(fit.humanInput.turnHysteresisRad).toBeCloseTo(0.25, 6);
+    // 300 ms holds is the anchor hold: shipped 30 ms turn press.
+    expect(fit.humanInput.turnPressMinMs).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.turnPressMinMs,
+    );
+    // The shipped 160 px stand-off reproduces the shipped 0.05 rad aim deadband.
+    expect(fit.humanInput.aimAlignmentToleranceRad).toBeCloseTo(0.05, 6);
+  });
+
+  it('fits the travel deadband and hysteresis from the input cadence', () => {
+    // cadence 5 => rapidity (5-2)/(6-2) = 0.75.
+    const fit = fitStyle(features());
+    expect(inputRapidity(features())).toBeCloseTo(0.75, 6);
+    expect(fit.humanInput.alignmentToleranceRad).toBeCloseTo(0.13, 6);
+    expect(fit.humanInput.turnHysteresisRad).toBeCloseTo(0.195, 6);
+    expect(appliedValue(fit, 'humanInput.alignmentToleranceRad')).toBeCloseTo(
+      0.13,
+      6,
+    );
+    expect(appliedValue(fit, 'humanInput.turnHysteresisRad')).toBeCloseTo(0.195, 6);
+    // A twitchier human steers tighter than a deliberate one.
+    const rapid = fitStyle(features({ inputChangesPerSecond: 6 }));
+    const deliberate = fitStyle(features({ inputChangesPerSecond: 2 }));
+    expect(rapid.humanInput.alignmentToleranceRad).toBeLessThan(
+      deliberate.humanInput.alignmentToleranceRad,
+    );
+    expect(rapid.humanInput.turnHysteresisRad).toBeLessThan(
+      deliberate.humanInput.turnHysteresisRad,
+    );
+  });
+
+  it('clamps the travel deadband and hysteresis at both envelope ends', () => {
+    const slowest = fitStyle(features({ inputChangesPerSecond: 0.5 }));
+    expect(slowest.humanInput.alignmentToleranceRad).toBeCloseTo(0.22, 6);
+    expect(slowest.humanInput.turnHysteresisRad).toBeCloseTo(0.36, 6);
+    const fastest = fitStyle(features({ inputChangesPerSecond: 40 }));
+    expect(fastest.humanInput.alignmentToleranceRad).toBeCloseTo(0.1, 6);
+    expect(fastest.humanInput.turnHysteresisRad).toBeCloseTo(0.14, 6);
+  });
+
+  it('fits the turn-press hold from the key-hold distribution and clamps it', () => {
+    const fit = fitStyle(features({ meanHoldSeconds: 0.2 }));
+    expect(fit.humanInput.turnPressMinMs).toBe(20);
+    expect(appliedValue(fit, 'humanInput.turnPressMinMs')).toBe(20);
+    expect(fitStyle(features({ meanHoldSeconds: 10 })).humanInput.turnPressMinMs).toBe(
+      90,
+    );
+    expect(
+      fitStyle(features({ meanHoldSeconds: 0.001 })).humanInput.turnPressMinMs,
+    ).toBe(15);
+  });
+
+  it('derives the aim deadband from the fitted stand-off and clamps it', () => {
+    expect(aimDeadbandFor(160)).toBeCloseTo(0.05, 6);
+    // The deadband's lateral miss at the stand-off stays inside half the 16 px
+    // hostile contact radius, leaving the rest for lead error and enemy drift.
+    const fit = fitStyle(features({ engagementDistanceEnemy: 200 }));
+    expect(fit.tunables.engagementRange).toBe(200);
+    expect(fit.humanInput.aimAlignmentToleranceRad * 200).toBeCloseTo(8, 6);
+    expect(appliedValue(fit, 'humanInput.aimAlignmentToleranceRad')).toBeCloseTo(
+      fit.humanInput.aimAlignmentToleranceRad,
+      6,
+    );
+    // Both envelope ends are reachable from the stand-off clamp.
+    expect(
+      fitStyle(features({ engagementDistanceEnemy: 60 })).humanInput
+        .aimAlignmentToleranceRad,
+    ).toBeCloseTo(0.12, 6);
+    expect(
+      fitStyle(features({ engagementDistanceEnemy: 320 })).humanInput
+        .aimAlignmentToleranceRad,
+    ).toBeCloseTo(0.03, 6);
+  });
+
+  it('co-fits the aim fallibility with the aim deadband', () => {
+    const fit = fitStyle(features(), { baseInput: { skill: 0.5 } });
+    const effectiveDeadband = Math.min(
+      fit.humanInput.alignmentToleranceRad,
+      fit.humanInput.aimAlignmentToleranceRad,
+    );
+    expect(appliedValue(fit, 'humanInput.maxAimErrorRad')).toBeCloseTo(
+      fit.humanInput.maxAimErrorRad,
+      6,
+    );
+    // The governor rotates an aim bearing by at most maxAimErrorRad*(1-skill)
+    // and then holds the ship inside the effective deadband, so the error can
+    // never exceed the band it is aiming into.
+    expect(
+      fit.humanInput.maxAimErrorRad * (1 - fit.humanInput.skill),
+    ).toBeLessThanOrEqual(effectiveDeadband + 1e-9);
+  });
+
+  it('keeps the shipped governor knobs and warns when the cadence is unsampled', () => {
+    const fit = fitStyle(
+      features({ inputChangesPerSecond: 0, meanHoldSeconds: null }),
+    );
+    expect(fit.humanInput.alignmentToleranceRad).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.alignmentToleranceRad,
+    );
+    expect(fit.humanInput.turnHysteresisRad).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.turnHysteresisRad,
+    );
+    expect(fit.humanInput.turnPressMinMs).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.turnPressMinMs,
+    );
+    expect(fit.warnings.some((warning) => warning.includes('input cadence'))).toBe(
+      true,
+    );
+    expect(
+      fit.warnings.some((warning) => warning.includes('turn-press hold')),
+    ).toBe(true);
+    expect(appliedValue(fit, 'humanInput.alignmentToleranceRad')).toBeUndefined();
+    expect(appliedValue(fit, 'humanInput.turnPressMinMs')).toBeUndefined();
+  });
+
+  it('keeps every governor knob finite and inside its envelope for adversarial profiles', () => {
+    const profiles: StyleFeatures[] = [
+      features({ inputChangesPerSecond: 1e9, meanHoldSeconds: 1e6 }),
+      features({ inputChangesPerSecond: -5, meanHoldSeconds: -1 }),
+      features({ engagementDistanceEnemy: 1e9 }),
+      features({ engagementDistanceEnemy: 0 }),
+      features({ engagementDistanceEnemy: null, riskAppetite: 1 }),
+    ];
+    for (const profile of profiles) {
+      const t = fitStyle(profile).humanInput;
+      for (const value of [
+        t.alignmentToleranceRad,
+        t.aimAlignmentToleranceRad,
+        t.turnHysteresisRad,
+        t.turnPressMinMs,
+        t.maxAimErrorRad,
+      ]) {
+        expect(Number.isFinite(value)).toBe(true);
+      }
+      expect(t.alignmentToleranceRad).toBeGreaterThanOrEqual(0.1);
+      expect(t.alignmentToleranceRad).toBeLessThanOrEqual(0.22);
+      expect(t.aimAlignmentToleranceRad).toBeGreaterThanOrEqual(0.03);
+      expect(t.aimAlignmentToleranceRad).toBeLessThanOrEqual(0.12);
+      expect(t.turnHysteresisRad).toBeGreaterThanOrEqual(0.14);
+      expect(t.turnHysteresisRad).toBeLessThanOrEqual(0.36);
+      expect(t.turnPressMinMs).toBeGreaterThanOrEqual(15);
+      expect(t.turnPressMinMs).toBeLessThanOrEqual(90);
+      expect(t.maxAimErrorRad).toBeLessThanOrEqual(
+        Math.min(t.alignmentToleranceRad, t.aimAlignmentToleranceRad) + 1e-9,
+      );
+    }
   });
 });
 

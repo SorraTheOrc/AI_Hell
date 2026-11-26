@@ -23,6 +23,7 @@
           "enemySeekRange": 1300,
           "asteroidSeekRange": 400,
           "engagementRange": 105,
+          "engagementRangeHysteresis": 40,
           "collectArrivalRadius": 10,
           "collectReverseBrake": false,
           "collectOvershootMargin": 0,
@@ -31,6 +32,7 @@
           "longTravelDistance": 550,
           "repositionRadius": 90,
           "playerSpeed": 175,
+          "shotSpeed": 350,
           "firePredictionHorizon": 1.35,
           "hazardPredictionHorizon": 2.2,
           "hazardClassHorizonScale.chaser": 1,
@@ -41,7 +43,7 @@
           "assumedBulletSpeed": 200,
           "frictionDeceleration": 75,
           "survivalUrgencyHorizon": 0.9,
-          "aimLeadAlignSeconds": 0.35,
+          "aimLeadAlignSeconds": 0.25,
           "aimLeadIterations": 6,
           "reverseImminentOvershootGap": 186,
           "reverseRetreatRange": 105,
@@ -66,7 +68,10 @@
           "mineralDepositValue": 10,
           "mineralClusterRadius": 120,
           "diversionRelaxEnemyCount": 3,
-          "diversionOpportunityWeight": 0.7
+          "diversionOpportunityWeight": 0.7,
+          "holdFireEnabled": true,
+          "holdFireHorizonSeconds": 1,
+          "holdFireLineRadiusPx": 14
         },
         "human": {
           "reactionTimeMs": 260,
@@ -74,8 +79,13 @@
           "aimAlignmentToleranceRad": 0.05,
           "turnHysteresisRad": 0.25,
           "turnPressMinMs": 30,
+          "aimDampingEnabled": true,
+          "aimTurnHoldMs": 300,
           "skill": 1,
           "maxAimErrorRad": 0.07,
+          "aimErrorRad": 0.02,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60,
           "thrustPressMinMs": 80,
           "thrustPressMaxMs": 640,
           "thrustPressMaxMsLong": 945,
@@ -108,7 +118,10 @@
           "survivalUrgencyHorizon": 1.2
         },
         "human": {
-          "reactionTimeMs": 200
+          "reactionTimeMs": 200,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -131,7 +144,11 @@
           "hazardPredictionHorizon": 2.6,
           "reverseRetreatRange": 180
         },
-        "human": {}
+        "human": {
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
+        }
       }
     },
     {
@@ -149,7 +166,10 @@
           "survivalUrgencyHorizon": 1.5
         },
         "human": {
-          "reactionTimeMs": 220
+          "reactionTimeMs": 220,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -164,11 +184,13 @@
           "dangerMargin": 50,
           "survivalBase": 8,
           "survivalUrgencyPort": 5,
-          "aimLeadIterations": 8,
-          "aimLeadAlignSeconds": 0.2
+          "aimLeadIterations": 8
         },
         "human": {
           "maxAimErrorRad": 0.02,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60,
           "reactionTimeMs": 170
         }
       }
@@ -195,7 +217,10 @@
         },
         "human": {
           "reactionTimeMs": 282,
-          "maxAimErrorRad": 0.042
+          "maxAimErrorRad": 0.042,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -218,7 +243,10 @@
         },
         "human": {
           "reactionTimeMs": 207,
-          "maxAimErrorRad": 0.0653
+          "maxAimErrorRad": 0.0653,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -241,7 +269,10 @@
         },
         "human": {
           "reactionTimeMs": 200,
-          "maxAimErrorRad": 0.0579
+          "maxAimErrorRad": 0.0579,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     },
@@ -267,7 +298,10 @@
         },
         "human": {
           "reactionTimeMs": 121,
-          "maxAimErrorRad": 0.0694
+          "maxAimErrorRad": 0.0694,
+          "aimErrorRad": 0,
+          "aimErrorDecay": 0.5,
+          "aimErrorResetDistance": 60
         }
       }
     }

@@ -133,6 +133,23 @@ describe('parseEvaluateArgs', () => {
     expect(reenabled.level).toBe(3);
     expect(reenabled.scaleLevels).toBe(true);
   });
+
+  it('parses the elite budget seam (--elite-chance)', () => {
+    // Default: null → the shipped `ELITE_WAVE_CHANCE` (off until the gate).
+    expect(parseEvaluateArgs(['--batch']).eliteWaveChance).toBeNull();
+    expect(
+      parseEvaluateArgs(['--batch', '--elite-chance', '0.15']).eliteWaveChance,
+    ).toBe(0.15);
+    expect(parseEvaluateArgs(['--batch', '--elite-chance', '0']).eliteWaveChance).toBe(0);
+    // Documented in the help text so the evidence command is discoverable.
+    expect(EVALUATE_USAGE).toContain('--elite-chance');
+  });
+
+  it('rejects an out-of-range or non-numeric --elite-chance', () => {
+    expect(() => parseEvaluateArgs(['--elite-chance', '1.5'])).toThrow(/elite-chance/);
+    expect(() => parseEvaluateArgs(['--elite-chance', '-0.1'])).toThrow(/elite-chance/);
+    expect(() => parseEvaluateArgs(['--elite-chance', 'nope'])).toThrow(/elite-chance/);
+  });
 });
 
 describe('resolveSeeds', () => {

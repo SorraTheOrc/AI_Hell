@@ -1,0 +1,111 @@
+# AI Hell cue: aihell-matchup-resisted-impact — a resisted (boss-strength)
+# weapon hit on a boss/mini-boss — a dull, low armour clang, ≤ 0.16 s.
+#
+# (AH-0MWL88YYO0053DWH) The resisted half of the B presentation: the shot must
+# read as *wrong tool*, never as a broken gun, so the cue is the opposite of the
+# effective critical shatter (`aihell-matchup-effective-impact`):
+#
+#   - a low square 300 → 110 Hz clang, low-passed at 900 Hz so it lands as a
+#     blunt metallic knock instead of a bright square edge;
+#   - a quiet 120 Hz sine body undertone;
+#   - a short low-passed (700 Hz) noise scuff — the armour spall, not a crack.
+#
+# The cue is played at the lowered rate in `MATCHUP_IMPACT_STATE_CUES`
+# (`playMatchupResistedImpactSound`), which drops it further still; the baked
+# asset therefore stays dull and low so the two never alias under any rate.
+#
+# Seed 32294 is drawn from the game-specific reservation block
+# (32100–32299) and baked via scripts/build-audio.sh.
+version: "0.1"
+meta:
+  name: aihell-matchup-resisted-impact
+  description: Resisted hex-matchup hit — a dull, low armour clang of a low-passed square 300 to 110 Hz, a quiet 120 Hz sine body and a short low-passed noise scuff, ~0.16 s. Designed to be played at the lowered matchup state rate; deliberately blunter and lower than every per-weapon neutral impact cue and than the aihell-matchup-effective-impact critical shatter.
+  category: AIHell
+  tags:
+    - matchup
+    - hit
+  duration: 0.16
+nodes:
+  # v0 — the clang body: a low square 300 → 110 Hz, dulled by f0.
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 300
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 300
+        - kind: exponentialRamp
+          time: 0.14
+          value: 110
+  f0:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 900
+      Q: 1
+  e0:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.15
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.14
+  # v1 — low sine body undertone.
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 120
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.14
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.1
+  # n0 — armour scuff: a short low-passed noise spall.
+  n0:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 700
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.09
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.1
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, f0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [n0, f1, e2, g2, mix]
+  - from: mix
+    to: out

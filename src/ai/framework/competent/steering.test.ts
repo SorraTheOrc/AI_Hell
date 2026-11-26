@@ -15,11 +15,17 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { buildBotWorld, type BotHazardPoint } from '../worldModel';
+import { buildBotWorld, type BotHazardPoint, type BotWorldPoint } from '../worldModel';
 import { enemyHazardKey } from '../hazardVelocity';
 import { createBotMemory } from '../memory';
 import type { BotBehaviourContext } from '../registry';
-import { predictMinimumSeparation } from '../hazardMotionModel';
+import {
+  HAZARD_MOTION_MAX_SAMPLES,
+  HAZARD_MOTION_SAMPLE_STEP,
+  advanceHazardMotion,
+  predictMinimumSeparation,
+  type HazardMotionScratch,
+} from '../hazardMotionModel';
 import {
   bullet,
   DEFAULT_THRUSTER_CONFIG,
@@ -27,7 +33,7 @@ import {
   makeSnapshot,
   makeThrusterSnapshot,
 } from '../testFixtures';
-import { wrapPosition, type WrapWorld } from '../../../utils/wrapGeometry';
+import { wrapPosition, wrappedDistance, type WrapWorld } from '../../../utils/wrapGeometry';
 import {
   chooseWrappedRouteToPlayer,
   wrappedDeltaToPlayer,
@@ -40,12 +46,14 @@ import {
   evaluateDirection,
   hazardThreatensPlayer,
   interceptPoint,
+  interceptPointClassAware,
   mayReverse,
   mayThrust,
   normalise,
   planSteering,
 } from './steering';
 import { COMPETENT_BOT_TUNABLES } from './tunables';
+import type { EnemyMovementClass } from '../../../core/configTypes';
 import { resolveCompetentTunables } from './tunables';
 import { createCompetentBehaviours } from './behaviours';
 import { COMPETENT_GOAL_IDS, createCompetentGoals } from './goals';
@@ -783,6 +791,459 @@ describe('interceptPoint (AH-0MV1DUSM2005HL98 AC2)', () => {
     expect(converged.x).toBeLessThan(TORUS.width);
     const aim = bearingTo(shooter, converged, TORUS);
     expect(aim.x).toBeCloseTo(-1, 10);
+  });
+});
+
+// ── Class-sampled intercept (AH-0MWR051U6003BDB9 · AC3) ─────────────
+
+describe('interceptPointClassAware (AH-0MWR051U6003BDB9 AC3)', () => {
+  /** One parity-table row: a legacy-solve input set. */
+  interface ParityCase {
+    readonly name: string;
+    readonly velocity: BotWorldPoint;
+    readonly align: number;
+    readonly iterations: number;
+    readonly speed: number;
+  }
+
+  // The table AC3's exact-fallback criterion is asserted over: crossing,
+  // climbing, fast/slow and stationary motion, across alignment terms,
+  // iteration counts and projectile speeds.
+  const PARITY_CASES: readonly ParityCase[] = [
+    {
+      name: 'crossing target, single pass',
+      velocity: { x: 0, y: 90 },
+      align: 0,
+      iterations: 1,
+      speed: 200,
+    },
+    {
+      name: 'climbing target, converged',
+      velocity: { x: -120, y: 40 },
+      align: 0.3,
+      iterations: 3,
+      speed: 350,
+    },
+    {
+      name: 'fast target, slow projectile',
+      velocity: { x: 300, y: -300 },
+      align: 0.25,
+      iterations: 5,
+      speed: 60,
+    },
+    {
+      name: 'stationary target',
+      velocity: { x: 0, y: 0 },
+      align: 0.5,
+      iterations: 4,
+      speed: 200,
+    },
+    {
+      name: 'unknown projectile speed',
+      velocity: { x: -40, y: 70 },
+      align: 0.25,
+      iterations: 3,
+      speed: 0,
+    },
+  ];
+
+  const SHOOTER = { x: 100, y: 270 };
+  const TARGET = { x: 620, y: 270 };
+  const MODEL_OFF = { ...T, hazardMotionModelEnabled: false };
+
+  /**
+   * Independent reference for the sampled solve: walks the published class
+   * model over the predictor's trust horizon on the documented sample grid
+   * (nominal 0.05 s step, at most `HAZARD_MOTION_MAX_SAMPLES` steps split
+   * across the passes), continues straight beyond the horizon, and re-estimates
+   * the time of flight after each pass. Written out here so the test can never
+   * simply mirror the production loop's shape without re-deriving its values.
+   */
+  function referenceClassAim(
+    movementClass: EnemyMovementClass,
+    shooter: BotWorldPoint,
+    target: BotWorldPoint,
+    velocity: BotWorldPoint,
+    shotSpeed: number,
+    alignSeconds: number,
+    iterations: number,
+    world: WrapWorld,
+  ): BotWorldPoint {
+    const passes = Math.max(1, Math.floor(iterations));
+    const budget = Math.max(1, Math.floor(HAZARD_MOTION_MAX_SAMPLES / passes));
+    const horizon = T.hazardPredictionHorizon;
+    const state: HazardMotionScratch = { x: 0, y: 0, vx: 0, vy: 0 };
+    const advance = (flight: number): BotWorldPoint => {
+      state.x = target.x;
+      state.y = target.y;
+      state.vx = velocity.x;
+      state.vy = velocity.y;
+      const window = Math.max(0, Math.min(flight, horizon));
+      const steps = Math.min(
+        budget,
+        Math.max(1, Math.ceil(window / HAZARD_MOTION_SAMPLE_STEP)),
+      );
+      const dt = window > 0 ? window / steps : 0;
+      for (let i = 0; i < steps; i += 1) {
+        advanceHazardMotion(movementClass, state, shooter.x, shooter.y, dt, world);
+      }
+      const remainder = Math.max(0, flight - window);
+      state.x += state.vx * remainder;
+      state.y += state.vy * remainder;
+      return wrapPosition(state.x, state.y, world);
+    };
+    let t = alignSeconds;
+    for (let pass = 0; pass < passes; pass += 1) {
+      const predicted = advance(t);
+      t = alignSeconds + wrappedDistance(shooter, predicted, world) / shotSpeed;
+    }
+    return advance(t);
+  }
+
+  it.each(PARITY_CASES)('reproduces interceptPoint bit-for-bit for a roamer ($name)', (row) => {
+    const legacy = interceptPoint(
+      SHOOTER,
+      TARGET,
+      row.velocity,
+      row.speed,
+      row.align,
+      row.iterations,
+      TORUS,
+    );
+    expect(
+      interceptPointClassAware(
+        SHOOTER,
+        TARGET,
+        row.velocity,
+        'roamer',
+        row.speed,
+        row.align,
+        row.iterations,
+        T,
+        TORUS,
+      ),
+    ).toEqual(legacy);
+  });
+
+  it.each(PARITY_CASES)('reproduces interceptPoint bit-for-bit for an absent class ($name)', (row) => {
+    expect(
+      interceptPointClassAware(
+        SHOOTER,
+        TARGET,
+        row.velocity,
+        undefined,
+        row.speed,
+        row.align,
+        row.iterations,
+        T,
+        TORUS,
+      ),
+    ).toEqual(
+      interceptPoint(SHOOTER, TARGET, row.velocity, row.speed, row.align, row.iterations, TORUS),
+    );
+  });
+
+  it.each(PARITY_CASES)('reproduces interceptPoint bit-for-bit for an unknown class ($name)', (row) => {
+    expect(
+      interceptPointClassAware(
+        SHOOTER,
+        TARGET,
+        row.velocity,
+        'not-a-class' as EnemyMovementClass,
+        row.speed,
+        row.align,
+        row.iterations,
+        T,
+        TORUS,
+      ),
+    ).toEqual(
+      interceptPoint(SHOOTER, TARGET, row.velocity, row.speed, row.align, row.iterations, TORUS),
+    );
+  });
+
+  it.each(PARITY_CASES)('reproduces interceptPoint bit-for-bit with the motion model disabled ($name)', (row) => {
+    expect(
+      interceptPointClassAware(
+        SHOOTER,
+        TARGET,
+        row.velocity,
+        'chaser',
+        row.speed,
+        row.align,
+        row.iterations,
+        MODEL_OFF,
+        TORUS,
+      ),
+    ).toEqual(
+      interceptPoint(SHOOTER, TARGET, row.velocity, row.speed, row.align, row.iterations, TORUS),
+    );
+  });
+
+  it('reproduces the legacy raw solve when no wrap world is supplied', () => {
+    const velocity = { x: -60, y: 80 };
+    const classAware = interceptPointClassAware(
+      SHOOTER,
+      TARGET,
+      velocity,
+      'chaser',
+      200,
+      0.2,
+      3,
+      T,
+    );
+    // The raw (no-world) solve is still the documented one, and a roamer is
+    // exactly the legacy solve either way.
+    expect(
+      interceptPointClassAware(SHOOTER, TARGET, velocity, 'roamer', 200, 0.2, 3, T),
+    ).toEqual(interceptPoint(SHOOTER, TARGET, velocity, 200, 0.2, 3));
+    expect(Number.isFinite(classAware.x)).toBe(true);
+    expect(Number.isFinite(classAware.y)).toBe(true);
+  });
+
+  it('aims a stationary target at its current position bit-for-bit, wrapped included', () => {
+    const stationary = { x: 0, y: 0 };
+    const legacy = interceptPoint(SHOOTER, TARGET, stationary, 200, 0.5, 4, TORUS);
+    expect(
+      interceptPointClassAware(SHOOTER, TARGET, stationary, 'chaser', 200, 0.5, 4, T, TORUS),
+    ).toEqual(legacy);
+    // A wrapped target position: the aim must be the wrapped current position,
+    // not a sampled advance (a zero estimate never enters the sampler).
+    const offWorld = { x: 1500, y: -60 };
+    expect(
+      interceptPointClassAware(SHOOTER, offWorld, stationary, 'formation', 200, 0.5, 4, T, TORUS),
+    ).toEqual(interceptPoint(SHOOTER, offWorld, stationary, 200, 0.5, 4, TORUS));
+  });
+
+  it('stops at the alignment term for an unknown projectile speed', () => {
+    // The legacy solve advances the target only by the alignment term when the
+    // projectile speed is unknown/zero; the class solve keeps that contract.
+    const shooter = { x: 480, y: 270 };
+    const target = { x: 620, y: 270 };
+    const velocity = { x: 0, y: -90 };
+    const sampled = interceptPointClassAware(
+      shooter,
+      target,
+      velocity,
+      'chaser',
+      0,
+      0.5,
+      3,
+      T,
+      TORUS,
+    );
+    // The chaser walks its pursuit for the 0.5 s alignment term only:
+    // 90 px/s × 0.5 s toward the ship.
+    expect(sampled.x).toBeCloseTo(575, 6);
+    expect(sampled.y).toBeCloseTo(270, 6);
+    // A non-finite speed behaves exactly like zero.
+    expect(
+      interceptPointClassAware(
+        shooter,
+        target,
+        velocity,
+        'chaser',
+        Number.NaN,
+        0.5,
+        3,
+        T,
+        TORUS,
+      ),
+    ).toEqual(sampled);
+  });
+
+  it('curves a chaser along its homing arc, not a straight line', () => {
+    // The chaser is due right and climbing (0, -90) but pursues the ship, so
+    // its arc turns down-left: the sampled aim is closer to the ship than the
+    // straight-line lead, which keeps the full upward lead.
+    const shooter = { x: 480, y: 270 };
+    const target = { x: 620, y: 270 };
+    const velocity = { x: 0, y: -90 };
+    const sampled = interceptPointClassAware(shooter, target, velocity, 'chaser', 350, 0.3, 3, T, TORUS);
+    const straight = interceptPoint(shooter, target, velocity, 350, 0.3, 3, TORUS);
+    expect(sampled).toEqual(
+      referenceClassAim('chaser', shooter, target, velocity, 350, 0.3, 3, TORUS),
+    );
+    // The homing arc turns the target toward the ship: the upward lead shrinks…
+    expect(sampled.y - target.y).toBeGreaterThan(straight.y - target.y);
+    // …and the target is pulled left, off the straight-line x.
+    expect(sampled.x).toBeLessThan(straight.x);
+  });
+
+  it('follows a committed diver\'s dive vector and re-aims an uncommitted one', () => {
+    // Committed: the diver's heading points at the ship, so the class model is
+    // the fitted velocity and the sampled solve is the straight-line lead (the
+    // dive is committed, not re-aimed).
+    const shooter = { x: 480, y: 270 };
+    const target = { x: 620, y: 270 };
+    const committed = { x: -100, y: 0 };
+    const dive = interceptPointClassAware(shooter, target, committed, 'diver', 350, 0.3, 3, T, TORUS);
+    expect(dive).toEqual(
+      referenceClassAim('diver', shooter, target, committed, 350, 0.3, 3, TORUS),
+    );
+    expect(dive.y).toBeCloseTo(interceptPoint(shooter, target, committed, 350, 0.3, 3, TORUS).y, 10);
+    // Uncommitted (heading perpendicular to the ship): the diver re-aims onto
+    // the ship, so the sampled point curves away from the straight-line lead.
+    const reaiming = { x: 0, y: -90 };
+    const reaimed = interceptPointClassAware(shooter, target, reaiming, 'diver', 350, 0.3, 3, T, TORUS);
+    expect(reaimed).toEqual(
+      referenceClassAim('diver', shooter, target, reaiming, 350, 0.3, 3, TORUS),
+    );
+    expect(reaimed.y).toBeGreaterThan(
+      interceptPoint(shooter, target, reaiming, 350, 0.3, 3, TORUS).y,
+    );
+    expect(reaimed.x).toBeLessThan(target.x);
+  });
+
+  it('turns a patroller from its patrol run onto an attack run', () => {
+    // The target patrols straight down while it is far/tangential and commits
+    // when it closes inside the patrol range: the sampled path bends toward the
+    // ship (left), which the straight-line lead never does.
+    const shooter = { x: 100, y: 270 };
+    const target = { x: 400, y: 150 };
+    const velocity = { x: 0, y: 100 };
+    const sampled = interceptPointClassAware(shooter, target, velocity, 'patroller', 350, 0.3, 3, T, TORUS);
+    const straight = interceptPoint(shooter, target, velocity, 350, 0.3, 3, TORUS);
+    expect(sampled).toEqual(
+      referenceClassAim('patroller', shooter, target, velocity, 350, 0.3, 3, TORUS),
+    );
+    // A couple of patrol samples close the range, then the committed attack
+    // run pulls the intercept left of the straight patrol line…
+    expect(sampled.x).toBeLessThan(straight.x - 1);
+    // …and short of the straight line's descent, because it turns for the ship.
+    expect(sampled.y).toBeLessThan(straight.y);
+  });
+
+  it('reverses a formation at the arena edge instead of leading through it', () => {
+    // The formation drifts right at 100 px/s from 930, so it reaches the right
+    // edge in 0.3 s and reverses. The straight lead crosses the edge and wraps
+    // to x ≈ 23; the sampled path bounces back and stays behind the edge.
+    const shooter = { x: 100, y: 270 };
+    const target = { x: 930, y: 270 };
+    const velocity = { x: 100, y: 0 };
+    const sampled = interceptPointClassAware(shooter, target, velocity, 'formation', 350, 0.3, 3, T, TORUS);
+    const straight = interceptPoint(shooter, target, velocity, 350, 0.3, 3, TORUS);
+    expect(sampled).toEqual(
+      referenceClassAim('formation', shooter, target, velocity, 350, 0.3, 3, TORUS),
+    );
+    expect(straight.x).toBeLessThan(100);
+    expect(sampled.x).toBeGreaterThan(900);
+    expect(sampled.y).toBeCloseTo(270, 10);
+  });
+
+  it('keeps the sampled trajectory and the time of flight on the torus across a seam', () => {
+    // The target is across the right seam and diving left, away from the
+    // ship's raw line: the model pursues the ship the short way round (right
+    // through the seam), so the solved point crosses the seam onto the torus
+    // and is much nearer than the straight lead, which runs off to the left.
+    const shooter = { x: 100, y: 270 };
+    const target = { x: 900, y: 270 };
+    const velocity = { x: -100, y: 0 };
+    const sampled = interceptPointClassAware(shooter, target, velocity, 'diver', 350, 0.3, 3, T, TORUS);
+    expect(sampled).toEqual(
+      referenceClassAim('diver', shooter, target, velocity, 350, 0.3, 3, TORUS),
+    );
+    const straight = interceptPoint(shooter, target, velocity, 350, 0.3, 3, TORUS);
+    // The returned point is on the torus…
+    expect(sampled.x).toBeGreaterThanOrEqual(0);
+    expect(sampled.x).toBeLessThan(TORUS.width);
+    // …and the pursuit took the short wrapped route to the ship: the sampled
+    // point is the closure point the shot can reach (≈100 px), while the
+    // straight lead keeps flying off down the raw 800 px line.
+    expect(wrappedDistance(shooter, sampled, TORUS)).toBeLessThan(120);
+    expect(wrappedDistance(shooter, sampled, TORUS)).toBeLessThan(
+      wrappedDistance(shooter, straight, TORUS) / 2,
+    );
+  });
+
+  it('falls back to the legacy solve when there is no predictor horizon', () => {
+    const row = PARITY_CASES[1];
+    expect(
+      interceptPointClassAware(
+        SHOOTER,
+        TARGET,
+        row.velocity,
+        'chaser',
+        row.speed,
+        row.align,
+        row.iterations,
+        { ...T, hazardPredictionHorizon: 0 },
+        TORUS,
+      ),
+    ).toEqual(
+      interceptPoint(SHOOTER, TARGET, row.velocity, row.speed, row.align, row.iterations, TORUS),
+    );
+  });
+
+  it('trusts the class model only for the predictor horizon', () => {
+    // A vanishing trust window leaves the class model no shaping of its own, so
+    // a formation continues on its fitted velocity — the straight-line lead.
+    // This is the bound that stops a long shot over-leading a reversing
+    // formation by a speculative arena-edge bounce.
+    const velocity = { x: 0, y: -90 };
+    const tiny = { ...T, hazardPredictionHorizon: 1e-9 };
+    const sampled = interceptPointClassAware(
+      SHOOTER,
+      TARGET,
+      velocity,
+      'formation',
+      200,
+      0.25,
+      3,
+      tiny,
+      TORUS,
+    );
+    expect(sampled.x).toBeCloseTo(
+      interceptPoint(SHOOTER, TARGET, velocity, 200, 0.25, 3, TORUS).x,
+      6,
+    );
+    expect(sampled.y).toBeCloseTo(
+      interceptPoint(SHOOTER, TARGET, velocity, 200, 0.25, 3, TORUS).y,
+      6,
+    );
+  });
+
+  it('reproduces the legacy solve bit-for-bit for a formation that stays straight', () => {
+    // A formation drifting well inside the bounds never uses its model: its
+    // sampled path IS the fitted velocity, so the solve is the legacy lead.
+    const target = { x: 600, y: 240 };
+    const velocity = { x: 30, y: -40 };
+    expect(
+      interceptPointClassAware(SHOOTER, target, velocity, 'formation', 350, 0.3, 3, T, TORUS),
+    ).toEqual(interceptPoint(SHOOTER, target, velocity, 350, 0.3, 3, TORUS));
+  });
+
+  it('is deterministic and reuses the caller\'s sampler scratch', () => {
+    const scratch: HazardMotionScratch = { x: 0, y: 0, vx: 0, vy: 0 };
+    const args = [
+      SHOOTER,
+      TARGET,
+      { x: 0, y: -90 },
+      'chaser',
+      350,
+      0.3,
+      3,
+      T,
+      TORUS,
+    ] as const;
+    const first = interceptPointClassAware(...args, scratch);
+    // The caller's record was driven (not replaced) by the first solve…
+    expect(scratch.x).not.toBe(0);
+    const second = interceptPointClassAware(...args, scratch);
+    expect(second).toEqual(first);
+    // No wall clock / RNG: a fresh solve on the same inputs agrees exactly.
+    expect(interceptPointClassAware(...args)).toEqual(first);
+  });
+
+  it('bounds the total sample budget when the iteration count is raised', () => {
+    // More passes than the sample budget is clamped, so the solve stays bounded
+    // and deterministic instead of multiplying the per-tick work.
+    const velocity = { x: 0, y: -90 };
+    const few = interceptPointClassAware(SHOOTER, TARGET, velocity, 'chaser', 350, 0.3, 3, T, TORUS);
+    const many = interceptPointClassAware(SHOOTER, TARGET, velocity, 'chaser', 350, 0.3, 1000, T, TORUS);
+    expect(Number.isFinite(many.x)).toBe(true);
+    expect(Number.isFinite(many.y)).toBe(true);
+    expect(interceptPointClassAware(SHOOTER, TARGET, velocity, 'chaser', 350, 0.3, 1000, T, TORUS)).toEqual(many);
+    expect(many).not.toEqual(few);
   });
 });
 

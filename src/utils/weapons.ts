@@ -77,6 +77,7 @@ import {
   bundledWeaponsCsv,
 } from '../core/bundledConfig';
 import { parseWeaponCatalogue } from '../core/csv';
+import type { HexMatchupVerdict } from '../core/hangarWar/hexMatchup';
 import {
   DEFAULT_BPM,
   beatSubdivisionMs,
@@ -1014,6 +1015,81 @@ export interface ImpactFxSpec {
   duration: number;
   /** Baked ToneForge impact cue export name (e.g. `playCannonImpactSound`). */
   cue: string;
+  /**
+   * Optional impact **shape** discriminator (AH-0MWL88YYO0053DWH).
+   *
+   * Absent means `'circle'`, so every shipped per-weapon spec is unchanged and
+   * renders exactly as before. The hex-matchup state specs below add a shape
+   * so effective/resisted feedback is distinguishable **without colour** (the
+   * repo's colour-vision-deficiency policy) — a bright shard burst for an
+   * effective hit, a dull spall ring for a resisted one.
+   */
+  shape?: ImpactFxShape;
+}
+
+/**
+ * Impact-flash shape (AH-0MWL88YYO0053DWH). `'circle'` is today's per-weapon
+ * flash; `'shard'` is the bright critical burst and `'spall'` the dull resisted
+ * ring, so the three matchup states are separable with colour removed.
+ */
+export type ImpactFxShape = 'circle' | 'shard' | 'spall';
+
+/**
+ * The bright, sharp **effective** impact spec (AH-0MWL88YYO0053DWH) — the B
+ * presentation half of producer decision Q1 = A + B.
+ *
+ * Deliberately differs from every neutral per-weapon spec in **shape as well
+ * as colour**: a larger, hotter flash drawn as a shard burst. Its cue is the
+ * dedicated baked `playMatchupEffectiveImpactSound` (played at the raised
+ * playback rate in `MATCHUP_IMPACT_STATE_CUES`), never a re-bake of the
+ * weapon's own cue.
+ */
+export const MATCHUP_EFFECTIVE_IMPACT_FX: ImpactFxSpec = {
+  color: 0xfff6cc,
+  radius: 13,
+  duration: 0.2,
+  cue: 'playMatchupEffectiveImpactSound',
+  shape: 'shard',
+};
+
+/**
+ * The dull, grey **resisted** impact spec (AH-0MWL88YYO0053DWH) — the wrong
+ * tool must look like it *clanged off armour*, never like a broken gun.
+ *
+ * A small, short-lived spall ring (no bright filled core), distinct in shape
+ * and colour from the effective burst, with the dedicated baked
+ * `playMatchupResistedImpactSound` played at a lowered playback rate.
+ */
+export const MATCHUP_RESISTED_IMPACT_FX: ImpactFxSpec = {
+  color: 0x8a8f99,
+  radius: 8,
+  duration: 0.22,
+  cue: 'playMatchupResistedImpactSound',
+  shape: 'spall',
+};
+
+/**
+ * Resolves the impact spec for a weapon's shot in one matchup state
+ * (AH-0MWL88YYO0053DWH).
+ *
+ * `neutral` returns `base` **unchanged and by reference**, so today's
+ * per-weapon `impactFx` (and therefore neutral feedback) is byte-identical.
+ * `effective` / `resisted` return their published state specs. A `base` that
+ * is absent (a weapon with no per-weapon impact metadata) stays absent: the
+ * state feedback layers on top of a weapon's own impact identity rather than
+ * inventing one.
+ *
+ * @param base — the weapon's own `impactFx` (may be absent).
+ * @param state — the resolved hex matchup verdict for the shot.
+ */
+export function resolveImpactStateFx(
+  base: ImpactFxSpec | undefined,
+  state: HexMatchupVerdict,
+): ImpactFxSpec | undefined {
+  if (base === undefined) return undefined;
+  if (state === 'effective') return MATCHUP_EFFECTIVE_IMPACT_FX;
+  if (state === 'resisted') return MATCHUP_RESISTED_IMPACT_FX;
+  return base;
 }
 
 // ── Weapon catalogue ────────────────────────────────────────────────

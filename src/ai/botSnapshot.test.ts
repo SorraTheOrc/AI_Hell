@@ -483,6 +483,120 @@ describe('buildBotSnapshot — live thruster config (AH-0MV85WFWD0029DL7)', () =
   });
 });
 
+// ── Live rotation config + shot speed in the snapshot (AH-0MWR04ZDU0005O8J) ──
+
+describe('buildBotSnapshot — live aim physics (AH-0MWR04ZDU0005O8J AC2)', () => {
+  const ROTATION = {
+    rotationSpeed: 3.5,
+    rotationAcceleration: 14,
+    rotationDeceleration: 70,
+  };
+
+  it('carries the source rotation config and shot speed on the snapshot player', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 10,
+        y: 20,
+        getMovementState: () => ({ x: 10, y: 20, vx: 3, vy: -4 }),
+        getRotationConfig: () => ROTATION,
+        getProjectileSpeed: () => 420,
+      }),
+    });
+
+    expect(buildBotSnapshot(scene).player).toEqual({
+      x: 10,
+      y: 20,
+      vx: 3,
+      vy: -4,
+      rotation: ROTATION,
+      shotSpeed: 420,
+    });
+  });
+
+  it('omits both fields when the source does not expose the getters', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 400,
+        y: 300,
+        getMovementState: () => ({ x: 400, y: 300, vx: 0, vy: 0 }),
+      }),
+    });
+
+    const player = buildBotSnapshot(scene).player as {
+      rotation?: unknown;
+      shotSpeed?: unknown;
+    };
+    // The no-config shape is unchanged: movement fields only (fallbacks hold).
+    expect(player).toEqual({ x: 400, y: 300, vx: 0, vy: 0 });
+    expect(player.rotation).toBeUndefined();
+    expect(player.shotSpeed).toBeUndefined();
+  });
+
+  it('ignores a non-finite shot speed and keeps the fallback semantics', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        getProjectileSpeed: () => Number.NaN,
+      }),
+    });
+
+    expect(buildBotSnapshot(scene).player?.shotSpeed).toBeUndefined();
+  });
+
+  it('carries the source effective weapon range (fire discipline)', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        getEffectiveWeaponRange: () => 262.5,
+      }),
+    });
+
+    expect(buildBotSnapshot(scene).player?.weaponRange).toBe(262.5);
+  });
+
+  it('omits and rejects an absent or non-finite weapon range', () => {
+    const withoutGetter = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+      }),
+    });
+    expect(buildBotSnapshot(withoutGetter).player?.weaponRange).toBeUndefined();
+
+    const nonFinite = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        getEffectiveWeaponRange: () => Number.NaN,
+      }),
+    });
+    expect(buildBotSnapshot(nonFinite).player?.weaponRange).toBeUndefined();
+  });
+
+  it('deep-freezes the carried rotation config and shot speed', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        getRotationConfig: () => ROTATION,
+        getProjectileSpeed: () => 350,
+      }),
+    });
+
+    const snapshot = buildBotSnapshot(scene);
+    expect(snapshot.player!.rotation).toEqual(ROTATION);
+    expect(Object.isFrozen(snapshot.player!.rotation)).toBe(true);
+    expect(snapshot.player!.shotSpeed).toBe(350);
+  });
+});
+
 // ── Thruster-config test harness (AH-0MV85WFHQ0016FTA) ─────────────
 
 describe('thruster-config test harness (AH-0MV85WFHQ0016FTA)', () => {

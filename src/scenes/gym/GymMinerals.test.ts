@@ -19,6 +19,7 @@ import type { ChoiceContext, ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
+import { POWER_UP_LIFECYCLE_TOTAL_LIFETIME } from '../../powerups/PowerUp';
 import { MINERAL_REDROP_SCATTER_RADIUS } from '../../core/constants';
 import { RULES_SCHEMA_VERSION, RULES_STORAGE_KEY } from '../../core/rules';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
@@ -666,6 +667,28 @@ describe('GymMinerals — Mining Laser coverage (AH-0MW9QMSI7005UU9P)', () => {
     for (let i = 0; i < 20; i += 1) drop.powerUp.advance(0.05);
   }
 
+  /**
+   * Despawns every field drop already on screen, so the cadence windows below
+   * measure only the grants the test makes itself.
+   *
+   * The gym places one mining-laser drop at create (AC1). Its placement clears
+   * the ship by only `POWER_UP_DROP_SIZE` (16 px) while the ship's pickup radius
+   * is the 1.4× aura bubble plus the hull (32.4 px at full scale), so the boot
+   * drop can sit **inside the pickup bubble** and mature — then be collected —
+   * *during* the window measured here. Collecting a mining laser resets the
+   * shared cadence timer to zero on purpose (`PowerUpEffects.updateMiningLaser`
+   * makes the first shot due immediately), which fabricates an extra shot
+   * inside the interval and flaked AC3 against full-suite timing
+   * (AH-0MWRTPX0V007MXY6). Driving the lifecycle past its total lifetime
+   * despawns the drop through the shared layer instead of collecting it.
+   */
+  function clearFieldDrops(scene: GymMinerals): void {
+    for (const fieldDrop of scene.getPowerUpDrops()) {
+      fieldDrop.powerUp.advance(POWER_UP_LIFECYCLE_TOTAL_LIFETIME);
+    }
+    tickWithoutPlayerBullets(scene, FRAME);
+  }
+
   it('AC1 — opts into the shared drop layer with a mining-laser-only spawner', async () => {
     const scene = await boot();
 
@@ -682,6 +705,8 @@ describe('GymMinerals — Mining Laser coverage (AH-0MW9QMSI7005UU9P)', () => {
   it('AC2 — collecting the field drop grants the shared laser and cuts the nearest asteroid', async () => {
     const scene = await boot();
     const player = scene.getPlayer()!;
+    // No boot-placed drop may mature into a second, unplanned collection.
+    clearFieldDrops(scene);
 
     // The nearest rock before the pickup: this shot's target through the
     // shared asteroid-only selector.
@@ -712,11 +737,28 @@ describe('GymMinerals — Mining Laser coverage (AH-0MW9QMSI7005UU9P)', () => {
     const scene = await boot();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
+    // The shared fire step is observed through its own cue (the same seam AC5
+    // uses), so "one shot per cadence tick" is asserted directly rather than
+    // inferred from the field population.
+    const fireCue = vi.spyOn(effectsModule, 'playMiningLaserFireSound');
+
+    // Start from a field with no live drop: a boot-placed drop maturing inside
+    // the pickup window would reset the shared cadence timer mid-test and
+    // fabricate a shot (see `clearFieldDrops`).
+    clearFieldDrops(scene);
+    expect(
+      scene.getPowerUpDrops(),
+      'the cadence window must start from a field with no live drop',
+    ).toHaveLength(0);
 
     const drop = scene.spawnPowerUpDrop('mining_laser', player.x, player.y)!;
     growDrop(drop);
     tickWithoutPlayerBullets(scene, FRAME); // collect (shot not yet due)
     expect(registry.isMiningLaserActive()).toBe(true);
+    expect(
+      fireCue,
+      'the collection frame must not fire: the shared cadence starts at zero',
+    ).not.toHaveBeenCalled();
 
     const interval = registry.miningLaserInterval();
     expect(Number.isFinite(interval)).toBe(true);
@@ -724,21 +766,44 @@ describe('GymMinerals — Mining Laser coverage (AH-0MW9QMSI7005UU9P)', () => {
 
     // First shot: the nearest rock dies immediately on collection.
     tickWithoutPlayerBullets(scene, FRAME);
+    expect(
+      fireCue,
+      'exactly one shared fire step per cadence tick',
+    ).toHaveBeenCalledTimes(1);
     const afterFirstShot = scene.aliveCount;
-    expect(afterFirstShot).toBe(4);
+    expect(
+      afterFirstShot,
+      'the first shot should destroy one seeded large rock and split it into two mediums',
+    ).toBe(4);
 
     // No second shot before the shared interval elapses…
     tickWithoutPlayerBullets(scene, interval * 0.5);
-    expect(scene.aliveCount).toBe(afterFirstShot);
+    expect(
+      fireCue,
+      'no second shared fire step may land before half the interval elapses',
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      scene.aliveCount,
+      'no second shot may land before half the shared level-store interval elapses',
+    ).toBe(afterFirstShot);
 
     // …and the next due tick lands exactly on that interval.
     tickWithoutPlayerBullets(scene, interval * 0.5 + FRAME);
-    expect(scene.aliveCount).toBeGreaterThan(afterFirstShot);
+    expect(
+      fireCue,
+      'exactly one more shared fire step must land on the elapsed interval',
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      scene.aliveCount,
+      'a shot must land once the shared level-store interval has elapsed',
+    ).toBeGreaterThan(afterFirstShot);
   });
 
   it('AC4 — retargets across the split chain and pays minerals through the shared layer', async () => {
     const scene = await boot();
     const registry = scene.getEffectsRegistry();
+    // No boot-placed drop may mature into a second, unplanned collection.
+    clearFieldDrops(scene);
     // A permanent grant keeps the laser firing past the field pickup's 10 s
     // temporary window, so the whole 1 + 2 + 4 split chain is observed. The
     // ownership path is the same shared level store / registry seam.

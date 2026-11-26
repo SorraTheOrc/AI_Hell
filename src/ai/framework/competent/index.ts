@@ -54,6 +54,12 @@ export {
 } from './goals';
 export { createCompetentBehaviours } from './behaviours';
 export {
+  BOT_FIRE_LINE_RADIUS_PX,
+  hasFireLine,
+  type FireLineInput,
+  type FireLineTarget,
+} from './fireLine';
+export {
   bearingTo,
   buildIntent,
   buildSteeringDerived,
@@ -62,6 +68,7 @@ export {
   hazardThreatensPlayer,
   idleIntent,
   interceptPoint,
+  interceptPointClassAware,
   mayThrust,
   normalise,
   planSteering,

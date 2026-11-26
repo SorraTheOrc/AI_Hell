@@ -109,12 +109,16 @@ export {
 export { createLegacyBotPolicy } from './legacyPolicy';
 
 export {
+  BOT_FIRE_LINE_RADIUS_PX,
   COMPETENT_BEHAVIOUR_IDS,
   COMPETENT_BOT_CONTENT,
   COMPETENT_BOT_TUNABLES,
   COMPETENT_GOAL_IDS,
   createCompetentBotBrain,
+  hasFireLine,
   resolveCompetentTunables,
   type CompetentBotOptions,
   type CompetentBotTunables,
+  type FireLineInput,
+  type FireLineTarget,
 } from './competent';

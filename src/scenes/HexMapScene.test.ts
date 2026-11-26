@@ -106,6 +106,7 @@ import type {
   HangarWarPayload,
   HangarWarStorage,
 } from '../core/hangarWar/types';
+import type { SortieResultRecord } from '../core/hangarWar/sortieResult';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import { buildLevelUpOption } from '../powerups/choice';
 import {
@@ -377,6 +378,7 @@ function attackRecord(
     deltas: [],
     rose: 0,
     fell: 0,
+    hexIncome: 0,
     attacks: [
       recordAttack(),
       recordAttack({
@@ -1454,6 +1456,547 @@ describe('HexMapScene', () => {
     );
   });
 
+  // ── The post-battle sortie results dialog ────────────────────────
+  // **TEST-FIRST** (AH-0MWMGPPIR009DOKR, parent AH-0MWMFGXD6005WTMN)
+
+  /**
+   * The post-battle results dialog contract.
+   *
+   * **TEST-FIRST, now landed.** This block pinned the landing surface **before**
+   * the results-view builder (`src/core/hangarWar/sortieResult.ts`, child 2),
+   * the overlay scene (`src/scenes/HexCombatResultScene.ts`, child 4) and the
+   * map wiring (child 5) existed; the assertions were authored under Vitest's
+   * `it.fails` (the repo's red-before/green-after convention — see
+   * `src/core/levelScaling.test.ts`). The map-wiring item
+   * (AH-0MWMGPV420013MGB) flipped them back to `it`, so a regression now fails
+   * the suite rather than a leftover `it.fails`.
+   *
+   * The dialog scene module is loaded through a **non-literal** dynamic import
+   * on purpose: a static import would have failed `tsc --noEmit` (and therefore
+   * the build) while the module did not exist yet. It is left lazy so the
+   * contract keeps asserting on the module's own exports rather than on a
+   * fixture.
+   *
+   * ## Pinned contract (the implementation items must match exactly)
+   *
+   * - `HexMapSceneData` gains `sortieResult?: SortieResultRecord | null` — the
+   *   finished deployment's record (target hex id, `won`, `score`,
+   *   `winBonusMinerals`, the win path's capture fields, the loss path's
+   *   `forfeited`). Transient launch data: never persisted, and a later
+   *   menu/hangar entry carries none.
+   * - `HexMapScene` gains the test seams `getSortieResult()` (a detached copy,
+   *   or `null`), `isResultsVisible()` and `getResultsText()` (the dialog's
+   *   rendered text, or `''`).
+   * - `create()` presents the results dialog over the **paused** map before
+   *   the reward overlay and before the demo dwell starts. It launches
+   *   `HEX_COMBAT_RESULT_SCENE_KEY` (`'HexCombatResultScene'`) with
+   *   `{ view, onDismiss, autoDismissMs }`, where `view` is the pure builder's
+   *   output and `autoDismissMs` is the demo dwell only.
+   * - One confirm input dismisses it: the `Enter`/`Space` keys and a pointer
+   *   press on the `▶ CONTINUE` row. Dismissal resumes the map, which then
+   *   presents any carried reward and restarts the demo dwell.
+   * - In demo/attract mode the dialog auto-dismisses after the shared dwell
+   *   (`demoDwellMs`, else `HANGAR_WAR_TRAVERSAL_DWELL_MS`) and the traversal
+   *   still deploys, so the demo cannot stall on the new surface.
+   */
+  describe('sortie results dialog (test-first contract)', () => {
+    const RESULT_SCENE_MODULE = './HexCombatResultScene';
+
+    /** The overlay scene module this block pins. */
+    interface HexCombatResultSceneModule {
+      readonly HEX_COMBAT_RESULT_SCENE_KEY: string;
+      readonly HexCombatResultScene: typeof Phaser.Scene;
+    }
+
+    /** Loads the overlay module; throws (⇒ expected red) on pre-change HEAD. */
+    async function resultScene(): Promise<HexCombatResultSceneModule> {
+      return (await import(
+        RESULT_SCENE_MODULE
+      )) as unknown as HexCombatResultSceneModule;
+    }
+
+    /** The sortie-result query seams this item pins on the map. */
+    interface SortieResultSeams {
+      getSortieResult?(): SortieRecordLike | null;
+      isResultsVisible?(): boolean;
+      getResultsText?(): string;
+    }
+
+    /** Structural views of the pinned record (the real types are child 2's). */
+    interface SalvageAmountsLike {
+      minerals: number;
+      cores: number;
+    }
+
+    interface SortieRecordLike {
+      hexId: string | null;
+      won: boolean;
+      score: number;
+      winBonusMinerals: number;
+      capture: {
+        bankedDelta: SalvageAmountsLike;
+        grant: {
+          grantId: string;
+          entryId: string;
+          kind: string;
+          weaponId: string | null;
+        } | null;
+        specialReward: null;
+        contractBonus: SalvageAmountsLike | null;
+        cachePayout: SalvageAmountsLike | null;
+        ringSecured: boolean;
+        ringAdvanced: boolean;
+      } | null;
+      forfeited: SalvageAmountsLike | null;
+    }
+
+    function seams(scene: HexMapScene): SortieResultSeams {
+      return scene as unknown as SortieResultSeams;
+    }
+
+    /** A winning sortie record that paid salvage, a grant and the win bonus. */
+    function winningRecord(
+      overrides: Partial<SortieRecordLike> = {},
+    ): SortieRecordLike {
+      return {
+        hexId: 'hex-r1-1',
+        won: true,
+        score: 1200,
+        winBonusMinerals: 250,
+        capture: {
+          bankedDelta: { minerals: 120, cores: 1 },
+          grant: {
+            grantId: 'hull-2',
+            entryId: 'hull-2',
+            kind: 'hull',
+            weaponId: null,
+          },
+          specialReward: null,
+          contractBonus: null,
+          cachePayout: null,
+          ringSecured: false,
+          ringAdvanced: false,
+        },
+        forfeited: null,
+        ...overrides,
+      };
+    }
+
+    /** A losing sortie record with the loss path's forfeited salvage. */
+    function losingRecord(
+      overrides: Partial<SortieRecordLike> = {},
+    ): SortieRecordLike {
+      return {
+        hexId: 'hex-r1-3',
+        won: false,
+        score: 42,
+        winBonusMinerals: 0,
+        capture: null,
+        forfeited: { minerals: 30, cores: 2 },
+        ...overrides,
+      };
+    }
+
+    /** Boots the map with the results overlay registered and `data`. */
+    async function bootResultsMap(data: object): Promise<{
+      map: HexMapScene;
+      dialogKey: string;
+      dialog: Phaser.Scene;
+    }> {
+      const { HexCombatResultScene, HEX_COMBAT_RESULT_SCENE_KEY } =
+        await resultScene();
+      booted = await reuse.boot([
+        HexMapScene,
+        PlayScene,
+        HangarScene,
+        BotUpgradeScene,
+        HexCombatResultScene,
+      ]);
+      booted.game.scene.start(HEX_MAP_SCENE_KEY, data);
+      await advanceGame(booted.game, 200);
+      const map = booted.game.scene.getScene(
+        HEX_MAP_SCENE_KEY,
+      ) as HexMapScene;
+      const dialog = booted.game.scene.getScene(HEX_COMBAT_RESULT_SCENE_KEY);
+      expect(dialog, 'the results dialog scene').not.toBeNull();
+      return {
+        map,
+        dialogKey: HEX_COMBAT_RESULT_SCENE_KEY,
+        dialog: dialog as Phaser.Scene,
+      };
+    }
+
+    /** Emits one confirm keydown on an overlay scene (as a player would). */
+    function confirmWithKey(scene: Phaser.Scene, key: string): void {
+      scene.input.keyboard!.emit('keydown', {
+        key,
+        repeat: false,
+        preventDefault: () => {},
+      } as KeyboardEvent);
+    }
+
+    it(
+      'presents the victory results over the paused map and one confirm resumes it',
+      async () => {
+        const record = winningRecord();
+        const { map, dialog, dialogKey } = await bootResultsMap({
+          payload: ringPayload(1),
+          record: attackRecord(),
+          won: true,
+          score: 1200,
+          sortieResult: record,
+          storage: null,
+        });
+
+        // The record is carried for this landing only, as a detached copy.
+        expect(seams(map).getSortieResult?.()).toEqual(record);
+        expect(seams(map).isResultsVisible?.()).toBe(true);
+
+        // The dialog runs over the paused map, exactly like the shipped
+        // reward overlays.
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+        expect(booted!.game.scene.isActive(dialogKey)).toBe(true);
+
+        // Its text names the outcome, the score and every paid reward.
+        const text = screenText(dialog);
+        expect(text).toContain('SORTIE RESULTS');
+        expect(text).toContain('VICTORY');
+        expect(text).toContain('SCORE 1200');
+        expect(text).toContain('SALVAGE BANKED: +120 MINERALS, +1 CORE');
+        expect(text).toContain('GRANT CLAIMED: hull-2');
+        expect(text).toContain('WIN BONUS BANKED: +250 MINERALS');
+        expect(seams(map).getResultsText?.()).toContain('VICTORY');
+
+        // The thin run line and the banked win-bonus line are folded into the
+        // dialog (parent assumption A1): the landing shows each fact once.
+        expect(map.getRunLine()).toBeNull();
+        expect(map.getWinBonusLine()).toBeNull();
+        expect(screenText(map)).not.toContain('RUN: VICTORY');
+        expect(screenText(map)).not.toContain('WIN BONUS BANKED');
+
+        // One confirm dismisses it and the map resumes normal interaction.
+        confirmWithKey(dialog, 'Enter');
+        await advanceGame(booted!.game, 200);
+
+        expect(booted!.game.scene.isActive(dialogKey)).toBe(false);
+        expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+        expect(
+          map.getRows().some((row) => row.key.startsWith('hex:')),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      'dismisses the results dialog from a pointer press on its confirm row',
+      async () => {
+        const { dialog, dialogKey } = await bootResultsMap({
+          payload: ringPayload(1),
+          won: true,
+          score: 700,
+          sortieResult: winningRecord({ score: 700 }),
+          storage: null,
+        });
+
+        const confirm = dialog.children.list.find(
+          (child): child is Phaser.GameObjects.Text =>
+            child instanceof Phaser.GameObjects.Text &&
+            child.text.startsWith('▶ CONTINUE'),
+        );
+        expect(confirm, 'the dialog has a ▶ CONTINUE row').toBeDefined();
+        confirm!.emit('pointerdown');
+        await advanceGame(booted!.game, 200);
+
+        expect(booted!.game.scene.isActive(dialogKey)).toBe(false);
+        expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+      },
+    );
+
+    it(
+      'presents the defeat results with the boss intel and the forfeited salvage',
+      async () => {
+        const { dialog } = await bootResultsMap({
+          payload: ringPayload(1),
+          won: false,
+          score: 42,
+          sortieResult: losingRecord(),
+          storage: null,
+        });
+
+        const text = screenText(dialog);
+        expect(text).toContain('DEFEAT');
+        expect(text).toContain('SCORE 42');
+        // The authored `HEX_RING_DEFINITIONS` row for the target hex.
+        expect(text).toContain('STRONG AGAINST: rapid');
+        expect(text).toContain('WEAK AGAINST: mortar');
+        expect(text).toContain('GRANT NOT CLAIMED: rapid');
+        expect(text).toContain('SALVAGE FORFEITED: 30 MINERALS, 2 CORES');
+      },
+    );
+
+    it(
+      'carries the sortie result as transient launch data and never persists it',
+      async () => {
+        const record = winningRecord();
+        const { map, dialog } = await bootResultsMap({
+          payload: ringPayload(1),
+          won: true,
+          score: 1200,
+          sortieResult: record,
+          storage: null,
+        });
+
+        // A detached copy: callers cannot mutate what the dialog rendered.
+        const copy = seams(map).getSortieResult?.() as SortieRecordLike;
+        copy.score = 1;
+        expect(seams(map).getSortieResult?.()).toEqual(record);
+
+        // Dismiss, then re-enter from a menu/hangar path: nothing carried.
+        confirmWithKey(dialog, 'Enter');
+        await advanceGame(booted!.game, 200);
+        booted!.game.scene.start(HEX_MAP_SCENE_KEY, {
+          payload: ringPayload(1),
+          storage: null,
+        });
+        await advanceGame(booted!.game, 200);
+        const reentered = booted!.game.scene.getScene(
+          HEX_MAP_SCENE_KEY,
+        ) as HexMapScene;
+
+        expect(seams(reentered).getSortieResult?.()).toBeNull();
+        expect(seams(reentered).isResultsVisible?.()).toBe(false);
+        expect(seams(reentered).getResultsText?.()).toBe('');
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+      },
+    );
+
+    it(
+      'auto-dismisses in demo mode so the traversal still deploys',
+      async () => {
+        await bootResultsMap({
+          payload: ringPayload(1),
+          won: true,
+          score: 500,
+          sortieResult: winningRecord({ score: 500 }),
+          demo: true,
+          demoDwellMs: 300,
+          storage: null,
+        });
+
+        // The demo dwell is paused while the dialog waits…
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+
+        // …then the dialog auto-dismisses after the shared dwell and the
+        // traversal walks map → config → deployment without stalling.
+        stepGameUntil(
+          booted!.game,
+          'the demo traverses past the results dialog',
+          () => booted!.game.scene.isActive('PlayScene'),
+          1200,
+        );
+      },
+    );
+
+    it('shows no results dialog on a landing without a sortie result', async () => {
+      // Green on both sides of the change: a plain landing (a menu/hangar
+      // entry, or a landing pinned before this surface existed) presents no
+      // dialog and never pauses the map.
+      const scene = await bootMap({
+        payload: ringPayload(1),
+        won: true,
+        score: 1200,
+        storage: null,
+      });
+
+      expect(seams(scene).getSortieResult?.() ?? null).toBeNull();
+      expect(seams(scene).isResultsVisible?.() ?? false).toBe(false);
+      expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+      expect(screenText(scene)).not.toContain('SORTIE RESULTS');
+    });
+
+    it('goes straight to the map when the results overlay is not registered', async () => {
+      // A headless boot (or a misconfiguration) without the dialog scene must
+      // not stall on a surface it can never show: the map stays live and the
+      // attract traversal still advances (the `presentReward()` no-stall rule).
+      booted = await reuse.boot([HexMapScene, PlayScene, HangarScene]);
+      booted.game.scene.start(HEX_MAP_SCENE_KEY, {
+        payload: ringPayload(1),
+        won: true,
+        score: 700,
+        sortieResult: winningRecord({ score: 700 }),
+        demo: true,
+        demoDwellMs: 300,
+        storage: null,
+      });
+      await advanceGame(booted.game, 200);
+      const scene = booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+
+      expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+      expect(scene.isResultsVisible()).toBe(false);
+      // The traversal is not stalled: the map deploys (via the config screen)
+      // on its own dwell.
+      stepGameUntil(
+        booted!.game,
+        'the demo traverses past the missing results overlay',
+        () => booted!.game.scene.isActive('PlayScene'),
+        900,
+      );
+    });
+
+    it('presents the results dialog before a carried mini-boss reward', async () => {
+      // The order is deterministic (documented on `HexMapScene.presentResults`):
+      // the sortie dialog first, then any carried reward, then the map.
+      const reward = spreadWheelReward();
+      const record = winningRecord();
+      const { HexCombatResultScene, HEX_COMBAT_RESULT_SCENE_KEY } =
+        await resultScene();
+      booted = await reuse.boot([
+        HexMapScene,
+        PlayScene,
+        HangarScene,
+        MiniBossWheelScene,
+        MineralChoiceScene,
+        HexCombatResultScene,
+      ]);
+      booted.game.scene.start(HEX_MAP_SCENE_KEY, {
+        payload: ringPayload(1),
+        won: true,
+        score: 1200,
+        reward,
+        sortieResult: record,
+        storage: null,
+      });
+      await advanceGame(booted.game, 200);
+      const map = booted.game.scene.getScene(HEX_MAP_SCENE_KEY) as HexMapScene;
+
+      // The dialog owns the paused map; the reward has not been presented yet.
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isActive(HEX_COMBAT_RESULT_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
+      expect(map.getReward()).toEqual(reward);
+
+      // One confirm hands over to the reward overlay over the still-paused map.
+      const dialog = booted.game.scene.getScene(
+        HEX_COMBAT_RESULT_SCENE_KEY,
+      ) as Phaser.Scene;
+      confirmWithKey(dialog, 'Enter');
+      await advanceGame(booted.game, 200);
+      expect(booted.game.scene.isActive(HEX_COMBAT_RESULT_SCENE_KEY)).toBe(false);
+      expect(booted.game.scene.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+
+      // Resolving the reward finally makes the map interactive again.
+      const wheel = booted.game.scene.getScene(
+        MINI_BOSS_WHEEL_SCENE_KEY,
+      ) as MiniBossWheelScene;
+      expect(wheel.spin()).toBe(true);
+      await advanceGame(booted.game, 3000);
+      expect(booted.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+      expect(booted.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+    });
+  });
+
+  /**
+   * The deployment→map **sortie result** handoff (AH-0MWMGPS9R008SMEG).
+   *
+   * The finished deployment's record is transient launch data: the map holds
+   * it for this landing only, exposes it through a detached-copy seam, and
+   * never persists it, so a later menu/hangar re-entry shows no result. The
+   * dialog presentation itself is a later child (AH-0MWMGPV420013MGB); these
+   * assertions pin the carry, the detached copy and the launch-data-only rule
+   * without depending on it.
+   */
+  describe('sortie result handoff (AH-0MWMGPS9R008SMEG)', () => {
+    /** A winning sortie record carrying the capture cycle's own fields. */
+    function winningRecord(): SortieResultRecord {
+      return {
+        hexId: 'hex-r1-1',
+        won: true,
+        score: 1200,
+        winBonusMinerals: 250,
+        capture: {
+          bankedDelta: { minerals: 120, cores: 1 },
+          grant: null,
+          specialReward: null,
+          contractBonus: null,
+          cachePayout: null,
+          ringSecured: false,
+          ringAdvanced: false,
+        },
+        forfeited: null,
+      };
+    }
+
+    it('holds the carried sortie result and returns a detached copy', async () => {
+      const record = winningRecord();
+      const scene = await bootMap({
+        payload: ringPayload(1),
+        sortieResult: record,
+        storage: null,
+      });
+
+      expect(scene.getSortieResult()).toEqual(record);
+
+      // A detached copy: mutating what a caller reads cannot change the map's
+      // own carried record.
+      const copy = scene.getSortieResult() as unknown as {
+        score: number;
+        capture: { bankedDelta: { minerals: number } } | null;
+      };
+      copy.score = 1;
+      copy.capture!.bankedDelta.minerals = 0;
+      expect(scene.getSortieResult()).toEqual(record);
+    });
+
+    it('carries a defeat landing with the forfeited salvage and no capture', async () => {
+      const scene = await bootMap({
+        payload: ringPayload(1),
+        sortieResult: {
+          hexId: 'hex-r1-3',
+          won: false,
+          score: 42,
+          winBonusMinerals: 0,
+          capture: null,
+          forfeited: { minerals: 30, cores: 2 },
+        },
+        storage: null,
+      });
+
+      expect(scene.getSortieResult()).toEqual({
+        hexId: 'hex-r1-3',
+        won: false,
+        score: 42,
+        winBonusMinerals: 0,
+        capture: null,
+        forfeited: { minerals: 30, cores: 2 },
+      });
+    });
+
+    it('never persists the sortie result, so a re-entry shows none', async () => {
+      // A landing that carries a sortie result…
+      const carried = await bootMap({
+        payload: ringPayload(1),
+        sortieResult: winningRecord(),
+        storage: null,
+      });
+      expect(carried.getSortieResult()).not.toBeNull();
+
+      // …then a later re-entry with no `sortieResult` carries none, because
+      // the record is transient launch data and was never persisted into the
+      // payload.
+      const reentered = await bootMap({
+        payload: ringPayload(1),
+        storage: null,
+      });
+      expect(reentered.getSortieResult()).toBeNull();
+      expect(JSON.stringify(reentered.getPayload())).not.toContain(
+        'sortieResult',
+      );
+    });
+  });
+
   /**
    * Sectioned layout (AH-0MWL4QCVD007WOAM).
    *
@@ -1702,7 +2245,7 @@ describe('HexMapScene', () => {
       // massed assault, drawn with deliberately wide numbers.
       const scene = await bootMap({
         payload: attackPayload(),
-        record: attackRecord(),
+        record: attackRecord({ hexIncome: 999999 }),
         won: true,
         score: 999999,
         winBonusMinerals: 999999,
@@ -1714,10 +2257,11 @@ describe('HexMapScene', () => {
 
       // Every block the renderer draws, with the budget slot it lands in
       // (`LAST_SORTIE_LINE_BUDGET` is in draw order: run result, win bonus,
-      // assault sub-heading, assault body).
+      // hex income, assault sub-heading, assault body).
       const drawn = [
         { label: 'run result', text: scene.getRunLine()!, fontSizePx: 13 },
         { label: 'win bonus', text: scene.getWinBonusLine()!, fontSizePx: 11 },
+        { label: 'hex income', text: scene.getHexIncomeLine()!, fontSizePx: 11 },
         { label: 'assault sub-heading', text: 'HANGAR ASSAULT', fontSizePx: 10 },
         { label: 'assault body', text: scene.getAssaultText(), fontSizePx: 11 },
       ];

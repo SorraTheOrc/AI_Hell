@@ -54,12 +54,13 @@ import {
   findHangarEntry,
   hangarPermanentLevels,
   normalisePermanentLevels,
+  ownedLevelBearingPowerUpLevels,
   resolveActiveHull,
   resolveActiveLoadout,
   type PermanentUpgradeLevels,
 } from '../../core/hangarWar/hangarEconomy';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
-import { hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
+import { deploymentAggressionFor, hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
 import { capDropIdsToSlotPool } from '../../powerups/slots';
 import {
   grantPermanentPowerUp,
@@ -347,16 +348,23 @@ function carriedWeaponLevels(
  * Resolution order follows the economy: the active hull/loadout come from
  * `resolveActiveHull`/`resolveActiveLoadout`, so corrupt saves can never
  * deploy an unowned ship or an unowned weapon, and the aggression comes from
- * the target hex (see {@link selectDeploymentHex}). An empty loadout resolves
+ * the target hex **plus the ring's own capture-progress ramp** (see
+ * {@link selectDeploymentHex} and {@link deploymentAggressionFor}): a fresh
+ * ring deploys at its authored aggression, and every hex the player already
+ * holds in that ring raises it, by up to `HEX_AGGRESSION_RAMP_PER_RING` across
+ * the whole ring and bounded by the frontier ceiling
+ * (AH-0MWFDQ9EY004NO4X). An empty loadout resolves
  * to `startingWeapons: []`: the run then starts with only the ship's permanent
  * cannon (AH-0MVZJ6V1J001DA9D).
  *
  * The hangar's bought **permanent levels** (AH-0MWI5AG1X0007XZH) travel with
  * the loadout: `weaponLevels` names one row per carried weapon (base `1` when
  * the hangar never upgraded it, the bought absolute level otherwise) and
- * `powerUpLevels` carries every persisted
- * level-bearing power-up level, so {@link applyHangarWarDeployment} can grant
- * exactly the levels the player bought.
+ * `powerUpLevels` carries the **selected** level-bearing power-ups (the
+ * `activeLoadout.powerUps` tri-state — absent installs every owned kind, `[]`
+ * installs none, a list installs exactly those), so
+ * {@link applyHangarWarDeployment} can grant exactly the levels the player
+ * bought and chose to install.
  *
  * @param payload — the persistent war payload (never mutated).
  * @param options — target hex, catalogue and seed overrides.
@@ -368,13 +376,31 @@ export function buildHangarDeployment(
 ): HangarWarDeployment {
   const catalogue = options.catalogue ?? HANGAR_CATALOGUE;
   const hex = selectDeploymentHex(payload, options.hexId);
-  const aggression = toCount(hex?.aggression ?? DEFAULT_DEPLOYMENT_AGGRESSION);
+  // The ring's progress ramp (AH-0MWFDQ9EY004NO4X): the target hex's authored
+  // aggression plus one point per hex already held in the same ring. The rule
+  // lives in the shared difficulty module, so the game and the ring-timing
+  // harness resolve a deployment's aggression identically.
+  const heldInRing = payload.ring.hexes.filter((entry) => entry.held).length;
+  const aggression = deploymentAggressionFor(
+    toCount(hex?.aggression ?? DEFAULT_DEPLOYMENT_AGGRESSION),
+    heldInRing,
+    payload.ring.hexes.length,
+  );
   const startLevel = deploymentLevelForAggression(aggression);
   const hullId = resolveActiveHull(payload.hangar);
   const hull = resolveHullDefinition(hullId, catalogue);
-  const loadout = resolveActiveLoadout(payload.hangar);
+  const loadout = resolveActiveLoadout(payload.hangar, catalogue);
   const startingWeapons = resolveStartingWeapons(loadout.startingWeapons, catalogue);
   const levels = hangarPermanentLevels(payload.hangar);
+  // The selected power-ups are the deployment's grant list (tri-state: absent =
+  // every owned level-bearing kind, `[]` = none, a list = exactly those). Each
+  // selected id carries its permanent level (base `1` when never upgraded).
+  const powerUpLevelsById = new Map(
+    ownedLevelBearingPowerUpLevels(payload.hangar).map((row) => [
+      row.id as string,
+      row.level,
+    ]),
+  );
   const seed = normaliseSeed(
     options.seed
       ?? payload.seed + aggression * 104729 + payload.ring.ringIndex,
@@ -390,7 +416,10 @@ export function buildHangarDeployment(
     speedMultiplier: hull?.runStats.speedMultiplier ?? 1,
     startingWeapons,
     weaponLevels: carriedWeaponLevels(startingWeapons, levels),
-    powerUpLevels: levels.powerUps.map((row) => ({ ...row })),
+    powerUpLevels: (loadout.powerUps ?? []).map((id) => ({
+      id: id as PowerUpId,
+      level: powerUpLevelsById.get(id) ?? 1,
+    })),
     modifiers: [...loadout.modifiers],
     // A detached copy: the run resolves captures/ticks against this war, and a
     // caller must never see its own payload mutated by a deployment.
@@ -543,10 +572,11 @@ export interface HangarWarDeploymentSeams {
 /**
  * Scales the shared ship config by the deployment hull's speed multiplier.
  *
- * The hull's run stat is applied to the **base** tuning the shared speed-boost
- * seam multiplies about (`Player.setSpeedMultiplier` composes on top of it
- * every frame from the effects registry), so a slower hull stays slower with
- * and without a Speed Boost instead of having its hull stat overwritten.
+ * The hull's run stat is applied to the **base** tuning the ship flies with.
+ * Because Speed Boost is weapons-only and no longer scales movement
+ * (AH-0MWLU8A7P001O391), the hull stat is the ship's movement tuning for the
+ * whole run: a slower hull stays slower regardless of any active power-up
+ * instead of having its hull stat overwritten.
  *
  * The arithmetic itself is the shared {@link scaleShipConfigForHull} helper, so
  * the headless ring-timing harness applies a hull exactly as a shipped
@@ -561,6 +591,28 @@ export function applyHullSpeedToShipConfig(
   deployment: HangarWarDeployment,
 ): ShipConfig {
   return scaleShipConfigForHull(config, deployment.speedMultiplier);
+}
+
+/**
+ * The combined weapon + power-up ids a deployment actually admits under the
+ * shared six-slot cap, in grant order (weapons first, then power-ups).
+ *
+ * This is the **one** cap predicate the grant and the hangar screen both use:
+ * `applyHangarWarDeployment` grants exactly these ids, and
+ * `buildHangarPowerUpOptions` marks a row installed only when it appears here,
+ * so the displayed loadout can never differ from the flown one (assumption A3,
+ * AH-0MVVF0POV001JNKX).
+ *
+ * @param deployment — the deployment to trim (never mutated).
+ * @returns the admitted ids in grant order.
+ */
+export function admittedDeploymentDropIds(
+  deployment: HangarWarDeployment,
+): string[] {
+  return capDropIdsToSlotPool([
+    ...deployment.startingWeapons,
+    ...deployment.powerUpLevels.map((row) => row.id),
+  ]);
 }
 
 /**
@@ -627,11 +679,9 @@ export function applyHangarWarDeployment(
 
   // One cap for the whole pre-grant list: the six slots are shared between
   // weapon and power-up kinds, so a deployment can never start a run over the
-  // cap. Weapons come first, preserving today's trimming order.
-  const admitted = capDropIdsToSlotPool([
-    ...deployment.startingWeapons,
-    ...deployment.powerUpLevels.map((row) => row.id),
-  ]);
+  // cap. Weapons come first, preserving today's trimming order. The hangar
+  // screen reads the same helper, so display equals grant.
+  const admitted = admittedDeploymentDropIds(deployment);
 
   for (const id of admitted) {
     if (carried.has(id)) {

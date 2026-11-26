@@ -35,6 +35,7 @@ import {
   cueSeeds,
 } from './cueManifest';
 import { cueVoiceLimiter } from './cueVoiceLimiter';
+import { mineralChimeRate } from './mineralChime';
 import {
   WebAudioSfxProvider,
   webAudioSfxProvider,
@@ -592,6 +593,29 @@ export function playMineralTinkleSound(): void {
   playCue('playMineralTinkleSound');
 }
 
+/**
+ * Player mineral pickup chime — a quiet, steady chime played on every
+ * **player** mineral collection (AH-0MWNMRD6I002CCVT). The chime rises through
+ * the A-minor ladder as a streak continues, so a fast scatter reads as rising
+ * musical momentum.
+ *
+ * The pitch comes from the pure escalation state machine
+ * (`mineralChime.noteMineralCollected`), which also owns the game-clock reset
+ * gap; this wrapper only turns the resulting ladder `step` into a playback
+ * rate. Dispatched through the one `playCue` funnel, so it inherits the shared
+ * per-cue voice limiter, the master gain and `setSfxVolume`/`setSfxMuted`, and
+ * degrades to a silent no-op with no `AudioContext` (or no baked asset).
+ *
+ * Deliberately distinct from {@link playMineralTinkleSound} (the Mystery UFO
+ * spill cue): a pickup must never read as a spill.
+ *
+ * @param step - 0-based ladder step from the escalation state machine
+ *   (0 = the baked base note); out-of-range steps clamp to the ladder.
+ */
+export function playMineralCollectChimeSound(step = 0): void {
+  playCue('playMineralCollectChimeSound', { rate: mineralChimeRate(step) });
+}
+
 // ── Graze / danger multiplier (AH-0MWL7ORK8007LXJI) ──────────────────
 //
 // A graze is a near miss worth points, so it needs a cue that is audible
@@ -665,6 +689,26 @@ export function playBossHitSound(): void {
  */
 export function playEnemyForceFieldBreakSound(): void {
   playBulletDestructionSound();
+}
+
+/**
+ * Heavier layered elite (anomaly) hull-destruction boom
+ * (AH-0MWU666IS008JOR3 AC3).
+ *
+ * Decision (recorded here so the audio knowledge stays in the audio layer):
+ * an elite's death must read as **distinct** from an ordinary kill, so this is
+ * an alias of the existing baked boss-destruction cue rather than a new
+ * ToneForge recipe. It is deliberately heavier than
+ * {@link playDestructionSound}, so killing an anomaly never sounds like
+ * clearing chaff, and it ships no unrendered asset.
+ *
+ * Dispatched through {@link playBossDestructionSound} (not `playCue`
+ * directly) so the explosion family trim is applied exactly once on this
+ * alias path, and so it honours the shared SFX master volume/mute exactly
+ * like every other cue.
+ */
+export function playEliteDeathSound(): void {
+  playBossDestructionSound();
 }
 
 /**
@@ -812,6 +856,98 @@ export function playHeavySlugImpactSound(): void {
   playCue('playHeavySlugImpactSound');
 }
 
+// ── Hex matchup impact-state cues (AH-0MWL88YYO0053DWH) ─────────────
+
+/**
+ * The three matchup presentation states (mirrors `HexMatchupVerdict`).
+ * Neutral is the weapon's own baked cue at unity rate; the other two are the
+ * dedicated state cues below.
+ */
+export type ImpactFeedbackState = 'neutral' | 'effective' | 'resisted';
+
+/** One state's resolved cue name and playback rate. */
+export interface ImpactStateCue {
+  /** Cue name dispatched through {@link playWeaponImpactCue}. */
+  cue: string;
+  /** Playback-rate multiplier (neutral is unity; > 1 bright, < 1 dull). */
+  rate: number;
+}
+
+/**
+ * The published **state → cue** mapping for the two non-neutral matchup states
+ * (AH-0MWL88YYO0053DWH, parent AC7).
+ *
+ * Each state carries its **own** baked cue (a bright shard shatter for
+ * effective, a dull armour clang for resisted) and plays it at a **different
+ * playback rate** from neutral and from each other — so the state is audible
+ * with the sound alone, even when the flash colour is invisible to the player
+ * (colour-vision-deficiency policy). The per-weapon cues are never re-baked;
+ * the states layer a dedicated family on top of them.
+ */
+export const MATCHUP_IMPACT_STATE_CUES: Readonly<
+  Record<'effective' | 'resisted', ImpactStateCue>
+> = {
+  effective: { cue: 'playMatchupEffectiveImpactSound', rate: 1.5 },
+  resisted: { cue: 'playMatchupResistedImpactSound', rate: 0.75 },
+};
+
+/**
+ * Bright, sharp shatter — the counter weapon connects on a boss
+ * (AH-0MWL88YYO0053DWH). Baked via the ToneForge pipeline
+ * (`aihell-matchup-effective-impact`, seed 32293) and played at the raised
+ * state rate so it reads as *critical* above the weapon's own hit cue.
+ */
+export function playMatchupEffectiveImpactSound(): void {
+  playCue('playMatchupEffectiveImpactSound', {
+    rate: MATCHUP_IMPACT_STATE_CUES.effective.rate,
+  });
+}
+
+/**
+ * Dull, low armour clang — a resisted shot bounces off the boss
+ * (AH-0MWL88YYO0053DWH). Baked via the ToneForge pipeline
+ * (`aihell-matchup-resisted-impact`, seed 32294) and played at the lowered
+ * state rate so it reads as *wrong tool*, never as a silent gun.
+ */
+export function playMatchupResistedImpactSound(): void {
+  playCue('playMatchupResistedImpactSound', {
+    rate: MATCHUP_IMPACT_STATE_CUES.resisted.rate,
+  });
+}
+
+/**
+ * Resolves a matchup state to the cue the shared impact seam must play
+ * (AH-0MWL88YYO0053DWH).
+ *
+ * `neutral` returns the weapon's own cue at unity rate, so neutral feedback is
+ * byte-for-byte today's behaviour; `effective`/`resisted` return their
+ * published state cue and rate.
+ *
+ * @param state — the resolved hex matchup verdict for the shot.
+ * @param weaponCue — the weapon's own `impactFx.cue` (neutral only).
+ */
+export function resolveImpactStateCue(
+  state: ImpactFeedbackState,
+  weaponCue: string,
+): ImpactStateCue {
+  if (state === 'effective') return { ...MATCHUP_IMPACT_STATE_CUES.effective };
+  if (state === 'resisted') return { ...MATCHUP_IMPACT_STATE_CUES.resisted };
+  return { cue: weaponCue, rate: 1 };
+}
+
+/**
+ * Dispatches the baked cue for a non-neutral matchup state through the one
+ * shared impact dispatcher (AH-0MWL88YYO0053DWH). A neutral state is a no-op:
+ * the caller's own per-weapon cue already played.
+ */
+export function playMatchupImpactStateCue(
+  state: ImpactFeedbackState,
+  weaponCue = '',
+): void {
+  if (state === 'neutral') return;
+  playWeaponImpactCue(resolveImpactStateCue(state, weaponCue).cue);
+}
+
 /**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
@@ -840,6 +976,8 @@ export const PLAYER_WEAPON_IMPACT_CUES: Readonly<Record<string, () => void>> = {
   playRearGuardImpactSound,
   playBroadsideImpactSound,
   playHeavySlugImpactSound,
+  playMatchupEffectiveImpactSound,
+  playMatchupResistedImpactSound,
 };
 
 /**
@@ -1199,6 +1337,31 @@ export function playWeaponFireSound(
       // the per-weapon `_playShootCue` switch behaviour).
       break;
   }
+}
+
+// ── Weapon evolution legibility cues (epic AH-0MWL7OWPF003E4TP AC7) ──
+
+/**
+ * Fusion cue — the cheerful two-tone chime when two weapons fuse into an
+ * evolved weapon (epic AC7). Routed through the existing baked
+ * {@link playPowerUpCollectSound} via the shared cue funnel, so it respects
+ * the shared SFX mute/volume exactly like every other cue and ships no new
+ * ToneForge recipe of its own.
+ */
+export function playEvolutionFusionCue(): void {
+  playPowerUpCollectSound();
+}
+
+/**
+ * Expiry cue — the quick descending blip when a field-tier fusion reverts to
+ * its halves on the bar downbeat (epic AC7). Routed through the existing
+ * baked {@link playPowerUpDespawnSound} via the shared cue funnel, so it
+ * respects the shared SFX mute/volume exactly like every other cue and is
+ * audibly distinct from the ascending fusion chime (a shape/text/feel
+ * difference that never relies on colour).
+ */
+export function playEvolutionExpiryCue(): void {
+  playPowerUpDespawnSound();
 }
 
 /**

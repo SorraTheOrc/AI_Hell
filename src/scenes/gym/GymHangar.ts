@@ -28,7 +28,12 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { createSampleHangarWarPayload } from '../../core/hangarWar/fixtures';
+import { resolveActiveLoadout } from '../../core/hangarWar/hangarEconomy';
 import type { HangarWarPayload } from '../../core/hangarWar/types';
+import {
+  HANGAR_CATALOGUE,
+  type HangarEntry,
+} from '../../data/hangarCatalogue';
 import {
   addBackToIndexButton,
   addBackToMenuOnEsc,
@@ -66,6 +71,13 @@ export const GYM_HANGAR_DEFAULT_SEED = 0x5eed_1a2b;
 export interface GymHangarData extends SceneSetupState {
   /** Payload to render (read-only). Defaults to the deterministic sample. */
   payload?: HangarWarPayload;
+  /**
+   * Unlock tree to render (read-only). Defaults to the shipped catalogue, so
+   * the gym shows exactly what the game shows; injected so a parity/capture
+   * fixture can exercise a grown roster without owning every weapon
+   * (AH-0MWWI3ONJ004QRR9).
+   */
+  catalogue?: readonly HangarEntry[];
 }
 
 /**
@@ -82,14 +94,19 @@ export function hangarSummaryLines(payload: HangarWarPayload): string[] {
   const { hangar, ring } = payload;
   const held = ring.hexes.filter((hex) => hex.held).length;
   const loadout = hangar.activeLoadout;
+  const resolved = resolveActiveLoadout(hangar);
   const weapons =
     loadout.startingWeapons.length > 0 ? loadout.startingWeapons.join(', ') : 'none';
   const modifiers =
     loadout.modifiers.length > 0 ? loadout.modifiers.join(', ') : 'none';
+  const powerUps =
+    (resolved.powerUps ?? []).length > 0
+      ? (resolved.powerUps ?? []).join(', ')
+      : 'none';
 
   return [
     `Banked salvage: ${hangar.bankedMinerals} minerals · ${hangar.bankedCores} cores`,
-    `Hull ${hangar.activeHull} · starting weapons ${weapons} · modifiers ${modifiers}`,
+    `Hull ${hangar.activeHull} · starting weapons ${weapons} · power-ups ${powerUps} · modifiers ${modifiers}`,
     `Ring ${ring.ringIndex} — ${held}/${ring.hexes.length} hexes held`,
     `Pending attacks: ${payload.pendingAttacks.length} · best score: ${payload.bestScore}`,
   ];
@@ -107,6 +124,8 @@ export class GymHangar extends Phaser.Scene {
   );
   /** Capture setup supplied as scene-start data (documented no-op for player state). */
   private setup: SceneSetupState | null = null;
+  /** The unlock tree in use (shipped catalogue unless injected). */
+  private catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE;
   /** The rendered shared hangar screen (read-only, no handlers). */
   private view: HangarScreenView | null = null;
 
@@ -121,6 +140,7 @@ export class GymHangar extends Phaser.Scene {
    */
   init(data?: GymHangarData | null): void {
     this.setup = data ?? null;
+    this.catalogue = data?.catalogue ?? HANGAR_CATALOGUE;
     const seed = resolveSetupSeed(data ?? null);
     this.payload = data?.payload
       ? clonePayload(data.payload)
@@ -141,7 +161,7 @@ export class GymHangar extends Phaser.Scene {
     // states and the layout are the ones the game shows.
     this.view = renderHangarScreen(
       this,
-      buildHangarScreenModel(this.payload),
+      buildHangarScreenModel(this.payload, this.catalogue),
       undefined,
       { hint: GYM_HANGAR_HINT },
     );
@@ -162,7 +182,9 @@ export class GymHangar extends Phaser.Scene {
 
   /** The shared screen model rendered (unlock tree + deployment selector). */
   getModel(): HangarScreenModel {
-    return this.view?.model ?? buildHangarScreenModel(this.payload);
+    return (
+      this.view?.model ?? buildHangarScreenModel(this.payload, this.catalogue)
+    );
   }
 
   /** Every rendered row, in reading order (read-only: none is actionable). */
@@ -173,5 +195,19 @@ export class GymHangar extends Phaser.Scene {
   /** The summary lines rendered on screen, in display order. */
   getSummaryLines(): string[] {
     return hangarSummaryLines(this.payload);
+  }
+
+  /** The first visible unlock row (the shared screen's scroll offset). */
+  getUnlockScroll(): number {
+    return this.view?.getUnlockScroll() ?? 0;
+  }
+
+  /**
+   * Scrolls the shared screen's unlock tree by `delta` rows (positive = down).
+   * The gym is read-only, so this is pointer/wheel navigation only — the scene
+   * renders the exact same scrollable window the game does (gym↔game parity).
+   */
+  scrollUnlockRows(delta: number): number {
+    return this.view?.scrollUnlockRows(delta) ?? 0;
   }
 }

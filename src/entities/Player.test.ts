@@ -15,12 +15,18 @@ import Phaser from 'phaser';
 import { advanceGame, bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
-import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { PLAYER_BULLET_SPEED, WEAPON_TIMEOUT_MS } from '../core/constants';
 import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
 import { euclidPattern, isOnset } from '../utils/euclid';
 import { isOnBeatGrid, WEAPON_CATALOGUE, type WeaponId } from '../utils/weapons';
 import { resolveWeaponAtLevel } from '../utils/weaponLevels';
+import { resolveEvolvedWeaponPattern } from '../utils/weaponEvolutions';
+import {
+  HANGAR_WAR_DEPLOYMENT_KIND,
+  applyHangarWarDeployment,
+  type HangarWarDeployment,
+} from '../scenes/hangarWar/hangarDeployment';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
 import * as effects from '../audio/effects';
@@ -459,6 +465,39 @@ describe('Player ship entity', () => {
       reverseAcceleration: 90,
       reverseMaxSpeed: 60,
     });
+  });
+
+  // ── Live aim physics seam (AH-0MWR04ZDU0005O8J) ────────────────
+
+  it("getProjectileSpeed reports the ship's primary travelling-shot speed", async () => {
+    const player = await freshPlayer();
+
+    // The aim solve's time of flight is the ship's own travelling shot, not the
+    // enemy-bullet tell constant (AH-0MWR04ZDU0005O8J · AC2).
+    expect(player.getProjectileSpeed()).toBe(PLAYER_BULLET_SPEED);
+  });
+
+  it('getEffectiveWeaponRange reports the reach of the active loadout', async () => {
+    const player = await freshPlayer();
+    const cannon = player.getWeaponDef('cannon');
+    // Travelling shots fly at PLAYER_BULLET_SPEED and expire after the
+    // weapon's lifetime, so the reach is their product
+    // (AH-0MWPOET5A002IPTP · fire-discipline remediation).
+    expect(player.getEffectiveWeaponRange()).toBeCloseTo(
+      PLAYER_BULLET_SPEED * cannon.bulletLifetime,
+      6,
+    );
+  });
+
+  it('getEffectiveWeaponRange takes the farthest reach in the loadout', async () => {
+    const player = await freshPlayer();
+    const before = player.getEffectiveWeaponRange();
+    player.equipWeapon('railgun', true);
+    const railgun = player.getWeaponDef('railgun');
+    expect(player.getEffectiveWeaponRange()).toBeCloseTo(
+      Math.max(before, PLAYER_BULLET_SPEED * railgun.bulletLifetime),
+      6,
+    );
   });
 
   // ── Thrust flame animation ───────────────────────────────────────
@@ -2323,5 +2362,404 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
     expect(player.tryFire(0.3)).toEqual(['cannon']); // onset at 250 ms
     expect(player.getLastShotTime('cannon')).toBe(250);
     expect(isOnset(250, euclidPattern(9, 16), 125, 0)).toBe(true);
+  });
+});
+describe('Player — field-tier weapon evolution (AH-0MWU7BAXI003HBP3)', () => {
+  let booted: BootedGame | null = null;
+  const tick = () => advanceGame(booted!.game, 200);
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    seedConfigStore([], { ...FOUR_DIR_CONFIG, controlScheme: 'fourDirectional' });
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+    document.body.innerHTML = '';
+  });
+
+  /** Boots the player and re-anchors the shared beat clock at t = 0. */
+  async function bootEvolutionPlayer(): Promise<Player> {
+    booted = await bootScene([GymPlayer]);
+    await tick();
+    const children = booted!.scene.sys.displayList.getChildren();
+    const player = children.find((c) => c instanceof Player) as
+      | Player
+      | undefined;
+    expect(player).toBeDefined();
+    player!.getBeatClock().reset();
+    player!.setBeatClock(player!.getBeatClock());
+    return player!;
+  }
+
+  it('reports a field fusion only while both halves are active', async () => {
+    const player = await bootEvolutionPlayer();
+
+    player.equipWeapon('ricochet');
+    expect(player.getActiveEvolution()).toBeNull();
+
+    player.equipWeapon('arc');
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'field',
+    });
+
+    // The evolved cadence is the authored ladder on the live lattice.
+    const expected = resolveEvolvedWeaponPattern('chain_ricochet', 0, 80);
+    expect(player.getEvolutionFirePattern()).toEqual(expected);
+    expect(player.getEvolutionNextShotTime()).toBe(0);
+  });
+
+  it('fires the evolved weapon instead of the two halves', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.equipWeapon('arc');
+
+    const fired = player.tryFire(0.01);
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+    expect(fired).not.toContain('ricochet');
+    expect(fired).not.toContain('arc');
+
+    // Every evolved shot lands on a whole 16th-note tick and the evolved
+    // pattern's onsets, never on a bespoke interval.
+    expect(player.getEvolutionLastShotTime()).toBe(0);
+    player.tryFire(1.49); // t = 1500 ms, the rhythm's second onset
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+    const shot = player.getEvolutionLastShotTime()!;
+    expect(shot % 187.5).toBe(0);
+    expect(isOnset(shot, euclidPattern(2, 16), 187.5, 0)).toBe(true);
+  });
+
+  it('stops the evolved weapon on the next bar downbeat when a half expires, then reverts the survivor', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.tickWeaponTimers(1000); // ricochet has 9 s left
+    player.equipWeapon('arc'); // arc is fresh at 10 s
+
+    player.tryFire(1.0); // t = 1000 ms; the fusion is sounding
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+
+    // Expire the ricochet half: the fusion is queued to stop on the next bar
+    // downbeat (3000 ms), not immediately.
+    player.tickWeaponTimers(9000);
+    expect(player.getActiveEvolution()?.evolvedId).toBe('chain_ricochet');
+    expect(player.getPendingEvolution()).toEqual({
+      evolvedId: null,
+      effectiveAtMs: 3000,
+    });
+
+    // Still firing before the boundary…
+    player.tryFire(0.5); // t = 1500 ms
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+
+    // …then stops on the downbeat and the surviving arc half reverts.
+    const fired = player.tryFire(1.5); // t = 3000 ms, a bar downbeat
+    expect(player.getActiveEvolution()).toBeNull();
+    expect(player.getEvolutionFired()).toBeNull();
+    expect(player.getPendingEvolution()).toBeUndefined();
+    expect(fired).toContain('arc');
+    expect(player.getLastShotTime('arc')).toBe(3000);
+  });
+
+  it('fires the fused definition as a single forward shot (damage parity contract)', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.equipWeapon('arc');
+
+    const def = player.getEvolvedWeaponDef('chain_ricochet');
+    expect(def.offsets).toEqual([0]);
+    expect(def.name).toBe('Chain Ricochet');
+    expect(def.id).toBe('ricochet');
+  });
+
+  it('latches a fusion transition when the pairing completes, consumed exactly once', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    expect(player.consumeEvolutionTransition()).toBeNull();
+
+    // The second half completes the pairing: the fusion transition is latched
+    // (even though it was triggered by a collection, not a `tryFire` tick).
+    player.equipWeapon('arc');
+    expect(player.consumeEvolutionTransition()).toEqual({
+      kind: 'fusion',
+      evolvedId: 'chain_ricochet',
+    });
+    // Consumed exactly once.
+    expect(player.consumeEvolutionTransition()).toBeNull();
+  });
+
+  it('latches an expiry transition on the bar downbeat when the field tier reverts', async () => {
+    const player = await bootEvolutionPlayer();
+    player.equipWeapon('ricochet');
+    player.tickWeaponTimers(1000); // ricochet has 9 s left
+    player.equipWeapon('arc'); // arc is fresh at 10 s
+    expect(player.consumeEvolutionTransition()).toEqual({
+      kind: 'fusion',
+      evolvedId: 'chain_ricochet',
+    });
+
+    player.tryFire(1.0); // t = 1000 ms; the fusion is sounding
+    player.tickWeaponTimers(9000); // expire the ricochet half
+    expect(player.getPendingEvolution()).toEqual({
+      evolvedId: null,
+      effectiveAtMs: 3000,
+    });
+
+    // Still firing before the boundary, then the revert commits on the bar
+    // downbeat (t = 3000 ms), latching the expiry exactly once.
+    player.tryFire(0.5); // t = 1500 ms
+    player.tryFire(1.5); // t = 3000 ms
+    expect(player.getActiveEvolution()).toBeNull();
+    expect(player.consumeEvolutionTransition()).toEqual({
+      kind: 'expiry',
+      evolvedId: 'chain_ricochet',
+    });
+    expect(player.consumeEvolutionTransition()).toBeNull();
+  });
+});
+
+describe('Player — owned-tier weapon evolution (AH-0MWU7BBLP0018UZ7)', () => {
+  let booted: BootedGame | null = null;
+  const tick = () => advanceGame(booted!.game, 200);
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    seedConfigStore([], { ...FOUR_DIR_CONFIG, controlScheme: 'fourDirectional' });
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+    document.body.innerHTML = '';
+  });
+
+  /** Boots the player and re-anchors the shared beat clock at t = 0. */
+  async function bootOwnedPlayer(): Promise<Player> {
+    booted = await bootScene([GymPlayer]);
+    await tick();
+    const children = booted!.scene.sys.displayList.getChildren();
+    const player = children.find((c) => c instanceof Player) as
+      | Player
+      | undefined;
+    expect(player).toBeDefined();
+    player!.getBeatClock().reset();
+    player!.setBeatClock(player!.getBeatClock());
+    return player!;
+  }
+
+  /**
+   * The shipped hold-full path: each permanent grant raises the weapon's
+   * permanent level by one. Two grants per half is permanent level 2 — the
+   * owned-tier threshold (base 1).
+   */
+  function grantTwice(player: Player, weaponId: WeaponId): void {
+    player.equipWeapon(weaponId, true);
+    player.equipWeapon(weaponId, true);
+  }
+
+  /**
+   * A minimal hangar launch carrying the bought permanent levels through the
+   * shipped deployment seam — the same `equipWeapon(id, true)` grant per level
+   * the run's hold-full path makes, so both ownership sources converge on
+   * `Player.getWeaponLevels()`.
+   */
+  function hangarDeployment(
+    startingWeapons: readonly WeaponId[],
+    weaponLevels: readonly { id: WeaponId; level: number }[],
+  ): HangarWarDeployment {
+    const deployment: HangarWarDeployment = {
+      kind: HANGAR_WAR_DEPLOYMENT_KIND,
+      hexId: null,
+      aggression: 1,
+      startLevel: 1,
+      seed: 7,
+      hullId: 'scout',
+      startingLives: 3,
+      speedMultiplier: 1,
+      startingWeapons,
+      weaponLevels,
+      powerUpLevels: [],
+      modifiers: [],
+    };
+    return deployment;
+  }
+
+  /**
+   * Advances the run by `seconds`, firing every frame, and reports how many
+   * evolved volleys sounded along the way.
+   */
+  function runFor(player: Player, seconds: number): number {
+    let evolvedShots = 0;
+    const stepMs = 100;
+    for (let elapsed = 0; elapsed < seconds * 1000; elapsed += stepMs) {
+      player.tryFire(stepMs / 1000);
+      if (player.getEvolutionFired()) evolvedShots += 1;
+    }
+    return evolvedShots;
+  }
+
+  it('persists for the rest of the run after two hold-full grants on each half', async () => {
+    const player = await bootOwnedPlayer();
+    grantTwice(player, 'ricochet');
+    grantTwice(player, 'arc');
+
+    // The owned tier reads the existing permanent snapshot — no new state.
+    expect(player.getWeaponLevels()).toEqual([
+      { id: 'ricochet', level: 2 },
+      { id: 'arc', level: 2 },
+    ]);
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'owned',
+    });
+
+    // Well past every timed window a fusion could have had: the halves and the
+    // fusion are still live and still firing.
+    const evolvedShots = runFor(player, 40);
+    player.tickWeaponTimers(40_000);
+
+    expect(evolvedShots).toBeGreaterThan(0);
+    expect(player.getEvolutionLastShotTime()).toBeGreaterThan(30_000);
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'owned',
+    });
+  });
+
+  it('survives the expiry of a timed overlap: a temp stack ending leaves the owned fusion live', async () => {
+    const player = await bootOwnedPlayer();
+    grantTwice(player, 'ricochet');
+    grantTwice(player, 'arc');
+    // A field pickup on top of the permanent half opens a 10 s window. Only the
+    // temporary stack expires; the permanent half stays active, so the fusion
+    // never falls back to the field tier (and never stops).
+    player.equipWeapon('ricochet');
+    expect(player.getTempWeaponStacks('ricochet')).toBe(1);
+
+    player.tryFire(0.1);
+    player.tickWeaponTimers(WEAPON_TIMEOUT_MS);
+
+    expect(player.getTempWeaponStacks('ricochet')).toBe(0);
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'owned',
+    });
+    expect(player.getPendingEvolution()).toBeUndefined();
+
+    // …and it keeps firing after the window's boundary.
+    player.tryFire(3);
+    expect(player.getEvolutionFired()).toBe('chain_ricochet');
+  });
+
+  it('a Reset clears the owned fusion and it never resurrects from the retained levels', async () => {
+    const player = await bootOwnedPlayer();
+    grantTwice(player, 'ricochet');
+    grantTwice(player, 'arc');
+    player.tryFire(0.1);
+    expect(player.getActiveEvolution()?.reason).toBe('owned');
+
+    player.resetWeapon();
+
+    // Reset returns the ship to the bare cannon but keeps the earned permanent
+    // levels — which must not re-fuse the weapons it just took away.
+    expect(player.getActiveEvolution()).toBeNull();
+    expect(player.getWeaponLevels()).toEqual([
+      { id: 'ricochet', level: 2 },
+      { id: 'arc', level: 2 },
+    ]);
+    expect(runFor(player, 10)).toBe(0);
+    expect(player.getActiveEvolution()).toBeNull();
+  });
+
+  it('a run restart clears the owned fusion exactly as it clears the other owned weapons', async () => {
+    const player = await bootOwnedPlayer();
+    grantTwice(player, 'ricochet');
+    grantTwice(player, 'arc');
+    player.tryFire(0.1);
+
+    // The run-restart pair the gym performs: Reset (drop the weapons) then the
+    // level reset (drop the earned levels).
+    player.resetWeapon();
+    player.resetWeaponLevels();
+
+    expect(player.getWeaponLevels()).toEqual([]);
+    expect(runFor(player, 5)).toBe(0);
+    expect(player.getActiveEvolution()).toBeNull();
+
+    // Re-collecting both halves starts a fresh *field* fusion, never the owned
+    // one the restart cleared.
+    player.equipWeapon('ricochet');
+    player.equipWeapon('arc');
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'field',
+    });
+  });
+
+  it('owns a fusion bought with hangar levels (buy-to-upgrade source)', async () => {
+    const player = await bootOwnedPlayer();
+    applyHangarWarDeployment(
+      { getPlayer: () => player },
+      hangarDeployment(
+        ['ricochet', 'arc'],
+        [
+          { id: 'ricochet', level: 2 },
+          { id: 'arc', level: 2 },
+        ],
+      ),
+    );
+
+    // One permanent grant per bought level, so the hangar source lands on the
+    // same snapshot the owned tier reads.
+    expect(player.getWeaponLevels()).toEqual([
+      { id: 'ricochet', level: 2 },
+      { id: 'arc', level: 2 },
+    ]);
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'owned',
+    });
+    expect(runFor(player, 5)).toBeGreaterThan(0);
+  });
+
+  it('owns a fusion from a mix of a hangar level and a hold-full grant', async () => {
+    const player = await bootOwnedPlayer();
+    // One half arrives from the hangar at level 2…
+    applyHangarWarDeployment(
+      { getPlayer: () => player },
+      hangarDeployment(['ricochet'], [{ id: 'ricochet', level: 2 }]),
+    );
+    expect(player.getActiveEvolution()).toBeNull();
+
+    // …and the other is earned in-run. The first grant is a *field* overlap;
+    // the second raises it to level 2 and the pair becomes owned.
+    player.equipWeapon('arc', true);
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'field',
+    });
+
+    player.equipWeapon('arc', true);
+    expect(player.getWeaponLevels()).toEqual([
+      { id: 'ricochet', level: 2 },
+      { id: 'arc', level: 2 },
+    ]);
+    expect(player.getActiveEvolution()).toEqual({
+      evolvedId: 'chain_ricochet',
+      baseIds: ['ricochet', 'arc'],
+      reason: 'owned',
+    });
   });
 });

@@ -27,10 +27,10 @@
  * non-levelled effect constants that remain: the Magnet/Mineral Scoop **field-pickup**
  * timed duration is not a catalogue axis (documented, AC2).
  *
- * - **Speed Boost** — timed: `speedMultiplier` movement speed and
- *   fire-rate for `speedDuration` seconds (both use the same level-resolved
- *   multiplier); re-collecting refreshes the timer to full duration (never
- *   additive).
+ * - **Speed Boost** — timed: a weapons-only **fire-rate** boost for
+ *   `speedDuration` seconds (the level-resolved `speedMultiplier` catalogue
+ *   stat drives the rate of fire only; ship movement is untouched).
+ *   Re-collecting refreshes the timer to full duration (never additive).
  * - **Extra Life** — immediate: adds the level-resolved `lifeGain`,
  *   clamped to the level-resolved `livesCap` (base 3 start, cap 5).
  * - **Magnet** — attracts nearby drops: a timed 15 s effect when
@@ -211,21 +211,6 @@ export interface ActiveEffect {
    * recharges (AH-0MV82I7TX0009JMT) and is surfaced as a ` ×N` pool count.
    */
   permanent?: boolean;
-}
-
-/**
- * Applies the Speed Boost speed multiplier live to a movement config: both thrust
- * and max-speed scale by `multiplier`; friction is untouched.
- */
-export function applySpeedMultiplier<T extends { thrust: number; maxSpeed: number; friction: number }>(
-  config: T,
-  multiplier: number,
-): T {
-  return {
-    ...config,
-    thrust: config.thrust * multiplier,
-    maxSpeed: config.maxSpeed * multiplier,
-  };
 }
 
 /**
@@ -1998,21 +1983,19 @@ export class EffectsRegistry {
   }
 
   /**
-   * Current movement multiplier from speed_boost: the level-resolved
-   * `speedMultiplier` while active, else 1.
-   */
-  speedMultiplier(): number {
-    if (!this._timed.has('speed_boost')) return 1;
-    return this._levelStore.stats('speed_boost').speedMultiplier ?? 1;
-  }
-
-  /**
-   * Current fire-rate multiplier from speed_boost: the same level-resolved
-   * `speedMultiplier` while active, else 1, so both axes cannot diverge
-   * (single source of truth — AC2/AC3).
+   * Current fire-rate multiplier from Speed Boost (P5), the **single
+   * authority** for the effect (AC3): the level-resolved `speedMultiplier`
+   * catalogue stat while `speed_boost` is active, else 1.
+   *
+   * Speed Boost is a **weapons-only** power-up: the same stat drives the rate
+   * of fire and nothing else. It no longer exposes a movement multiplier, so
+   * the ship's thrust and max speed stay exactly as they are without it
+   * (AH-0MWLU8A7P001O391). The catalogue field is still named
+   * `speedMultiplier` for continuity; its rename is a deliberate follow-up.
    */
   fireRateMultiplier(): number {
-    return this.speedMultiplier();
+    if (!this._timed.has('speed_boost')) return 1;
+    return this._levelStore.stats('speed_boost').speedMultiplier ?? 1;
   }
 
   /** Current lives count (Extra Life model); starts at 3, capped level-resolved. */

@@ -26,6 +26,8 @@ import {
 import type { EnemyFormationKind, FormationOffset } from '../utils/formations';
 import { pickInRange, resolveSpawnRange, type EnemyConfig, type SpawnRange } from '../core/configTypes';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import { normaliseSeed } from '../core/rng';
+import { ELITE_WAVE_CHANCE, planEliteSpawn } from './eliteSpawn';
 import {
   LEVELS,
   type LevelDefinition,
@@ -72,6 +74,19 @@ export interface EnemySpawn {
   spacingX: number;
   /** Vertical slot spacing of this enemy's group (px). */
   spacingY: number;
+  /**
+   * True when this spawn is the wave's **elite** (AH-0MWU665DM00669U0).
+   *
+   * An elite is one ordinary, counted spawn of an archetype that declares an
+   * `eliteBehaviour` (`src/core/eliteVocabulary.ts`); the plan in
+   * `./eliteSpawn.ts` elevates exactly one spawn per wave, authored or
+   * granted by the seeded budget. It keeps its formation position and its
+   * place in the alive count, so enabling elites never changes the wave's
+   * size or the wave-timeout carry-over behaviour. Absent on ordinary
+   * spawns. The behaviours and reward are implemented by
+   * AH-0MWU665XK000ZT4S / AH-0MWU666IS008JOR3.
+   */
+  elite?: boolean;
 }
 
 // ── WaveManager ─────────────────────────────────────────────────────
@@ -101,6 +116,15 @@ export class WaveManager {
   private _miniBossActive = false;
   private _miniBossDefeated = false;
   private _started = false;
+  /** Run seed the seeded elite budget derives its per-wave streams from. */
+  private runSeed = 0;
+  /**
+   * Live elite budget share. Defaults to the shipped
+   * {@link ELITE_WAVE_CHANCE} (15 %); tests and the balance-evidence harness
+   * override it through {@link WaveManager.setEliteWaveChance}, including `0`
+   * for an elite-free baseline.
+   */
+  private eliteWaveChance = ELITE_WAVE_CHANCE;
 
   /**
    * @param levels — level definitions to play; defaults to the built-in
@@ -138,6 +162,31 @@ export class WaveManager {
    */
   get hasInjectedLevels(): boolean {
     return this.levelsInjected;
+  }
+
+  /**
+   * Installs the run seed used by the seeded elite budget
+   * (AH-0MWU665DM00669U0 AC4). The plan for each wave is a pure function of
+   * this seed and the wave's cumulative index, so setting it once before
+   * {@link beginGame} makes every elite decision — elite identity and spawn
+   * position — reproducible for the whole run. Safe to call at any time; the
+   * next {@link planSpawns} resolves with the new seed.
+   */
+  setRunSeed(seed: number): void {
+    this.runSeed = normaliseSeed(seed);
+  }
+
+  /**
+   * Overrides the seeded elite budget share (default
+   * {@link ELITE_WAVE_CHANCE}, 15 %). A tuning and test seam mirroring the
+   * scene's other `set*` seams; `0` captures the elite-free baseline used by
+   * the balance evidence (parent AC9). Non-finite values restore the shipped
+   * default, and the value is clamped to `[0, 1]`.
+   */
+  setEliteWaveChance(chance: number): void {
+    this.eliteWaveChance = Number.isFinite(chance)
+      ? Math.min(1, Math.max(0, chance))
+      : ELITE_WAVE_CHANCE;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
@@ -356,7 +405,29 @@ export class WaveManager {
   planSpawns(rng: () => number = Math.random): EnemySpawn[] {
     const wave = this.currentWave();
     if (!wave) return [];
-    return planGroupSpawns(wave.groups, wave.shootEnabled, rng);
+    const spawns = planGroupSpawns(wave.groups, wave.shootEnabled, rng);
+    const elite = planEliteSpawn({
+      level: this.level,
+      globalWaveIndex: this.globalWaveIndex,
+      runSeed: this.runSeed,
+      wave,
+      chance: this.eliteWaveChance,
+    });
+    if (!elite) return spawns;
+    // Flag the reserved spawn. An elite elevates an existing spawn, so the
+    // alive count and the declared-vs-planned invariant are unchanged: the
+    // elite gates the wave exactly like any other counted enemy and the
+    // wave-timeout carry-over path adopts it like any other survivor.
+    let slot = 0;
+    for (const spawn of spawns) {
+      if (spawn.enemyKey !== elite.enemyKey) continue;
+      if (slot === elite.slotIndex) {
+        spawn.elite = true;
+        break;
+      }
+      slot += 1;
+    }
+    return spawns;
   }
 
   // ── Dynamic spawn registration (generic seam) ───────────────────

@@ -74,6 +74,27 @@ export interface HangarLoadout {
   startingWeapons: string[];
   /** Permanent modifier ids applied to the hull. */
   modifiers: string[];
+  /**
+   * Installed **level-bearing** power-up ids (optional, tri-state).
+   *
+   * A power-up is a permanent passive upgrade rather than a flown slot, so the
+   * selection decides **which** owned kinds a deployment installs:
+   *
+   * - `undefined` — a save written before this field landed (or a fleet that
+   *   never curated it): install **every** owned level-bearing power-up, which
+   *   is the behaviour before the selection existed. Absence is legal and is
+   *   never defaulted to `[]`, so an old save round-trips byte-for-byte and is
+   *   migrated by field presence with no schema version bump.
+   * - `[]` — a deliberate empty selection: install none.
+   * - a populated list — install exactly these ids. `resolveActiveLoadout`
+   *   filters it to owned, catalogue-known, level-bearing kinds, so a corrupt
+   *   save can never install an unowned or non-level-bearing power-up.
+   *
+   * The combined selected weapons + power-ups still respect the shared
+   * six-slot cap at grant time; the screen model applies the same cap so the
+   * displayed loadout equals the granted one (assumption A3).
+   */
+  powerUps?: string[];
 }
 
 /**
@@ -134,6 +155,14 @@ export interface DeployedShip {
   readonly startingWeapons: readonly string[];
   /** The resolved permanent modifiers the ship deployed with. */
   readonly modifiers: readonly string[];
+  /**
+   * The resolved level-bearing power-ups the ship deployed with.
+   *
+   * Mirrors {@link HangarLoadout.powerUps}. Power-ups are **not** spent by
+   * `consumeDeployedShip` (they are permanent level purchases), so this field
+   * records what flew without feeding the consumption rule.
+   */
+  readonly powerUps?: readonly string[];
 }
 
 /** The persistent hangar: banked salvage and everything the player owns. */

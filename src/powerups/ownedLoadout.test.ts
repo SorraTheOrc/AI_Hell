@@ -12,6 +12,10 @@ import { describe, expect, it } from 'vitest';
 
 import { buildOwnedLoadout } from './ownedLoadout';
 import type { WeaponId } from '../utils/weapons';
+import {
+  OWNED_EVOLUTION_MIN_LEVEL,
+  resolveWeaponEvolution,
+} from '../utils/weaponEvolutions';
 
 describe('buildOwnedLoadout', () => {
   it('lists weapons first then power-ups, in catalogue order, with Lv.N labels', () => {
@@ -93,5 +97,27 @@ describe('buildOwnedLoadout', () => {
     expect(rows[0].label).toBe('Shield Lv.2');
     // Every label comes from the shared choice catalogue naming.
     expect(rows[0].name).toBe('Shield');
+  });
+
+  it('shows the same permanent snapshot the owned evolution tier reads (AH-0MWU7BBLP0018UZ7)', () => {
+    // The panel and the owned evolution tier both read `Player.getWeaponLevels()`
+    // — the row list shows every permanently owned weapon at its level, and a
+    // pairing whose two halves both reach the owned threshold fuses. Neither
+    // reader invents state, so they can never disagree about what is owned.
+    const weaponLevels = [
+      { id: 'ricochet' as WeaponId, level: OWNED_EVOLUTION_MIN_LEVEL },
+      { id: 'arc' as WeaponId, level: OWNED_EVOLUTION_MIN_LEVEL },
+    ];
+
+    expect(buildOwnedLoadout([], weaponLevels).map((row) => row.label)).toEqual([
+      'Ricochet Lv.2',
+      'Arc Lv.2',
+    ]);
+    expect(
+      resolveWeaponEvolution({
+        activeWeaponIds: weaponLevels.map((row) => row.id),
+        permanentWeaponLevels: weaponLevels,
+      }),
+    ).toMatchObject({ evolvedId: 'chain_ricochet', reason: 'owned' });
   });
 });

@@ -374,6 +374,10 @@ export function hexMiniBossConfigForLevel(
     ...(profile.demonstration === null
       ? {}
       : { demonstratedWeapon: profile.demonstration }),
+    // The hex's authored matchup verdicts, carried from the profile so the run
+    // reads one value at its hit seam instead of re-deriving it
+    // (AH-0MWL88REU009MO5G AC4).
+    matchup: profile.matchup,
     // The personality's shared mechanics (AH-0MWEW50B10089D4W, Q1 = b): a
     // `summoner` adds a bounded reinforcement wave for every phase through the
     // shipped `minions` seam, so the game and every gym summon through the same

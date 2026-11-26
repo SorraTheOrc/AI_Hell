@@ -42,6 +42,10 @@ import {
   WEAPON_CATALOGUE,
   type WeaponId,
 } from '../../utils/weapons';
+import {
+  getEvolvedWeaponDefinition,
+  WEAPON_PAIRINGS,
+} from '../../utils/weaponEvolutions';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL, getHelpEntry } from '../../utils/gymHelp';
 
@@ -1684,6 +1688,95 @@ describe('GymWeapons — cluster-missile split demonstration (AH-0MV1BIVIJ007KYX
     expect(shell!.flame).toBeGreaterThan(0);
     expect(shell!.tail).toBeGreaterThan(0);
     expect(shell!.impactFx?.cue).toBe('playClusterImpactSound');
+  });
+});
+
+describe('GymWeapons — weapon-evolution pairing parity (AH-0MWL7OWPF003E4TP, epic AC8)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  /** Drives the inherited shared auto-fire once; returns the evolved weapon it fired. */
+  function fireOnce(scene: GymWeapons, dt: number): string | null {
+    (scene as unknown as { _autoFire(dt: number): void })._autoFire(dt);
+    return scene.getPlayer()!.getEvolutionFired();
+  }
+
+  /** Anchors the player on the scene's reset clock with a stable heading. */
+  function anchorPlayer(scene: GymWeapons): Player {
+    const player = scene.getPlayer()!;
+    player.setPosition(100, 100);
+    player.setBeatClock(scene.getBeatClock());
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    return player;
+  }
+
+  it('fires every shipped pairing through the shared fire path (field tier)', async () => {
+    const scene = await bootWeapons();
+    const player = anchorPlayer(scene);
+
+    for (const pairing of WEAPON_PAIRINGS) {
+      scene.getBeatClock().reset();
+      player.resetWeapon();
+      scene.equipPairing(pairing);
+
+      const active = player.getActiveEvolution();
+      expect(active?.evolvedId).toBe(pairing.evolvedId);
+      expect(active?.reason).toBe('field');
+      expect([...active!.baseIds].sort()).toEqual([...pairing.baseIds].sort());
+
+      // The shared `_autoFire` → `Player.tryFire` dispatch attributes the fused
+      // shot, and the halves are suppressed while the fusion is live.
+      expect(fireOnce(scene, 0.01)).toBe(pairing.evolvedId);
+
+      // The fused projectile travelled through the shared spawn path with the
+      // evolved weapon's colour and the primary half's base identity (AC11).
+      const definition = getEvolvedWeaponDefinition(pairing.evolvedId);
+      const evolvedBullets = scene
+        .getBullets()
+        .filter(
+          (bullet) =>
+            bullet.weaponId === pairing.baseIds[0] &&
+            bullet.color === definition.colour,
+        );
+      expect(evolvedBullets.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('fires every shipped pairing through the shared fire path (owned tier)', async () => {
+    const scene = await bootWeapons();
+    const player = anchorPlayer(scene);
+
+    for (const pairing of WEAPON_PAIRINGS) {
+      scene.getBeatClock().reset();
+      player.resetWeapon();
+      scene.equipOwnedPairing(pairing);
+
+      const active = player.getActiveEvolution();
+      expect(active?.evolvedId).toBe(pairing.evolvedId);
+      expect(active?.reason).toBe('owned');
+
+      expect(fireOnce(scene, 0.01)).toBe(pairing.evolvedId);
+
+      const definition = getEvolvedWeaponDefinition(pairing.evolvedId);
+      const evolvedBullets = scene
+        .getBullets()
+        .filter(
+          (bullet) =>
+            bullet.weaponId === pairing.baseIds[0] &&
+            bullet.color === definition.colour,
+        );
+      expect(evolvedBullets.length).toBeGreaterThan(0);
+    }
   });
 });
 

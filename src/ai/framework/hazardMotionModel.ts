@@ -375,7 +375,9 @@ function claimsPursuit(value: string): boolean {
 }
 
 /** Whether a runtime value is one of the five sampled movement classes. */
-function isKnownMovementClass(value: string): value is EnemyMovementClass {
+export function isKnownMovementClass(
+  value: string | undefined,
+): value is EnemyMovementClass {
   return (
     value === 'chaser' ||
     value === 'diver' ||

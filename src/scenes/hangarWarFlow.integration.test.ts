@@ -58,6 +58,10 @@ import { winBonusMinerals } from '../test/hangarWinBonusContract';
 import { HANGAR_WAR_LABEL, MenuScene } from './MenuScene';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
+import {
+  HEX_COMBAT_RESULT_SCENE_KEY,
+  HexCombatResultScene,
+} from './HexCombatResultScene';
 import { MINI_BOSS_WHEEL_SCENE_KEY } from './MiniBossWheelScene';
 import { PlayScene } from './PlayScene';
 
@@ -186,6 +190,24 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
   const until = (label: string, predicate: () => boolean): void =>
     stepGameUntil(booted!.game, label, predicate, STEP_FRAMES);
 
+/** The post-battle results dialog, when it is registered on the booted game. */
+function resultsDialog(): HexCombatResultScene | null {
+  return booted!.game.scene.getScene(
+    HEX_COMBAT_RESULT_SCENE_KEY,
+  ) as HexCombatResultScene | null;
+}
+
+/**
+ * Dismisses the landing's results dialog with its single confirm input, as a
+ * player would (AH-0MWMGPV420013MGB). A landing without one is left alone, so
+ * the helper reads naturally on both landing shapes.
+ */
+function dismissResults(): void {
+  const dialog = resultsDialog();
+  if (!dialog || !dialog.sys.isActive()) return;
+  dialog.confirm();
+}
+
   /**
    * Activates the config screen's `▶ DEPLOY` row. The map no longer starts the
    * run itself: a hex activation opens this screen pre-targeted at the hex and
@@ -248,13 +270,30 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
 
       // ── deployment → hex map (the report hop is gone) ─────────────
       killPlayer(play);
-      until('the hex map is shown directly', () => active(HEX_MAP_SCENE_KEY));
+      // The landing presents the post-battle results dialog over the paused
+      // map, so the landing is "up" in either state (AH-0MWMGPV420013MGB).
+      until(
+        'the hex map is shown directly',
+        () =>
+          active(HEX_MAP_SCENE_KEY) ||
+          booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+      );
       const landed = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
-      // The deployment's payload, tick record and run line arrive with it.
+      // The deployment's payload and tick record arrive with it, and the
+      // results dialog names the outcome the thin run line used to carry.
       expect(landed.getPayload().frontierTick).toBe(1);
       expect(recordOf(landed)).toBeDefined();
-      expect(runLineOf(landed)).toMatch(/^RUN: DEFEAT · score \d+$/);
-      // The landed map is a live, interactive surface again.
+      const dialog = resultsDialog();
+      expect(dialog?.sys.isActive()).toBe(true);
+      expect(resultsDialog()!.getRows()[0]).toMatch(/^DEFEAT · SCORE \d+$/);
+
+      // One confirm dismisses it and the map is a live surface again; the run
+      // line and win-bonus line were folded into the dialog (assumption A1).
+      dismissResults();
+      until('the resumed map is interactive', () => active(HEX_MAP_SCENE_KEY));
+      expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+      expect(runLineOf(landed)).toBeNull();
+      expect(winBonusLineOf(landed)).toBeNull();
       expect(landed.getRows().some((row) => row.key.startsWith('hex:'))).toBe(
         true,
       );
@@ -333,7 +372,13 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       expect(play.getHangarWarDeployment()!.hullId).toBe('hull-2');
 
       killPlayer(play);
-      until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
+      // The landing presents the results dialog over the paused map.
+      until(
+        'the hex map is shown',
+        () =>
+          active(HEX_MAP_SCENE_KEY) ||
+          booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+      );
 
       // The loss persisted the consumed ship through the scene's demo-guarded
       // write (parent AH-0MWL5PAP2001XYYF).
@@ -456,13 +501,27 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
       );
       expect(rewardSeen).toBe(false);
 
-      // The map carries the win: record, run line and the newly held hex, with
-      // no reward payload left to present.
+      // The win lands under the post-battle results dialog: the paused map is
+      // up with the dialog naming the outcome, the score and every paid reward
+      // (AH-0MWMGPV420013MGB). No reward payload is left to present either.
       const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
       expect(map.getReward()).toBeNull();
+      const dialog = resultsDialog();
+      expect(dialog?.sys.isActive()).toBe(true);
+      expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+      const dialogText = [dialog!.getTitle(), ...dialog!.getRows()].join('\n');
+      expect(dialogText).toContain('SORTIE RESULTS');
+      expect(dialogText).toMatch(/^VICTORY · SCORE \d+$/m);
+      expect(dialogText).toMatch(/win bonus banked: \+\d+ minerals/i);
+
+      // One confirm resumes the map; the run line and the banked win-bonus
+      // line were folded into the dialog (parent assumption A1).
+      dismissResults();
+      until('the resumed map is interactive', () => active(HEX_MAP_SCENE_KEY));
       expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
       expect(recordOf(map)).toBeDefined();
-      expect(runLineOf(map)).toMatch(/^RUN: VICTORY · score \d+$/);
+      expect(runLineOf(map)).toBeNull();
+      expect(winBonusLineOf(map)).toBeNull();
       const hex = map
         .getPayload()
         .ring.hexes.find((state) => state.id === hexId);
@@ -476,13 +535,10 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
         true,
       );
 
-      // The post-win moment pays into the persistent war instead: the map
+      // The post-win moment pays into the persistent war instead: the dialog
       // announces the banked bonus (Q3 = b) and the bonus is in the stored
-      // payload, not a modal the player has to dismiss.
+      // payload, not a reward modal the player has to dismiss.
       expect(winBonusMinerals()).toBeGreaterThan(0);
-      expect(winBonusLineOf(map)).toMatch(
-        /win bonus banked:\s*\+\d+ minerals/i,
-      );
       expect(map.getPayload().hangar.bankedMinerals).toBeGreaterThanOrEqual(
         winBonusMinerals(),
       );
@@ -529,16 +585,228 @@ describe('Hangar War flow — shipped game config (AH-0MVZ4S9ZU004GXUM)', () => 
         'the map is shown after the lost deployment',
         () => {
           if (active(MINI_BOSS_WHEEL_SCENE_KEY)) rewardSeen = true;
-          return active(HEX_MAP_SCENE_KEY);
+          return (
+            active(HEX_MAP_SCENE_KEY) ||
+            booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)
+          );
         },
         600,
       );
       expect(rewardSeen).toBe(false);
       const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
       expect(recordOf(map)).toBeDefined();
-      expect(runLineOf(map)).toMatch(/^RUN: DEFEAT · score \d+$/);
+      // The defeat's summary lives in the results dialog, not a run line.
+      const dialog = resultsDialog();
+      expect(dialog?.sys.isActive()).toBe(true);
+      expect(dialog!.getRows()[0]).toMatch(/^DEFEAT · SCORE \d+$/);
+      dismissResults();
+      until('the resumed map is interactive', () => active(HEX_MAP_SCENE_KEY));
+      expect(runLineOf(map)).toBeNull();
     },
   );
+
+  /**
+   * End-to-end verification of the post-battle results dialog
+   * (AH-0MWMGPY2U009XMBD, parent AH-0MWMFGXD6005WTMN).
+   *
+   * The dialog spans four layers — the pure builder
+   * (`src/core/hangarWar/sortieResult.ts`), the deployment handoff
+   * (`PlayScene._finishRun`), the overlay (`HexCombatResultScene`) and the map
+   * landing (`HexMapScene`) — plus the scene registries. These tests drive the
+   * **shipped** config (`buildGameConfig`) through the real gameplay path, so
+   * the slice is verified as wired rather than as four isolated units.
+   */
+  describe('post-battle results dialog, end to end (AH-0MWMGPY2U009XMBD)', () => {
+    /** The dialog's whole visible text: heading plus rows, in draw order. */
+    function dialogText(): string {
+      const dialog = resultsDialog();
+      expect(dialog, 'the results dialog is registered').not.toBeNull();
+      return [dialog!.getTitle(), ...dialog!.getRows()].join('\n');
+    }
+
+    it(
+      'a winning deployment presents the paid rewards, one confirm resumes the map',
+      async () => {
+        const { hexId } = await walkToWonDeployment();
+        // The win holds on the victory transition before the landing, so wait
+        // for the map's results dialog to open (the hold is a real Clock
+        // timer — step well past it).
+        stepGameUntil(
+          booted!.game,
+          'the win lands on the map with the results dialog',
+          () => resultsDialog()?.sys.isActive() === true,
+          900,
+        );
+
+        // The dialog is open over the paused map and names the outcome, the
+        // final score, the salvage the capture banked, the hex's authored grant
+        // and the fixed win bonus — every reward that was actually paid.
+        const map = sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY);
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+        expect(map.isResultsVisible()).toBe(true);
+        const text = dialogText();
+        expect(text).toContain('SORTIE RESULTS');
+        expect(text).toMatch(/^VICTORY · SCORE \d+$/m);
+        // The hex's authored grant and the fixed win bonus were both paid, so
+        // both have a row…
+        expect(text).toMatch(/GRANT CLAIMED: \S+/);
+        expect(text).toMatch(/WIN BONUS BANKED: \+\d+ MINERALS/);
+        // …while the salvage this run earned was already banked at the
+        // mini-boss checkpoint, so the capture paid no delta and the dialog
+        // draws **no** `SALVAGE BANKED` line rather than a zero row.
+        expect(text).not.toContain('SALVAGE BANKED');
+        // The dialog is the builder's rows: the map draws no second copy of the
+        // outcome or the win bonus (parent assumption A1).
+        expect(runLineOf(map)).toBeNull();
+        expect(winBonusLineOf(map)).toBeNull();
+
+        // One confirm dismisses it and leaves an interactive map: the very next
+        // hex activation routes to the config screen again.
+        dismissResults();
+        until('the map resumes after the results dialog', () =>
+          active(HEX_MAP_SCENE_KEY),
+        );
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+        expect(map.isResultsVisible()).toBe(false);
+        const nextRow = map
+          .getRows()
+          .find((row) => row.key.startsWith('hex:') && row.actionable);
+        expect(nextRow, 'the resumed map has a deployable hex row').toBeDefined();
+        nextRow!.text.emit('pointerdown');
+        until('the config screen is shown again', () => active(HANGAR_SCENE_KEY));
+        expect(active(HANGAR_SCENE_KEY)).toBe(true);
+        expect(hexId).not.toBe('');
+      },
+      60_000,
+    );
+
+    it(
+      'a lost deployment presents the boss intel, the unclaimed grant and the forfeited salvage',
+      async () => {
+        // Target the authored `hex-r1-3` (iron-crusher: strong against `rapid`,
+        // weak against `mortar`, grants `rapid`) so the intel rows are exact.
+        const menu = await bootShippedConfig();
+        hangarWarControl(menu).emit('pointerdown');
+        until('the hangar is shown', () => active(HANGAR_SCENE_KEY));
+        sceneOf<HangarScene>(HANGAR_SCENE_KEY)
+          .getRows()
+          .find((row) => row.key === 'map')!
+          .text.emit('pointerdown');
+        until('the hex map is shown', () => active(HEX_MAP_SCENE_KEY));
+
+        sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY)
+          .getRows()
+          .find((row) => row.key === 'hex:hex-r1-3')!
+          .text.emit('pointerdown');
+        until('the config screen is shown', () => active(HANGAR_SCENE_KEY));
+        deployFromConfig();
+        until('the deployment starts', () => active('PlayScene'));
+
+        // Salvage earned in the lost run is forfeited, so the loss row is real.
+        const play = sceneOf<PlayScene>('PlayScene');
+        play.getGameState().minerals = 30;
+        killPlayer(play);
+        until(
+          'the map is shown after the lost deployment',
+          () =>
+            active(HEX_MAP_SCENE_KEY) ||
+            booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY),
+        );
+
+        // The defeat's own summary: outcome + score, the target boss's authored
+        // strengths/weaknesses, the grant the player did not claim and the
+        // unbanked salvage the loss forfeited.
+        const text = dialogText();
+        expect(text).toMatch(/^DEFEAT · SCORE \d+$/m);
+        expect(text).toContain('STRONG AGAINST: rapid');
+        expect(text).toContain('WEAK AGAINST: mortar');
+        expect(text).toContain('GRANT NOT CLAIMED: rapid');
+        expect(text).toMatch(/SALVAGE FORFEITED: 30 MINERALS/);
+
+        // Dismissing resumes the map; the landed map is interactive.
+        dismissResults();
+        until('the map resumes after the defeat summary', () =>
+          active(HEX_MAP_SCENE_KEY),
+        );
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
+        expect(
+          sceneOf<HexMapScene>(HEX_MAP_SCENE_KEY)
+            .getRows()
+            .some((row) => row.key.startsWith('hex:')),
+        ).toBe(true);
+      },
+      60_000,
+    );
+
+    it(
+      'the attract traversal presents the dialog, auto-dismisses it and reaches the next deployment',
+      async () => {
+        // The demo's landing surface: the map, entered with a carried sortie
+        // result and the demo dwell. The dialog opens over the paused map, then
+        // auto-confirms after that dwell so the traversal continues through the
+        // config screen into the next deployment — it neither stalls on the
+        // dialog nor skips a screen.
+        const menu = await bootShippedConfig();
+        const map = menu.scene.get(HEX_MAP_SCENE_KEY) as HexMapScene;
+        map.scene.start(HEX_MAP_SCENE_KEY, {
+          payload: seededWar(),
+          won: true,
+          score: 900,
+          sortieResult: {
+            hexId: 'hex-r1-2',
+            won: true,
+            score: 900,
+            winBonusMinerals: 100,
+            capture: {
+              bankedDelta: { minerals: 40, cores: 1 },
+              grant: {
+                grantId: 'extra-life',
+                entryId: 'hardened_plating',
+                kind: 'modifier',
+                weaponId: null,
+              },
+              specialReward: null,
+              contractBonus: null,
+              cachePayout: null,
+              ringSecured: false,
+              ringAdvanced: false,
+            },
+            forfeited: null,
+          },
+          demo: true,
+          demoDwellMs: 300,
+        });
+
+        // The dialog is up over the paused map — the traversal cannot act
+        // behind it.
+        until('the demo landing presents the results dialog', () =>
+          resultsDialog()?.sys.isActive() === true,
+        );
+        expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
+        expect(active('PlayScene')).toBe(false);
+
+        // It auto-dismisses after the shared dwell and the traversal walks
+        // map → config → deployment.
+        let configSeen = false;
+        stepGameUntil(
+          booted!.game,
+          'the demo reaches the next deployment past the results dialog',
+          () => {
+            if (active(HANGAR_SCENE_KEY)) configSeen = true;
+            return active('PlayScene');
+          },
+          900,
+        );
+        expect(resultsDialog()?.sys.isActive() ?? false).toBe(false);
+        expect(configSeen, 'the traversal must not skip the config screen').toBe(
+          true,
+        );
+        const play = sceneOf<PlayScene>('PlayScene');
+        expect(play.isHangarWarRun()).toBe(true);
+      },
+      60_000,
+    );
+  });
 
   it('reaches the map from the hangar without deploying (ring intel first)', async () => {
     const menu = await bootShippedConfig();

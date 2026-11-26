@@ -81,6 +81,8 @@ import {
 } from './core/sceneSetup';
 import {
   playDestructionSound,
+  playEvolutionExpiryCue,
+  playEvolutionFusionCue,
   playSpawnSound,
   playVictoryFanfareSound,
   playWeaponFireSound,
@@ -94,7 +96,7 @@ import {
   PLAYFIELD_WORLD,
   type WrapAwareBody,
 } from './core/enemyWrap';
-import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
+import { createEnemyFromConfig, type EliteSpawnModifiers, type EnemyEntity } from '../entities/enemyFactory';
 import {
   FormationReanchorController,
   type FormationReanchorCandidate,
@@ -190,11 +192,13 @@ import {
   buildHexBossProfile,
   type HexBossProfile,
 } from '../core/hangarWar/hexBoss';
+import type { WeaponVerdictLookup } from '../core/hangarWar/hexMatchup';
 import {
   frontierClockFor,
   runFrontierTick,
   type FrontierTickResult,
 } from '../core/hangarWar/hexDefence';
+import type { SortieResultRecord } from '../core/hangarWar/sortieResult';
 import type { HangarWarPayload } from '../core/hangarWar/types';
 import { HEX_MAP_SCENE_KEY } from './HexMapScene';
 import {
@@ -221,16 +225,22 @@ import {
   type CollectAnimationHandle,
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
-import { HUD } from '../ui/HUD';
+import { HUD, type EvolutionBadgeState } from '../ui/HUD';
 import { DangerTacho, resolveDangerTacho } from '../ui/dangerTacho';
 import { combatHudOptions } from './core/hudWiring';
 import { type WeaponDefinition, type WeaponId } from '../utils/weapons';
+import type {
+  EvolvedWeaponId,
+  EvolutionTransitionKind,
+} from '../utils/weaponEvolutions';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
-import { createCompetentBotBrain } from '../ai/framework';
+import { createCompetentBotBrain, hasFireLine } from '../ai/framework';
+import { notifyAimHit } from '../ai/aimHit';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BOT_MINERAL_CHOICE_DELAY_MS,
+  BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS,
   BotInputGovernor,
 } from '../ai/botHumanLike';
 import {
@@ -244,6 +254,18 @@ import {
 } from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
+import {
+  ELITE_VOLATILE_BURST_LIFETIME,
+  eliteForceFieldHits,
+  type EliteBurstShot,
+  type EliteSplitOffset,
+} from './core/eliteMechanics';
+import { playEliteDeathCue, resolveEliteReward } from '../core/eliteReward';
+import {
+  composeWaveAnnouncement,
+  resolveEliteWaveAnnouncement,
+  type EliteWaveAnnouncement,
+} from '../waves/eliteAnnounce';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import { isRunProgressEnabled, publishRunProgress } from '../core/runProgress';
 import type { HitscanTarget } from './core/hitscanBeam';
@@ -349,6 +371,7 @@ import {
 import {
   createMineralDeposit,
   resolveMineralKillPayout,
+  scatterMineralDrops,
 } from './core/mineralKillDrops';
 import {
   rollAsteroidExtraLife,
@@ -522,6 +545,14 @@ export const VICTORY_FIREWORK_DEPTH = 300;
 
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
+
+/**
+ * How long the expiry badge stays on screen after a field-tier fusion reverts
+ * (ms). Long enough to read the evolved weapon's name, short enough that the
+ * persistent fusion badge (while fused) is the primary legibility signal
+ * (epic AH-0MWL7OWPF003E4TP AC7).
+ */
+const EXPIRY_BADGE_HOLD_MS = 1200;
 
 /** Level-transition banner style. */
 const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
@@ -757,10 +788,21 @@ export class PlayScene extends CombatScene<
 
   private player: Player | null = null;
   private hud: HUD | null = null;
+  /** Transient expiry badge shown for {@link EXPIRY_BADGE_HOLD_MS} after a revert. */
+  private _expiryBadge: EvolutionBadgeState | null = null;
 
   private scoreText: Phaser.GameObjects.Text | null = null;
   private levelText: Phaser.GameObjects.Text | null = null;
   private bannerText: Phaser.GameObjects.Text | null = null;
+
+  /**
+   * The current wave's elite announcement (AH-0MWU666IS008JOR3 AC6), resolved
+   * from the shared spawn plan when the wave spawns and cleared at transition
+   * start. The banner composes it onto the ordinary progress label so the
+   * opening cue names the elite; `null` for every elite-free wave (the label
+   * is byte-for-byte unchanged).
+   */
+  private waveEliteAnnouncement: EliteWaveAnnouncement | null = null;
 
   /**
    * The `DANGER ×N` tacho (AH-0MWL7ORK8007LXJI AC5): the danger multiplier,
@@ -1391,6 +1433,12 @@ export class PlayScene extends CombatScene<
     // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
     // are created so every gameplay draw comes from the seeded stream.
     this._initRunSeed();
+    // The seeded elite budget (AH-0MWU665DM00669U0) derives its per-wave
+    // streams from the same run seed, so an elite is reproducible for a given
+    // seed. Shipped at `ELITE_WAVE_CHANCE = 0.15` after the measured balance
+    // gate cleared (AH-0MWU667OG00287SY); the seam keeps the decision a pure
+    // function of the seed.
+    this.waveManager.setRunSeed(this.getRunSeed());
     // Seed the bot's per-press jitter from the run seed so demo press
     // lengths are reproducible per run (AC15).
     this.botGovernor.seed(this.getRunSeed());
@@ -1472,7 +1520,10 @@ export class PlayScene extends CombatScene<
     this.hud = new HUD(
       this,
       this.effectsRegistry,
-      combatHudOptions(() => this.player, { showLives: true }),
+      combatHudOptions(() => this.player, {
+        showLives: true,
+        getEvolutionBadge: () => this._evolutionBadge(),
+      }),
     );
 
     this._buildHudText();
@@ -1829,6 +1880,9 @@ export class PlayScene extends CombatScene<
     this.thornsAura?.destroy();
     this.thornsAura = null;
     this.thornsAuraDrawn = false;
+    // Drop any held expiry badge; the scene timer is cleared by Phaser on
+    // shutdown, so only the state needs releasing (epic AC7).
+    this._expiryBadge = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -2076,6 +2130,10 @@ export class PlayScene extends CombatScene<
     // a non-blocking world hazard (the Asteroid accounting).
     this.planLaneTrafficSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
+    // Name the wave's elite in its opening cue (AH-0MWU666IS008JOR3 AC6).
+    // Resolved from the authoritative spawn plan, so the announcement always
+    // names the hull that actually spawns.
+    this.waveEliteAnnouncement = resolveEliteWaveAnnouncement(spawns);
     // The formation is anchored relative to the wave portal; without a live
     // portal (no planned enemies) the plan is used unchanged.
     let anchoredSpawns: EnemySpawn[] = spawns;
@@ -2143,6 +2201,8 @@ export class PlayScene extends CombatScene<
       this.waveManager.waveNumber,
       this.waveManager.waveCount,
     );
+    // The opening banner names the elite when this wave fields one (AC6).
+    if (this.waveEliteAnnouncement) this._updateTransitionBanner();
   }
 
   /**
@@ -2253,6 +2313,14 @@ export class PlayScene extends CombatScene<
    */
   private _spawnEnemy(spawn: EnemySpawn, origin?: { x: number; y: number }): void {
     const cfg = loadEnemyConfig(spawn.enemyKey);
+    // Elite elevation (AH-0MWU665XK000ZT4S): a plan-flagged spawn carries its
+    // archetype's one bounded behaviour and authored bonus hit points. An
+    // ordinary spawn of an elite-capable archetype stays neutral — the
+    // elevation is per spawn, never per archetype.
+    const elite: EliteSpawnModifiers | undefined =
+      spawn.elite && cfg.eliteBehaviour
+        ? { behaviour: cfg.eliteBehaviour, bonusHp: cfg.eliteBonusHp }
+        : undefined;
     const entity = createEnemyFromConfig(
       this,
       cfg,
@@ -2264,8 +2332,11 @@ export class PlayScene extends CombatScene<
       // level through the shared pure curve (epic AH-0MVJ8W4GE007OMNT AC4,
       // AH-0MVM8GXEF009883O) — never a hard-coded value and never the raw
       // config column. The level gym resolves the same curve at its launched
-      // level (see `src/scenes/gym/GymLevel.ts`).
-      enemyForceFieldHits(this.waveManager.level, cfg),
+      // level (see `src/scenes/gym/GymLevel.ts`). An elite asks the shared
+      // elite wrapper, which evaluates that identical curve and adds the
+      // reinforced bonus (AH-0MWU665XK000ZT4S AC3).
+      eliteForceFieldHits(elite?.behaviour, this.waveManager.level, cfg),
+      elite,
     );
     entity.shootEnabled = spawn.shootEnabled;
 
@@ -2326,6 +2397,79 @@ export class PlayScene extends CombatScene<
       spacingY: spawn.spacingY,
       march: cfg.formationKind === 'march',
     });
+  }
+
+  /**
+   * Elite death behaviour — `splitter` children (AH-0MWU665XK000ZT4S AC2).
+   *
+   * The shared `eliteMechanics` dispatcher has already decided *how many* and
+   * *where*; this seam only performs the shipped spawn: the child is built by
+   * the same `createEnemyFromConfig` factory the wave and every dynamic
+   * spawner (Harvester, ghost, horde, lane traffic) use, then appended to the
+   * live list and registered with the `WaveManager` so it gates the wave. The
+   * registration happens before the parent's death is accounted (the shared
+   * finalisation dispatches us first), so the alive count never dips to zero
+   * in the gap and the wave cannot clear early.
+   *
+   * Children are ordinary: no elite behaviour and no bonus hit points — their
+   * field strength is the archetype's normal level curve.
+   */
+  protected override spawnEliteSplitChild(
+    enemy: EnemyEntity,
+    offset: EliteSplitOffset,
+  ): void {
+    const parent = this.spawned.find(
+      (candidate) => candidate.entity === enemy,
+    );
+    const enemyKey = parent?.enemyKey ?? enemy.archetype;
+    const cfg = loadEnemyConfig(enemyKey);
+    const x = enemy.x + offset.x;
+    const y = enemy.y + offset.y;
+    const child = createEnemyFromConfig(
+      this,
+      cfg,
+      x,
+      y,
+      { row: 0, col: 0 },
+      this.rng,
+      enemyForceFieldHits(this.waveManager.level, cfg),
+    );
+    child.shootEnabled = enemy.shootEnabled;
+    this.add.existing(child);
+    this.spawned.push({
+      entity: child,
+      enemyKey,
+      startX: x,
+      startY: y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    // Counted wave enemy (parent AC3): registered before the parent's death
+    // reaches `WaveManager.onEnemyDestroyed`.
+    this.waveManager.registerDynamicSpawn(1);
+  }
+
+  /**
+   * Elite death behaviour — `volatile` radial burst (AH-0MWU665XK000ZT4S AC4).
+   *
+   * The shared dispatcher owns the fan; this seam creates each shot through
+   * the scene's shared enemy-bullet path (`spawnEnemyBullet` → `createBullet`),
+   * so the burst is an ordinary player-damaging enemy bullet handled by the
+   * shared collision pass — never a VFX-only copy. The shots carry the hull's
+   * own bullet colour and the module's short lethal lifetime.
+   */
+  protected override spawnEliteVolatileBullet(
+    enemy: EnemyEntity,
+    shot: EliteBurstShot,
+  ): void {
+    this.spawnEnemyBullet(
+      enemy.x,
+      enemy.y,
+      shot.vx,
+      shot.vy,
+      enemy.bulletColor,
+      ELITE_VOLATILE_BURST_LIFETIME,
+    );
   }
 
   /**
@@ -3179,6 +3323,10 @@ export class PlayScene extends CombatScene<
    * {@link WaveManager.level} names the incoming level during the transition.
    */
   private _startTransition(levelChanged = false): void {
+    // The completed wave's elite is gone; drop its announcement so the
+    // transition banner names only the incoming wave. The incoming wave's own
+    // announcement is resolved when it actually spawns (AC6).
+    this.waveEliteAnnouncement = null;
     // Close any wormhole still open (e.g. a timeout/carry-over began
     // mid-spawn): the normal close tick is gated behind the non-transition
     // branch, so the close must happen at transition start (AC4 —
@@ -3284,12 +3432,20 @@ export class PlayScene extends CombatScene<
 
   /** Shows/updates the centred transition banner. */
   private _updateTransitionBanner(): void {
-    this._showBanner(this._progressLabel());
+    this._showBanner(this._waveBannerLabel());
   }
 
   /** Shows the level announcement banner at level start. */
   private _announceLevel(): void {
-    this._showBanner(this._progressLabel());
+    this._showBanner(this._waveBannerLabel());
+  }
+
+  /**
+   * The banner label for the current wave: the ordinary progress label plus
+   * the elite phrase when the wave fields one (AH-0MWU666IS008JOR3 AC6).
+   */
+  private _waveBannerLabel(): string {
+    return composeWaveAnnouncement(this._progressLabel(), this.waveEliteAnnouncement);
   }
 
   /**
@@ -3636,18 +3792,54 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Handles a single player hit on the boss (bullet or AOE). Applies one
-   * hit; score and minions are gated on phase depletion via
-   * `Boss.takeDamage()`'s `phaseAdvanced` signal (AH-0MUUJEB1D000GPX0):
-   * only a depleting hit awards the phase score and summons the next
-   * phase's minions. The run is completed as a victory when the boss dies
-   * (GDD §4.5).
+   * Applies one connected shot's damage to the boss, honouring the hex
+   * matchup charge. The shot offers one hit point; the shared charge helper
+   * (`CombatScene.resolveHitCharge`) is the only place a verdict becomes hit
+   * points, so an effective weapon lands two and a resisted weapon one per two
+   * shots (AH-0MWL88REU009MO5G AC2). Frenzy's bonus hits are added on top of
+   * the charged hits, exactly as the old per-entry-point loop did. Each hit
+   * runs the full single-hit lifecycle in {@link _applyBossHit}, so phase
+   * scores and minion summons stay identical.
+   *
+   * @param hitX — optional world-space X of the hit, forwarded to
+   *   `Boss.takeDamage()` so the per-hit impact VFX appears at the hit point.
+   * @param hitY — optional world-space Y of the hit.
+   * @param weaponId — the firing weapon's catalogue id (absent ⇒ neutral).
+   */
+  private _damageBoss(
+    hitX?: number,
+    hitY?: number,
+    weaponId?: string | null,
+  ): void {
+    const boss = this.boss;
+    if (!boss || !boss.alive) return;
+    // Record this connected shot's verdict on the encounter **before** the
+    // charge loop: the resisted ledger pays zero on the first of each pair, so
+    // the shot that raises the one-shot RESISTED tag may apply no damage at
+    // all. The reaction (effective flinch / resisted non-flinch) is keyed on
+    // the connected shot, never on a damage instance (AH-0MWL88YYO0053DWH).
+    boss.applyMatchupImpact(
+      this.resolveMatchupImpactState(boss, weaponId),
+    );
+    const charged = this.resolveHitCharge(boss, weaponId, 1);
+    const hits = charged + this.effectsRegistry.frenzyBonusHits();
+    for (let hit = 0; hit < hits && boss.alive; hit += 1) {
+      this._applyBossHit(hitX, hitY);
+    }
+  }
+
+  /**
+   * Applies exactly one hit to the boss (bullet or AOE). Score and minions are
+   * gated on phase depletion via `Boss.takeDamage()`'s `phaseAdvanced` signal
+   * (AH-0MUUJEB1D000GPX0): only a depleting hit awards the phase score and
+   * summons the next phase's minions. The run is completed as a victory when
+   * the boss dies (GDD §4.5).
    *
    * @param hitX — optional world-space X of the hit, forwarded to
    *   `Boss.takeDamage()` so the per-hit impact VFX appears at the hit point.
    * @param hitY — optional world-space Y of the hit.
    */
-  private _damageBoss(hitX?: number, hitY?: number): void {
+  private _applyBossHit(hitX?: number, hitY?: number): void {
     const boss = this.boss;
     if (!boss || !boss.alive) return;
 
@@ -3668,6 +3860,7 @@ export class PlayScene extends CombatScene<
       // linger as a dark rectangle through the victory celebration
       // (AH-0MVH85XXZ008INE2).
       boss.getHealthBarGraphics().setVisible(false);
+      this.forgetMatchupTarget(boss);
       // The run is over: stop the ship's auto-fire from the next tick so it
       // spawns no bullets, muzzle flashes or shoot cues under the victory
       // celebration (AH-0MVCB6LBE007I6R8, AC1). Shots already in flight keep
@@ -3697,6 +3890,39 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Applies one connected shot's damage to the active level's mini-boss,
+   * honouring the hex matchup charge (AH-0MWL88REU009MO5G). The shot offers
+   * one hit point; the shared `CombatScene.resolveHitCharge` helper is the only
+   * place the verdict becomes hit points. Frenzy's bonus hits are added on top
+   * of the charged hits, and each hit runs the full single-hit lifecycle in
+   * {@link _applyMiniBossHit}, so phase pacing and the defeat sweep stay
+   * identical.
+   *
+   * @param hitX — optional world-space X of the hit.
+   * @param hitY — optional world-space Y of the hit.
+   * @param weaponId — the firing weapon's catalogue id (absent ⇒ neutral).
+   */
+  private _damageMiniBoss(
+    hitX?: number,
+    hitY?: number,
+    weaponId?: string | null,
+  ): void {
+    const miniBoss = this.miniBoss;
+    if (!miniBoss || !miniBoss.alive) return;
+    // Record the connected shot's verdict before the charge loop (the first
+    // resisted shot of a pair applies no damage but must still raise the tag
+    // and show no flinch) — AH-0MWL88YYO0053DWH.
+    miniBoss.applyMatchupImpact(
+      this.resolveMatchupImpactState(miniBoss, weaponId),
+    );
+    const charged = this.resolveHitCharge(miniBoss, weaponId, 1);
+    const hits = charged + this.effectsRegistry.frenzyBonusHits();
+    for (let hit = 0; hit < hits && miniBoss.alive; hit += 1) {
+      this._applyMiniBossHit(hitX, hitY);
+    }
+  }
+
+  /**
    * Handles one player hit on the active level's mini-boss (epic
    * AH-0MVCC8XSS007P01Z, AH-0MVCRBISU006NUN5). The shared `takeDamage()`
    * contract drives phases/patterns; on the lethal blow the encounter is
@@ -3715,7 +3941,7 @@ export class PlayScene extends CombatScene<
    *    shared wave state machine, which advances the level (or triggers the
    *    final boss on the final level) exactly once — AC4.
    */
-  private _damageMiniBoss(hitX?: number, hitY?: number): void {
+  private _applyMiniBossHit(hitX?: number, hitY?: number): void {
     const miniBoss = this.miniBoss;
     if (!miniBoss || !miniBoss.alive) return;
 
@@ -3732,6 +3958,9 @@ export class PlayScene extends CombatScene<
 
     const result = miniBoss.takeDamage(hitX, hitY);
     if (!result.destroyed) return;
+    // Drop the dead encounter's half-pair so it never pays out on a future
+    // target (AH-0MWL88REU009MO5G).
+    this.forgetMatchupTarget(miniBoss);
 
     // AC4 (AH-0MW8178ZR0090CNY): every mini-boss defeat leaves **exactly one**
     // Extra Life field pickup at/near the death position, in addition to the
@@ -4047,10 +4276,13 @@ export class PlayScene extends CombatScene<
       // Frozen player-fire schedule: the reduced-volume ghost fire continues
       // on the same beat grid while play is paused (AH-0MV55O9R5005W6J0).
       fireSchedule: buildHoldFullFireSchedule(this.player),
-      // Demo mode auto-spins after the human-like delay so the attract bot
+      // Demo mode auto-spins after the demo wheel delay so the attract bot
       // never stalls (AH-0MVJ8U79V0056I2F · AC1/AC2); normal play waits for
-      // the player (AC3).
-      ...(this.demoMode ? { autoSpinMs: BOT_MINERAL_CHOICE_DELAY_MS } : {}),
+      // the player (AC3). The wheel keeps its faster pace, separate from the
+      // slower upgrade-selection dwell (AH-0MWL7SU2Q009GEJ2 · AC4).
+      ...(this.demoMode
+        ? { autoSpinMs: BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS }
+        : {}),
       // Single overlay contract: the launcher supplies one result callback;
       // the wheel never reaches back into `PlayScene` by key.
       onResult: (resolved: MiniBossWheelOutcome) =>
@@ -4448,6 +4680,19 @@ export class PlayScene extends CombatScene<
       playerAttackingHexId: this.hangarWarDeployment?.hexId ?? null,
     });
     this._saveHangarWarPayload(result.payload);
+    // The tick banks the held-hex mineral income into the persistent balance
+    // (`result.payload.hangar.bankedMinerals`, AH-0MWL8CDGN005878A). Mirror it
+    // onto the run's in-memory bank so the win resolution's capture arithmetic
+    // derives from the same, income-inclusive balance instead of overwriting it
+    // with a pre-tick snapshot. Only `minerals` moves — the run watermark is
+    // untouched, exactly like `bankWinBonus`, because the income is neither
+    // cumulative run salvage nor re-derivable from a run snapshot.
+    if (this.salvageBank) {
+      this.salvageBank = {
+        ...this.salvageBank,
+        minerals: result.payload.hangar.bankedMinerals,
+      };
+    }
     return result;
   }
 
@@ -4504,6 +4749,16 @@ export class PlayScene extends CombatScene<
     return this.hexBossProfile === null
       ? null
       : (JSON.parse(JSON.stringify(this.hexBossProfile)) as HexBossProfile);
+  }
+
+  /**
+   * The hex matchup verdict lookup this run fights under — the profile value
+   * published by `buildHexBossProfile`, read straight from the run's one
+   * `hexBossProfile` rather than re-derived from the authored ring data
+   * (AH-0MWL88REU009MO5G AC4). `null` for the arcade run (neutral).
+   */
+  protected override getMatchupLookup(): WeaponVerdictLookup | null {
+    return this.hexBossProfile?.matchup ?? null;
   }
 
   /**
@@ -4741,6 +4996,32 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Fire discipline for the demo bot (AH-0MWPOET5A002IPTP · fire-discipline
+   * remediation). The shared auto-fire fires along the committed facing with
+   * no aim gate, so a bot that is collecting, evading or repositioning would
+   * keep shooting into empty space. The gate asks the **one** shared
+   * {@link hasFireLine} predicate whether a live target lies inside the active
+   * weapon's reach on the ship's firing line; only then may it fire.
+   *
+   * Targets are the same set the shared hitscan path may intercept
+   * ({@link getHitscanTargets}: enemies, asteroids, boss, mini-boss), measured
+   * on the torus the ship wraps on. Human sessions and non-demo runs return
+   * `true`, so the real-input game is byte-for-byte unchanged.
+   */
+  protected override botFireAllowed(): boolean {
+    if (!this.demoMode) return true;
+    const player = this.getPlayer();
+    if (!player) return true;
+    return hasFireLine({
+      origin: { x: player.x, y: player.y },
+      heading: player.getHeading(),
+      weaponRange: player.getEffectiveWeaponRange(),
+      targets: this.getHitscanTargets(),
+      world: { width: GAME_WIDTH, height: GAME_HEIGHT },
+    });
+  }
+
+  /**
    * Applies the persisted bot-tuning configuration to the demo brain and
    * governor (AH-0MV6MFDYG001E6PL).
    *
@@ -4814,6 +5095,13 @@ export class PlayScene extends CombatScene<
         // player switched it off, the demo bot emits `reverse: false` on
         // every input (AH-0MV1J0OHP0072XA5 · AC4).
         reverseEnabled: player?.isReverseEnabled() ?? true,
+        // The adaptive aim error re-arms after a repositioning move
+        // (AH-0MWR057Q8004PBOD · AC4): the governor needs the ship's live
+        // position and the arena it wraps on to measure the distance.
+        ...(movement
+          ? { position: { x: movement.x, y: movement.y } }
+          : {}),
+        world: { width: GAME_WIDTH, height: GAME_HEIGHT },
       },
     );
   }
@@ -4831,6 +5119,43 @@ export class PlayScene extends CombatScene<
     // Shared player-fire path: the metronomic hold-full ghost fire and live
     // fire play the same cue through the same switch (AH-0MV55O9R5005W6J0).
     playWeaponFireSound(weaponId);
+  }
+
+  /**
+   * Plays the distinct fusion/expiry cue and drives the HUD badge when an
+   * evolution transitions (epic AH-0MWL7OWPF003E4TP AC7). A fusion plays the
+   * cheerful chime and lets the badge read the live evolution; an expiry plays
+   * the descending blip and shows the transient `'expired'` badge for
+   * {@link EXPIRY_BADGE_HOLD_MS}.
+   */
+  protected override onEvolutionTransition(
+    kind: EvolutionTransitionKind,
+    evolvedId: EvolvedWeaponId,
+  ): void {
+    if (kind === 'fusion') {
+      playEvolutionFusionCue();
+      // A new fusion supersedes any still-held expiry badge.
+      this._expiryBadge = null;
+      return;
+    }
+    playEvolutionExpiryCue();
+    this._expiryBadge = { kind: 'expiry', evolvedId };
+    this.time.delayedCall(EXPIRY_BADGE_HOLD_MS, () => {
+      if (this._expiryBadge?.evolvedId === evolvedId) {
+        this._expiryBadge = null;
+      }
+    });
+  }
+
+  /**
+   * The evolution badge the HUD renders: the transient expiry badge while it
+   * is held, otherwise the live fusion badge while an evolution is sounding
+   * (its name + icon, with the merge glyph). `null` when neither is active.
+   */
+  private _evolutionBadge(): EvolutionBadgeState | null {
+    if (this._expiryBadge) return this._expiryBadge;
+    const active = this.player?.getActiveEvolution();
+    return active ? { kind: 'fusion', evolvedId: active.evolvedId } : null;
   }
 
   /**
@@ -4976,6 +5301,20 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * A player-damage point landed on an enemy (AH-0MWR054VE006YSLN): forward
+   * the struck entity's bot-side id to the demo governor through the shared
+   * aim-hit helper. Only the demo runs a bot, so outside it the seam is inert
+   * (the governor is not advanced and would discard the signal); the governor
+   * itself is rebuilt when demo mode starts, so a hit can never leak across a
+   * run. The game and the bot-bearing gyms consume the identical helper, so
+   * no scene owns identity or delivery logic of its own.
+   */
+  protected override onPlayerBulletHitEnemy(enemy: EnemyEntity): void {
+    if (!this.demoMode) return;
+    notifyAimHit(this.botGovernor, enemy);
+  }
+
+  /**
    * Entities the wave-laser hitscan beam may intercept: the live fodder enemies
    * **plus** the boss-style encounters (the final boss and the mini-boss),
    * which live outside the enemy list. This keeps the shared ray seam honest —
@@ -5004,15 +5343,11 @@ export class PlayScene extends CombatScene<
     y: number,
   ): void {
     if (target === this.boss) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageBoss(x, y);
-      }
+      this._damageBoss(x, y, def.id);
       return;
     }
     if (target === this.miniBoss) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageMiniBoss(x, y);
-      }
+      this._damageMiniBoss(x, y, def.id);
       return;
     }
     super.applyHitscanHit(target, def, x, y);
@@ -5024,19 +5359,16 @@ export class PlayScene extends CombatScene<
    */
   protected override onPlayerBulletHitsBoss(pb: PlayerBullet): boolean {
     if (this._playerBulletHitsEntity(pb, this.boss)) {
-      // Frenzy amplifies each bullet into `1 + bonus` phase hits
-      // (AH-0MVH80ZJ7009W18Z); the damage path stops once the boss dies.
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageBoss(pb.x, pb.y);
-      }
+      // The shot's weapon identity rides into the shared matchup charge; the
+      // damage path adds Frenzy's bonus hits and stops once the boss dies
+      // (AH-0MVH80ZJ7009W18Z, AH-0MWL88REU009MO5G).
+      this._damageBoss(pb.x, pb.y, pb.weaponId);
       pb.destroy();
       return true;
     }
     // Mini-boss encounter (the final boss is not spawned at the same time).
     if (this._playerBulletHitsEntity(pb, this.miniBoss)) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageMiniBoss(pb.x, pb.y);
-      }
+      this._damageMiniBoss(pb.x, pb.y, pb.weaponId);
       pb.destroy();
       return true;
     }
@@ -5061,22 +5393,21 @@ export class PlayScene extends CombatScene<
    * AOE effect hits the boss (final boss or mini-boss): routes through the
    * same damage path a player bullet uses, so multi-phase pacing, phase scores
    * and minion summons are identical (parent AH-0MUOOB3OR001V8CD AC5).
+   * `weaponId` is the firing weapon's catalogue id (absent for a power-up
+   * pulse), carried into the shared matchup charge (AH-0MWL88REU009MO5G).
    */
   protected override onAoeHitsBoss(
     x: number,
     y: number,
     radius: number,
+    weaponId?: string | null,
   ): boolean {
     if (this._aoeHitsEntity(x, y, radius, this.boss)) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageBoss(x, y);
-      }
+      this._damageBoss(x, y, weaponId);
       return true;
     }
     if (this._aoeHitsEntity(x, y, radius, this.miniBoss)) {
-      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
-        this._damageMiniBoss(x, y);
-      }
+      this._damageMiniBoss(x, y, weaponId);
       return true;
     }
     return false;
@@ -5181,7 +5512,15 @@ export class PlayScene extends CombatScene<
       );
     }
     this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
-    this._maybeDropPowerUp(s.entity.x, s.entity.y);
+    // An elite's reward replaces the ordinary falling per-kill roll with a
+    // guaranteed draw from the same shared pool, pays its level-scaled
+    // mineral bump and plays its distinct death cue (AH-0MWU666IS008JOR3
+    // AC1–AC3). An ordinary enemy keeps today's chance roll untouched.
+    if (s.entity.eliteBehaviour) {
+      this._applyEliteReward(s.entity, this._resolveDropLevel());
+    } else {
+      this._maybeDropPowerUp(s.entity.x, s.entity.y);
+    }
     // Extra Life kill reward (AH-0MV6M2M9P0078N4S): a fully destroyed small
     // asteroid additionally rolls the configurable Extra Life drop. The
     // shared rule tier-gates first, so large/medium rocks (which split) and
@@ -5376,11 +5715,19 @@ export class PlayScene extends CombatScene<
    * (`powerUpDropChance`, AH-0MVLJF5P0005KF8X): the level is read from the
    * live campaign at kill time, so the supply per enemy falls as the
    * campaign progresses. Level 1 keeps today's flat `POWER_UP_DROP_CHANCE`
-   * (0.18) exactly; all per-level values come from the shared module.
+   * (0.09) exactly; all per-level values come from the shared module.
+   *
+   * `guaranteed` bypasses the chance draw (never consuming it) for an elite's
+   * guaranteed reward (AH-0MWU666IS008JOR3 AC1). The **pool draw is the same**
+   * path either way: one shared, slot-gated `_drawNextDrop`, so an elite can
+   * never leave the shared pool or skip the slot gate.
    */
-  private _maybeDropPowerUp(x: number, y: number): void {
+  private _maybeDropPowerUp(x: number, y: number, guaranteed = false): void {
     if (!this.dropSpawner) return;
-    if (this.rng() > powerUpDropChance(this._resolveDropLevel(), this.rules)) {
+    if (
+      !guaranteed &&
+      this.rng() > powerUpDropChance(this._resolveDropLevel(), this.rules)
+    ) {
       return;
     }
     // One shared, eligibility-filtered draw through the six-slot gate (parent
@@ -5403,6 +5750,35 @@ export class PlayScene extends CombatScene<
       x,
       y,
     );
+  }
+
+  /**
+   * Applies a dead elite's reward (AH-0MWU666IS008JOR3 AC1–AC3).
+   *
+   * 1. **Guaranteed drop** — the ordinary per-kill chance roll is bypassed and
+   *    the shared pool is drawn once (still slot-gated), so an elite always
+   *    pays a power-up.
+   * 2. **Mineral bump** — the level-scaled guaranteed minerals are scattered
+   *    at the wreck on top of the ordinary re-drop. The count is a pure
+   *    function of the level, so the same seed + wave pays the same bump.
+   * 3. **Distinct death cue** — the shared SFX-gated elite cue, dispatched on
+   *    top of the ordinary hull-destruction boom so the kill reads differently.
+   */
+  private _applyEliteReward(entity: EnemyEntity, level: number): void {
+    const reward = resolveEliteReward(level, this.rules);
+    this._maybeDropPowerUp(entity.x, entity.y, reward.guaranteedDrop);
+    if (reward.mineralBump > 0) {
+      this.minerals.push(
+        ...scatterMineralDrops(
+          this,
+          entity.x,
+          entity.y,
+          reward.mineralBump,
+          this.rng,
+        ),
+      );
+    }
+    playEliteDeathCue();
   }
 
   /**
@@ -5811,6 +6187,22 @@ export class PlayScene extends CombatScene<
       // assault figure is re-derived on the map. `null` for a mid-ring capture
       // or the rush line (no assault fired).
       const assault = this.lastCapture?.assault ?? null;
+      // The compact sortie result the map carries
+      // (AH-0MWMGPS9R008SMEG, parent AH-0MWMFGXD6005WTMN). On a victory it
+      // carries the capture cycle's **own** `HexCaptureResult` (never a
+      // hand-copied subset of its reward fields, so a reward kind added to the
+      // capture cycle reaches the map without a second copy edit); on a defeat
+      // it carries the `forfeited` salvage `resolveDeploymentDefeat` settled
+      // at the top of `_finishRun`. Transient launch data only — never
+      // persisted, so a later menu/hangar re-entry shows no result.
+      const sortieResult: SortieResultRecord = {
+        hexId: this.hangarWarDeployment.hexId,
+        won,
+        score: this.gameState.score,
+        winBonusMinerals: won ? this.winBonusBanked : 0,
+        capture: won ? this.lastCapture : null,
+        forfeited: won ? null : this.forfeitedSalvage,
+      };
       this.scene.start(HEX_MAP_SCENE_KEY, {
         payload: this._hangarWarPayload(),
         record: tick?.record,
@@ -5818,6 +6210,7 @@ export class PlayScene extends CombatScene<
         score: this.gameState.score,
         reward,
         assault,
+        sortieResult,
         // The bonus is read from the win resolution's own record — what it
         // actually added to the hangar balance — never a constant, so the map
         // can never announce a reward that was not banked
@@ -6494,6 +6887,9 @@ export class PlayScene extends CombatScene<
    * @param mineral — the collected mineral whose `value` is credited.
    */
   private _collectMineral(mineral: Mineral): void {
+    // Every player pickup plays the one shared chime, exactly once per
+    // collected mineral (AH-0MWNMRDY60005Z4K).
+    this.noteMineralCollected();
     this.gameState.addMinerals(mineral.value);
     this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();

@@ -100,3 +100,89 @@ describe('Classic-arcade roster documentation integration (AH-0MV01ER86000DNRF)'
     }
   });
 });
+
+/**
+ * The elite (anomaly) **variant axis** guard
+ * (AH-0MWU667OG00287SY, parent AH-0MWL7P1AO003LKXT AC10).
+ *
+ * An elite is not a roster entry: it is a variant of an existing counted
+ * archetype. This guard therefore asserts the axis itself — the authored CSV
+ * cells, the normative GDD entries (§4.1 archetypes, §4.6 difficulty axes,
+ * §8.3 mechanic) and the measured balance evidence — rather than a new
+ * archetype row. Source behaviour is pinned by the elite unit/campaign tests
+ * and the gym-parity guard.
+ */
+describe('Elite (anomaly) variant axis is documented (AH-0MWU667OG00287SY)', () => {
+  const gdd = read(GDD);
+  const csv = read(path.resolve(process.cwd(), 'src/data/enemy-configs.csv'));
+  const balancing = read(path.resolve(process.cwd(), 'docs/BALANCING.md'));
+
+  /** The authored rows (key + behaviour + bonus), parsed by header position. */
+  const authored = (() => {
+    const lines = csv.split('\n');
+    const headerIndex = lines.findIndex((line) => line.startsWith('key,displayName'));
+    if (headerIndex < 0) return [];
+    const header = lines[headerIndex].split(',');
+    const behaviour = header.indexOf('eliteBehaviour');
+    const bonus = header.indexOf('eliteBonusHp');
+    return lines
+      .slice(headerIndex + 1)
+      .filter((line) => line.trim() !== '')
+      .map((line) => line.split(','))
+      .filter((cells) => (cells[behaviour] ?? '').trim() !== '')
+      .map((cells) => ({
+        key: cells[0],
+        behaviour: cells[behaviour],
+        bonus: cells[bonus],
+      }));
+  })();
+
+  it('the shipped CSV authors bounded variants on counted archetypes (AC1)', () => {
+    expect(authored.length).toBeGreaterThan(0);
+    for (const row of authored) {
+      expect(
+        ['splitter', 'reinforced', 'volatile'],
+        `${row.key} behaviour`,
+      ).toContain(row.behaviour.trim());
+      const bonus = Number(row.bonus);
+      expect(Number.isInteger(bonus), `${row.key} bonus`).toBe(true);
+      expect(bonus).toBeGreaterThanOrEqual(1);
+      expect(bonus).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('GDD §4.1 describes the variant axis (AC3)', () => {
+    // The archetype catalogue names the axis next to the roster and points at
+    // the shared vocabulary/spawn modules the game and gyms use.
+    expect(gdd).toMatch(/Elite \(anomaly\) variant/);
+    for (const behaviour of ['splitter', 'reinforced', 'volatile']) {
+      expect(gdd, `GDD §4.1 missing ${behaviour}`).toContain(behaviour);
+    }
+    expect(gdd).toContain('src/core/eliteVocabulary.ts');
+    expect(gdd).toContain('src/scenes/core/eliteMechanics.ts');
+  });
+
+  it('GDD §4.6 records the elite axis and its level-1 exemption (AC3)', () => {
+    const section = gdd.slice(gdd.indexOf('### 4.6 Level Progression Mechanics'));
+    expect(section).toContain('ELITE_WAVE_CHANCE');
+    expect(section).toMatch(/level 1 .*elite|elite.*level 1/i);
+  });
+
+  it('GDD §8.3 documents the mechanic and links the measured evidence (AC3)', () => {
+    const section = gdd.slice(
+      gdd.indexOf('#### Anomaly (elite) enemies and wave twists'),
+      gdd.indexOf('## 9.') >= 0
+        ? gdd.indexOf('## 9.')
+        : gdd.indexOf('### 8.4'),
+    );
+    expect(section).toContain('AH-0MWL7P1AO003LKXT');
+    expect(section).toContain('docs/BALANCING.md');
+    expect(section).toContain('experience-target');
+  });
+
+  it('docs/BALANCING.md carries the measured before/after table (AC2)', () => {
+    expect(balancing).toContain('Elite (anomaly) wave budget');
+    expect(balancing).toContain('--elite-chance');
+    expect(balancing).toContain('experience-target');
+  });
+});

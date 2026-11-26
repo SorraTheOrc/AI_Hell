@@ -138,6 +138,26 @@
  * The fields are added only under the opt-in, so the default snapshot shape —
  * and therefore the golden default-path digest — is unchanged.
  *
+ * ## Aim-shot measurement (AH-0MWR04UJ5008H5WQ)
+ *
+ * {@link ArenaConfig.measureAimShots} opts into a per-shot record of the
+ * ship's **aim**, reported as a typed
+ * {@link ArenaRunResult.aimShots} table (no telemetry event kinds are added).
+ * Each travelling player projectile is attributed at the muzzle to the live
+ * hostile nearest its line (see {@link selectAimTarget}), then resolved on its
+ * lifecycle end as a hit on the aimed target, a hit on a different body, or a
+ * lifetime expiry, carrying the perpendicular offset of the aimed target from
+ * the shot's line at the shot's closest approach. Attribution is a property of
+ * the shot the pilot fired, so a bullet that connects with a different body is
+ * a miss for the body it was aimed at — splash, a stray or a ram can never
+ * inflate the hit count.
+ *
+ * The measurement is **pure observation**: it reads the same state the run
+ * already advances and changes no position, draw, decision or record, so the
+ * same seed + config + policy is byte-identical with the option on and off. It
+ * is **off by default**, so the historic result shape and every existing
+ * baseline are untouched.
+ *
  * ## Per-level campaign mode (AH-0MVLJFB1I0099X4Z)
  *
  * Setting {@link ArenaConfig.level} switches the arena to an **additive**
@@ -238,6 +258,16 @@ import {
 } from '../../core/levelScaling';
 import { enemyForceFieldHits } from '../../core/enemyForceField';
 import { DEFAULT_RULES } from '../../core/rules';
+import {
+  applyEliteDeathBehaviour,
+  eliteBonusHealth,
+  eliteForceFieldHits,
+  ELITE_VOLATILE_BURST_LIFETIME,
+  type EliteBurstShot,
+  type EliteSplitOffset,
+} from '../../scenes/core/eliteMechanics';
+import { resolveEliteReward } from '../../core/eliteRewardRules';
+import type { EliteBehaviour } from '../../core/eliteVocabulary';
 import { defaultCandidatePool } from '../../core/difficultySequencer';
 import { isNonBlockingHazard } from '../../scenes/core/waveTimeout';
 import {
@@ -276,6 +306,12 @@ import {
   type WeaponLevelStats,
 } from '../../utils/weaponLevels';
 import {
+  OWNED_EVOLUTION_MIN_LEVEL,
+  resolveEvolvedWeaponDefinition,
+  resolveWeaponEvolution,
+  type EvolvedWeaponId,
+} from '../../utils/weaponEvolutions';
+import {
   isInAoEArea,
   selectAoETargets,
   selectRandomPoint,
@@ -290,8 +326,9 @@ import type {
   BaseMovementConfig,
   RotatingMovementState,
 } from '../../utils/movementModel';
-import type { BotSnapshot } from '../botSnapshot';
+import type { BotRotationConfig, BotSnapshot } from '../botSnapshot';
 import type { BotPolicy } from '../framework/botBrain';
+import { hasFireLine } from '../framework/competent/fireLine';
 import { resolveEnemyMovementClass } from '../framework/enemyMovementClass';
 import {
   advanceHazardMotion,
@@ -302,8 +339,10 @@ import {
   DEFAULT_ARENA_SPAWNS,
   DEFAULT_ARENA_MOVING_HOSTILE_SPEEDS,
   EVAL_TELEMETRY_SCHEMA_VERSION,
+  type ArenaAimShot,
   type ArenaBalanceConfig,
   type ArenaConfig,
+  type ArenaControlSample,
   type ArenaInput,
   type ArenaMovingHostiles,
   type ArenaRunResult,
@@ -385,6 +424,13 @@ interface Hostile {
   alive: boolean;
   archetype: string;
   isAsteroid: boolean;
+  /**
+   * The authored elite (anomaly) behaviour, or `null` for an ordinary spawn
+   * (AH-0MWU667OG00287SY). Non-null marks the wave's elite: the same counted
+   * archetype with the authored bonus hit points, whose one bounded death
+   * behaviour is driven by the shared dispatcher.
+   */
+  eliteBehaviour: EliteBehaviour | null;
   /**
    * Campaign wave index this hostile belongs to; `-1` for hostiles outside
    * wave accounting (the seeded reservoir and the asteroid shadow-hazard).
@@ -565,6 +611,111 @@ interface PlayerBullet extends Bullet {
    * weapon's `damage` multiplier (1 at the base level).
    */
   damage: number;
+  /**
+   * Opt-in aim-shot tracking (AH-0MWR04UJ5008H5WQ); absent unless
+   * {@link ArenaConfig.measureAimShots} is on, so the default path allocates
+   * nothing extra. Retained as a live reference to the aimed-at `Hostile`
+   * (never removed from `world.hostiles`, only flagged dead), so sampling the
+   * miss distance costs no hostile search.
+   */
+  shot?: ShotTracking;
+}
+
+/** The per-projectile state of the opt-in aim-shot measurement. */
+interface ShotTracking {
+  /** Run-scoped shot index, assigned at the muzzle. */
+  shotId: number;
+  /** The weapon that fired the projectile. */
+  weaponId: string;
+  /** Tick the projectile was fired on. */
+  tick: number;
+  /** Muzzle position, the origin of the shot's line. */
+  originX: number;
+  originY: number;
+  /** Unit heading of the projectile (the shot's line direction). */
+  ux: number;
+  uy: number;
+  /** The live hostile the shot was aimed at. */
+  target: Hostile;
+  /** Smallest projectile-to-target separation seen so far (px). */
+  minSeparation: number;
+  /** Perpendicular target offset from the shot's line at that closest approach. */
+  missDistance: number;
+}
+
+/** A hostile body a shot can be aimed at. */
+export interface AimTargetCandidate {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+  readonly alive: boolean;
+}
+
+/**
+ * Resolves the **aimed target** of one shot from its muzzle and heading
+ * (AH-0MWR04UJ5008H5WQ).
+ *
+ * A shot is aimed at the live hostile whose centre is nearest the shot's line
+ * (the perpendicular offset, in px) among the bodies **ahead** of the muzzle
+ * — a body behind the muzzle can never be what a forward-firing weapon was
+ * pointed at. Ties break on the nearer body (smaller along-track distance),
+ * then on the lower id, so the choice is a pure deterministic function of the
+ * scene. Returns `null` when no live body is ahead: that shot has no target it
+ * could honestly be attributed to.
+ *
+ * This is deliberately a geometric property of the shot, not of the brain's
+ * internal choice: the ship auto-fires along its committed facing, so the
+ * line it fired is the aim. A bullet that later touches a different body is
+ * therefore a miss for the body it was aimed at.
+ */
+export function selectAimTarget<T extends AimTargetCandidate>(
+  origin: { readonly x: number; readonly y: number },
+  ux: number,
+  uy: number,
+  hostiles: readonly T[],
+  width: number,
+  height: number,
+): T | null {
+  let best: T | null = null;
+  let bestOffset = Number.POSITIVE_INFINITY;
+  let bestAlong = Number.POSITIVE_INFINITY;
+  for (const hostile of hostiles) {
+    if (!hostile.alive) continue;
+    const dx = wrappedAxisDelta(origin.x, hostile.x, width);
+    const dy = wrappedAxisDelta(origin.y, hostile.y, height);
+    const along = dx * ux + dy * uy;
+    if (!(along > 0)) continue; // behind the muzzle: never the aim
+    const offset = Math.abs(dx * uy - dy * ux);
+    const better =
+      offset < bestOffset - 1e-9
+      || (Math.abs(offset - bestOffset) <= 1e-9
+        && (along < bestAlong - 1e-9
+          || (Math.abs(along - bestAlong) <= 1e-9
+            && (best === null || hostile.id < best.id))));
+    if (better) {
+      best = hostile;
+      bestOffset = offset;
+      bestAlong = along;
+    }
+  }
+  return best;
+}
+
+/**
+ * The effective reach (px) of one resolved weapon definition — the same
+ * per-weapon rule `Player.getEffectiveWeaponRange()` applies, derived here for
+ * the headless arena's own loadout so its fire gate and `firedAtNothing`
+ * measurement use the ship's real reach rather than a harness constant
+ * (AH-0MWPOET5A002IPTP · fire-discipline remediation).
+ */
+function weaponReach(def: WeaponDefinition): number {
+  if (def.hitscan) return def.hitscan.length;
+  if (def.aoe) {
+    return def.aoe.trigger === 'onRandom'
+      ? (def.aoe.projectileSpeed ?? PLAYER_BULLET_SPEED) * def.bulletLifetime
+      : def.aoe.radius;
+  }
+  return PLAYER_BULLET_SPEED * def.bulletLifetime;
 }
 
 /** A seed-derived hostile spec held in the spawn reservoir. */
@@ -573,6 +724,8 @@ interface HostileSpec {
   y: number;
   archetype: string;
   isAsteroid: boolean;
+  /** True when the shared wave plan reserved this spawn as the wave's elite. */
+  elite?: boolean;
 }
 
 /** The internal mutable arena state. */
@@ -714,7 +867,7 @@ export function escapeClearsContact(
  * thruster (AH-0MV13LXOR001X15X) is carried through so the governor's
  * reverse input behaves like the shipped ship.
  */
-function shipToAsteroidsConfig(ship: ShipConfig): AsteroidsConfig {
+export function shipToAsteroidsConfig(ship: ShipConfig): AsteroidsConfig {
   return {
     thrust: ship.thrustAcceleration,
     maxSpeed: ship.maxSpeed,
@@ -877,8 +1030,19 @@ function buildSpawnPlan(
   return { mineralReservoir, powerUpReservoir, hostileReservoir };
 }
 
-/** A per-level campaign wave plan: one `HostileSpec[]` per wave, in play order. */
-type LevelWavePlan = readonly (readonly HostileSpec[])[];
+/**
+ * One planned per-level campaign wave: the hostiles it spawns and the wave's
+ * authored `shootEnabled` gate (GDD §2.4: levels 1–3 do not fire; §2.5:
+ * levels 4–10 do).
+ */
+interface LevelWave {
+  readonly members: readonly HostileSpec[];
+  /** The wave's `shootEnabled` gate, passed to every member it spawns. */
+  readonly shootEnabled: boolean;
+}
+
+/** A per-level campaign wave plan: one {@link LevelWave} per wave, in play order. */
+type LevelWavePlan = readonly LevelWave[];
 
 /**
  * A seeded field position drawn from a stream, inset from the playfield edge
@@ -957,7 +1121,11 @@ function buildLevelWavePlan(
       pushGroup(members, group.enemyKey, Math.max(1, Math.trunc(group.count)));
     }
     for (const key of waveSpawnerExtras(wave)) pushGroup(members, key, 1);
-    return members;
+    // The wave's fire gate travels WITH the plan: the per-level path honours
+    // the same `shootEnabled` the shared WaveManager tells the game, so a
+    // levels-1–3 sortie faces "enemies are the bullets" and nothing shoots
+    // (AH-0MWFDQ9EY004NO4X; GDD §2.4/§2.5).
+    return { members, shootEnabled: wave.shootEnabled !== false };
   });
 }
 
@@ -1030,6 +1198,13 @@ function snapshotOf(
   enemies: readonly Hostile[],
   seed: number,
   liveIdentity = false,
+  livePhysics?: {
+    readonly rotation: BotRotationConfig;
+    readonly shotSpeed: number;
+    /** Effective weapon reach (px), present only under the fire gate. */
+    readonly weaponRange?: number;
+  },
+  liveReverseEnabled = false,
 ): BotSnapshot {
   return {
     player: {
@@ -1037,7 +1212,23 @@ function snapshotOf(
       y: world.player.y,
       vx: world.player.vx,
       vy: world.player.vy,
+      // The live-physics seam (AH-0MWR04ZDU0005O8J · AC2): the harness flies
+      // the same rotation model and primary shot speed as the shipped ship, so
+      // its measured aim solve uses the derivation, not a bot-layer constant.
+      ...(livePhysics ? { rotation: livePhysics.rotation } : {}),
+      ...(livePhysics ? { shotSpeed: livePhysics.shotSpeed } : {}),
+      // The range seam (AH-0MWPOET5A002IPTP): only the opt-in fire-gate arm
+      // supplies it, so every historic baseline keeps the pre-change
+      // time-of-flight-only solve byte-for-byte.
+      ...(livePhysics?.weaponRange !== undefined
+        ? { weaponRange: livePhysics.weaponRange }
+        : {}),
     },
+    // The reverse-thruster flag the world model gates kiting/brake on
+    // (AH-0MWT4BBYO0085CN8 · RAC3): only the opt-in live control context
+    // supplies it, so every historic arena baseline keeps the retro thruster
+    // disabled and is byte-identical.
+    ...(liveReverseEnabled ? { reverseEnabled: true } : {}),
     enemies: enemies
       .filter((hostile) => hostile.alive)
       .map((hostile) => ({
@@ -1266,6 +1457,116 @@ export function resolveWeaponLoadout(
   });
 }
 
+/** The live evolution the arena fires, resolved from its loadout. */
+export interface ArenaEvolution {
+  /** The evolved weapon the one resolver reported live. */
+  readonly evolvedId: EvolvedWeaponId;
+  /** The two catalogue halves the evolved weapon replaces. */
+  readonly baseIds: readonly WeaponId[];
+  /** Evolution level: the weaker half's upgrade index. */
+  readonly level: number;
+  /** The fused definition fired through the shared `fireWeapon` path. */
+  readonly definition: WeaponDefinition;
+  /** The level-resolved stats of the fired definition's primary half. */
+  readonly stats: WeaponLevelStats;
+}
+
+/**
+ * Resolves the arena's live weapon evolution from its fire loadout — **the
+ * same** {@link resolveWeaponEvolution} resolver the game's `Player` reads, so
+ * the bot arena never derives a second pairing answer (epic AC1).
+ *
+ * The arena models the **owned tier only**: its loadout carries permanent
+ * grants and has no timed field-pickup windows, so a *field*-tier overlap (two
+ * live halves below the owned threshold) is outside what it can represent. The
+ * live set it models is therefore the halves the hangar has permanently
+ * upgraded to {@link OWNED_EVOLUTION_MIN_LEVEL}; a level-1 grant is left
+ * unfused, the pre-existing fidelity boundary of this harness. The resolver
+ * still answers which pairing (if any) is live — the arena never derives its
+ * own answer (epic AC1) — and a live fusion replaces its two halves. Page
+ * cadence parity with the game's `Player` is the owned tier the run actually
+ * reaches once both halves are upgraded.
+ *
+ * Pure and deterministic. Returns `null` when no pairing is live.
+ *
+ * @param loadout - The resolved fire loadout (cannon + permanent grants).
+ */
+export function resolveArenaEvolution(
+  loadout: readonly ArenaWeaponLoadout[],
+): ArenaEvolution | null {
+  const resolution = resolveWeaponEvolution({
+    // Only the permanently upgraded halves are modelled as live: the arena has
+    // no timed windows, so a field-tier overlap below the owned threshold is
+    // not represented here (fidelity boundary, not a second pairing answer).
+    activeWeaponIds: loadout
+      .filter((weapon) => weapon.ownedLevel >= OWNED_EVOLUTION_MIN_LEVEL)
+      .map((weapon) => weapon.id),
+    permanentWeaponLevels: loadout
+      .filter((weapon) => weapon.ownedLevel > 0)
+      .map((weapon) => ({ id: weapon.id, level: weapon.ownedLevel })),
+  });
+  if (!resolution.evolvedId) return null;
+  const halfLevels = resolution.baseIds.map(
+    (baseId) => loadout.find((weapon) => weapon.id === baseId)?.level ?? 0,
+  );
+  const level =
+    halfLevels.length > 0 ? Math.min(...halfLevels) : 0;
+  const definition = resolveEvolvedWeaponDefinition(resolution.evolvedId, level);
+  return {
+    evolvedId: resolution.evolvedId,
+    baseIds: resolution.baseIds,
+    level,
+    definition,
+    stats: resolveWeaponAtLevel(definition.id, level),
+  };
+}
+
+/**
+ * The spawn-time face of an elite (anomaly) variant
+ * (AH-0MWU667OG00287SY): the hit pool, the force-field hits and the authored
+ * behaviour, resolved through the **shared** elite modules the game and the
+ * gyms run (`eliteBonusHealth`, `eliteForceFieldHits`). Pure, so the arena's
+ * elite spawn is testable without simulating a run.
+ *
+ * An `elite` flag on an archetype that authors no `eliteBehaviour` stays an
+ * ordinary spawn: an elite is data-driven, never a harness invention.
+ *
+ * @param enemy - The archetype's resolved config (undefined → harness default).
+ * @param options.level - Campaign level for the force-field curve.
+ * @param options.elite - True when the shared wave plan reserved this spawn.
+ * @param options.forceFields - `false` resolves every field at level 1
+ *   (the documented hull-only baseline), exactly like the non-elite path.
+ */
+export interface ArenaHostileStats {
+  /** The authored behaviour, or `null` for an ordinary spawn. */
+  readonly eliteBehaviour: EliteBehaviour | null;
+  /** Spawn hit points: the archetype hull plus any authored elite bonus. */
+  readonly health: number;
+  /** Force-field hits resolved through the shared curve (0 when disabled). */
+  readonly fieldHits: number;
+}
+
+export function resolveArenaHostileStats(
+  enemy: EnemyConfig | undefined,
+  options: { level: number; elite?: boolean; forceFields?: boolean },
+): ArenaHostileStats {
+  const baseHealth = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
+  const behaviour =
+    options.elite === true && enemy?.eliteBehaviour
+      ? enemy.eliteBehaviour
+      : null;
+  const health = behaviour
+    ? eliteBonusHealth(baseHealth, enemy?.eliteBonusHp)
+    : baseHealth;
+  const fieldHits =
+    enemy && (options.forceFields ?? true)
+      ? behaviour
+        ? eliteForceFieldHits(behaviour, options.level, enemy)
+        : enemyForceFieldHits(options.level, enemy)
+      : 0;
+  return { eliteBehaviour: behaviour, health, fieldHits };
+}
+
 /**
  * Runs one headless arena run for `policy` (AC1).
  *
@@ -1370,6 +1671,19 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
           : buildArenaCampaign(config.seed, balance),
       )
     : null;
+  // The seeded elite budget (AH-0MWU665DM00669U0) derives its per-wave
+  // streams from the same run seed, so a re-run of a seed replays the same
+  // elite decisions. The shipped chance now fields elites; the evidence seam
+  // can still force `0` for the elite-free baseline or any other share.
+  campaignManager?.setRunSeed(config.seed);
+  // The elite (anomaly) budget seam (AH-0MWU667OG00287SY): an explicit
+  // `eliteWaveChance` forwards to the shared `WaveManager`, so the balance
+  // batch can replay the evidence with elites on, or capture the elite-free
+  // baseline (`0`) with identical harness code. Omitted → the shipped
+  // `ELITE_WAVE_CHANCE`.
+  if (typeof config.eliteWaveChance === 'number' && Number.isFinite(config.eliteWaveChance)) {
+    campaignManager?.setEliteWaveChance(config.eliteWaveChance);
+  }
   // A dedicated seeded stream for campaign formation/spawner positioning
   // (independent of the reservoir, governor and sim streams).
   const campaignRng = campaignEnabled ? createSeededRng(config.seed) : null;
@@ -1540,12 +1854,24 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // Hostile behaviour comes from the archetype's shared EnemyConfig:
     // radius (size), hit points (health), fire cadence (fireInterval in ms),
     // projectile speed (bulletSpeed) and fire chance (shotProbability).
-    // Asteroids carry their own config and never fire. The full-campaign
-    // path honours the wave's `shootEnabled` gate (GDD §2.4/§2.5: Levels
-    // 1–3 do not fire), exactly as the shared manager tells the game.
+    // Asteroids carry their own config and never fire. Both campaign paths
+    // (per-level and full) honour the wave's `shootEnabled` gate (GDD
+    // §2.4/§2.5: Levels 1–3 do not fire), exactly as the shared manager tells
+    // the game — the per-level plan carries each wave's gate
+    // (AH-0MWFDQ9EY004NO4X).
     const enemy = enemyByKey.get(spec.archetype);
-    const health = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
     const radius = positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS);
+    // Elite (anomaly) variants (AH-0MWU667OG00287SY): the shared wave plan
+    // flags exactly one counted spawn per elite wave; the spawn then resolves
+    // the variant through the SAME shared seams the game and gyms run. A flag
+    // on an archetype with no authored behaviour stays an ordinary spawn.
+    const eliteStats = resolveArenaHostileStats(enemy, {
+      level: campaignEnabled && campaignManager ? campaignManager.level : resolvedLevel,
+      elite: spec.elite === true,
+      forceFields: config.forceFields ?? true,
+    });
+    const health = eliteStats.health;
+    const eliteBehaviour = eliteStats.eliteBehaviour;
     // Force-field hits for evidence mode (epic AH-0MVJ8W4GE007OMNT, AC5):
     // resolved from the SAME shared curve as the game and the level gym, so
     // a before/after bot batch reflects the barrier's durability cost. The
@@ -1558,12 +1884,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // pre-change (hull-only) baseline is captured with identical harness
     // code and seeds. `fieldHits` is `0` for unshielded hostiles, so the
     // hull-only model is unchanged wherever no enemy carries a field.
-    const fieldHits = enemy && (config.forceFields ?? true)
-      ? enemyForceFieldHits(
-          campaignEnabled && campaignManager ? campaignManager.level : resolvedLevel,
-          enemy,
-        )
-      : 0;
+    const fieldHits = eliteStats.fieldHits;
     // Movement class resolution goes through the **bot-side** map
     // (AH-0MWM0C40V002ISCA): the harness and the bot's hazard predictor must
     // never disagree about a hostile's class. Only an enabled class gets a
@@ -1590,6 +1911,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       alive: true,
       archetype: spec.archetype,
       isAsteroid: spec.isAsteroid,
+      eliteBehaviour,
       wave,
       radius,
       getHitRadius: () => radius,
@@ -1619,10 +1941,12 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   /** Set when the shared manager triggers the final boss (run ends). */
   let campaignFinished = false;
 
-  /** Spawns every member of one per-level campaign wave. */
+  /** Spawns every member of one per-level campaign wave, under its fire gate. */
   const spawnWave = (waveIndex: number): void => {
-    for (const member of wavePlan[waveIndex] ?? []) {
-      spawnHostile(member, nextHostileId(), waveIndex);
+    const wave = wavePlan[waveIndex];
+    if (!wave) return;
+    for (const member of wave.members) {
+      spawnHostile(member, nextHostileId(), waveIndex, wave.shootEnabled);
     }
   };
 
@@ -1648,7 +1972,13 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     if (!manager || !rng) return;
     for (const spawn of manager.planSpawns(rng)) {
       spawnHostile(
-        { x: spawn.x, y: spawn.y, archetype: spawn.enemyKey, isAsteroid: false },
+        {
+          x: spawn.x,
+          y: spawn.y,
+          archetype: spawn.enemyKey,
+          isAsteroid: false,
+          elite: spawn.elite === true,
+        },
         nextHostileId(),
         -1,
         spawn.shootEnabled,
@@ -1756,6 +2086,48 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         archetype: hostile.archetype,
       },
     );
+    const supplyLevel = campaignEnabled ? campaignManager!.level : resolvedLevel;
+    // Elite (anomaly) death behaviour (AH-0MWU667OG00287SY): the shared
+    // dispatcher decides *how many* and *where*; these seams only perform the
+    // shipped spawn. Splitter children are ordinary counted spawns, so they
+    // are registered with the shared manager **before** the parent's death is
+    // accounted — the alive count never dips to zero and the wave cannot clear
+    // early. Volatile shots join the live enemy-bullet list, so the shared
+    // collision pass can hit the player with them.
+    let eliteOutcome: { children: number; bullets: number } = {
+      children: 0,
+      bullets: 0,
+    };
+    if (hostile.eliteBehaviour) {
+      const splitHost = {
+        spawnSplitChild: (offset: EliteSplitOffset): void => {
+          spawnHostile(
+            {
+              x: hostile.x + offset.x,
+              y: hostile.y + offset.y,
+              archetype: hostile.archetype,
+              isAsteroid: false,
+            },
+            nextHostileId(),
+            hostile.wave,
+            hostile.shotProbability > 0,
+          );
+          // Full-campaign waves gate on the shared manager's alive count.
+          if (campaignEnabled) campaignManager?.registerDynamicSpawn(1);
+        },
+        spawnVolatileBullet: (shot: EliteBurstShot): void => {
+          world.enemyBullets.push({
+            x: hostile.x,
+            y: hostile.y,
+            vx: shot.vx,
+            vy: shot.vy,
+            lifetime: ELITE_VOLATILE_BURST_LIFETIME,
+            elapsed: 0,
+          });
+        },
+      };
+      eliteOutcome = applyEliteDeathBehaviour(hostile.eliteBehaviour, splitHost);
+    }
     // Campaign modes: the **real per-kill drop rule** (the shared
     // levelScaling module) replaces the seeded power-up reservoir. The
     // level is the wave's current campaign level (identified before the
@@ -1765,13 +2137,37 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // level-scaled Extra Life chance — at most one generic drop plus one
     // Extra Life per kill.
     if (realSupplyMode) {
-      const supplyLevel = campaignEnabled ? campaignManager!.level : resolvedLevel;
-      if (simRng() < powerUpDropChance(supplyLevel, DEFAULT_RULES)) {
+      if (hostile.eliteBehaviour) {
+        // An elite always pays: the ordinary per-kill roll is bypassed and
+        // one drop is guaranteed from the same pool (`resolveEliteReward`).
+        world.drops.push({ x: hostile.x, y: hostile.y });
+      } else if (simRng() < powerUpDropChance(supplyLevel, DEFAULT_RULES)) {
         world.drops.push({ x: hostile.x, y: hostile.y });
       }
       if (hostile.isAsteroid && simRng() < extraLifeDropChance(supplyLevel, DEFAULT_RULES)) {
         world.drops.push({ x: hostile.x, y: hostile.y });
       }
+    }
+    // The reward's evidence event. The arena models the reward **decision**
+    // (guaranteed drop + level-scaled bump, the same resolver the game reads)
+    // but not kill-time mineral payouts: the harness mineral supply is the
+    // seeded harvest, and the ordinary per-kill re-drop is likewise not
+    // modelled. Modelling only the elite's bump would overstate its share of
+    // an economy the arena does not otherwise simulate, so `mineralsCollected`
+    // stays comparable with the pre-elite baseline (documented in
+    // docs/BALANCING.md).
+    if (hostile.eliteBehaviour) {
+      const reward = resolveEliteReward(supplyLevel, DEFAULT_RULES);
+      pushEvent(tick, 'elite_killed', {
+        x: hostile.x,
+        y: hostile.y,
+        archetype: hostile.archetype,
+        behaviour: hostile.eliteBehaviour,
+        children: eliteOutcome.children,
+        bullets: eliteOutcome.bullets,
+        guaranteedDrop: reward.guaranteedDrop,
+        mineralBump: reward.mineralBump,
+      });
     }
     // Wave/level progression is driven exclusively by the shared manager
     // (full-campaign mode). Asteroids and lane traffic are non-blocking
@@ -1817,6 +2213,110 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         (bullet) => !isInAoEArea(originX, originY, aoe.radius, bullet),
       );
     }
+  };
+
+  /**
+   * Opt-in aim-shot measurement (AH-0MWR04UJ5008H5WQ). Off unless the caller
+   * asked for it, so the default run neither tracks nor reports a shot and the
+   * per-tick path is exactly what it was.
+   */
+  const measureAimShots = config.measureAimShots === true;
+  const aimShots: ArenaAimShot[] = [];
+  let nextShotId = 0;
+  /**
+   * Shots fired with no live body inside the ship's effective reach on its
+   * firing line — the producer's "firing at nothing"
+   * (AH-0MWPOET5A002IPTP · fire-discipline remediation). Measured whenever
+   * {@link ArenaConfig.measureAimShots} is on, so the ungated arm makes the
+   * defect a number and the gated arm is provably quiet.
+   */
+  let shotsAtNothing = 0;
+  /** The ship's effective weapon reach (px) for the current tick's volley. */
+  let botFireRange = 0;
+  /** Whether the opt-in bot fire gate is on (AH-0MWPOET5A002IPTP). */
+  const fireGate = config.botFireGate === true;
+
+  /**
+   * Opt-in control-input trace (AH-0MWT4BBYO0085CN8). Off unless the caller
+   * asked for it, so the default run neither records nor allocates and its
+   * telemetry is byte-identical to a pre-change baseline.
+   */
+  const measureControlInputs = config.measureControlInputs === true;
+  const controlInputs: ArenaControlSample[] = [];
+
+  /**
+   * Attributes one freshly spawned projectile to the body it was aimed at and
+   * starts tracking its miss distance. A shot with no live body ahead of the
+   * muzzle is left untracked: it has no target it could honestly be measured
+   * against (see {@link ArenaAimShot}).
+   */
+  const tagShot = (bullet: PlayerBullet, weaponId: string, tick: number): void => {
+    const speed = Math.hypot(bullet.vx, bullet.vy);
+    if (!(speed > 0)) return;
+    const ux = bullet.vx / speed;
+    const uy = bullet.vy / speed;
+    const target = selectAimTarget(bullet, ux, uy, world.hostiles, width, height);
+    if (!target) return;
+    bullet.shot = {
+      shotId: nextShotId,
+      weaponId,
+      tick,
+      originX: bullet.x,
+      originY: bullet.y,
+      ux,
+      uy,
+      target,
+      minSeparation: Number.POSITIVE_INFINITY,
+      missDistance: 0,
+    };
+    nextShotId += 1;
+  };
+
+  /**
+   * Samples one live projectile's separation from its aimed target and keeps
+   * the perpendicular offset at the closest approach. Wrapped deltas make this
+   * torus-aware; the line through the projectile is the line it was fired
+   * along (same direction, translated), so the offset is the shot's miss
+   * distance for that instant.
+   */
+  const sampleShot = (bullet: PlayerBullet): void => {
+    const shot = bullet.shot;
+    if (!shot || !shot.target.alive) return;
+    const dx = wrappedAxisDelta(bullet.x, shot.target.x, width);
+    const dy = wrappedAxisDelta(bullet.y, shot.target.y, height);
+    const separation = Math.hypot(dx, dy);
+    if (separation >= shot.minSeparation) return;
+    shot.minSeparation = separation;
+    shot.missDistance = Math.abs(dx * shot.uy - dy * shot.ux);
+  };
+
+  /**
+   * Closes one projectile's record: `hit` is the body it connected with, or
+   * `null` for a lifetime expiry. Only a hit on the aimed target counts as a
+   * hit; hitting a different body is a miss for the body the shot was aimed
+   * at, so the metric cannot be inflated by a stray or a splash.
+   */
+  const resolveShot = (
+    bullet: PlayerBullet,
+    hit: Hostile | null,
+    tick: number,
+  ): void => {
+    const shot = bullet.shot;
+    if (!shot) return;
+    bullet.shot = undefined;
+    aimShots.push({
+      shotId: shot.shotId,
+      tick: shot.tick,
+      weaponId: shot.weaponId,
+      x: shot.originX,
+      y: shot.originY,
+      aimedTargetId: shot.target.id,
+      aimedTargetArchetype: shot.target.archetype,
+      hitAimedTarget: hit !== null && hit.id === shot.target.id,
+      hitOtherHostile: hit !== null && hit.id !== shot.target.id,
+      missDistance: Number.isFinite(shot.minSeparation) ? shot.missDistance : 0,
+      flightTicks: tick - shot.tick,
+    });
   };
 
   /**
@@ -1868,7 +2368,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       world.player.y,
     )) {
       const headingRad = (shot.angleDeg * Math.PI) / 180;
-      world.playerBullets.push({
+      const bullet: PlayerBullet = {
         x: shot.x,
         y: shot.y,
         vx: Math.cos(headingRad) * PLAYER_BULLET_SPEED,
@@ -1878,7 +2378,23 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         radius:
           PLAYER_BULLET_RADIUS * (weapon.definition.levelBulletSize ?? 1),
         damage: weapon.stats.damage,
-      });
+      };
+      if (measureAimShots) {
+        // "Firing at nothing" (AH-0MWPOET5A002IPTP): a projectile spawned with
+        // no live body inside the ship's reach on its line. Uses the one shared
+        // fire-line predicate the scene gate applies, so the measurement and
+        // the gate can never disagree about what a target is.
+        const noTarget = !hasFireLine({
+          origin: { x: bullet.x, y: bullet.y },
+          heading: headingRad,
+          weaponRange: botFireRange,
+          targets: world.hostiles,
+          world: { width, height },
+        });
+        if (noTarget) shotsAtNothing += 1;
+      }
+      world.playerBullets.push(bullet);
+      if (measureAimShots) tagShot(bullet, weapon.id, tick);
     }
   };
 
@@ -1888,6 +2404,12 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
    * weapon fires on its own cadence instead of sharing one global counter.
    */
   const weaponCooldowns = new Map<WeaponId, number>();
+  /**
+   * Ticks until the live evolution (if any) fires again. The arena's
+   * tick-based cadence replaces the game's Euclidean scheduling, so the fused
+   * definition's nominal rate drives it exactly as a catalogue weapon's does.
+   */
+  let evolutionCooldown = 0;
   /** Memoises the shared `(id, level)` resolution for the length of the run. */
   const weaponCache = new Map<string, ResolvedWeapon>();
 
@@ -1946,16 +2468,62 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     }
 
     // 1. Decide + resolve input (the bot loop).
+    // The ship's effective reach for this tick (AH-0MWPOET5A002IPTP): resolved
+    // from the same shared loadout the fire step uses, so the range-aware aim
+    // solve and the fire gate agree. Only the opt-in arms compute it, so the
+    // default per-tick path is untouched.
+    if (fireGate || measureAimShots) {
+      botFireRange = 0;
+      for (const weapon of resolveWeaponLoadout(
+        holdChoice.getWeaponLevels(),
+        weaponCache,
+      )) {
+        botFireRange = Math.max(
+          botFireRange,
+          weaponReach(weapon.definition),
+        );
+      }
+    }
     const snapshot = snapshotOf(
       world,
       world.hostiles,
       config.seed,
       movingHostiles !== null,
+      // Same live ship physics the arena flies (AH-0MWR04ZDU0005O8J · AC2).
+      {
+        rotation: {
+          rotationSpeed: shipAsteroids.rotationSpeed ?? 0,
+          rotationAcceleration: shipAsteroids.rotationAcceleration ?? 0,
+          rotationDeceleration: shipAsteroids.rotationDeceleration ?? 0,
+        },
+        shotSpeed: PLAYER_BULLET_SPEED,
+        ...(fireGate ? { weaponRange: botFireRange } : {}),
+      },
+      // The live control context also supplies the reverse-thruster flag
+      // (AH-0MWT4BBYO0085CN8 · RAC3).
+      config.liveControlContext === true &&
+        shipAsteroids.reverseEnabled === true,
     );
     const intent = policy.decide(snapshot, dt);
+    const liveContext = config.liveControlContext === true;
     const input = governor.update(intent, dt, {
       scheme: 'asteroids',
       facing: world.player.facing,
+      // The live control context (AH-0MWT4BBYO0085CN8 · RAC3) supplies the
+      // same ship inputs the game and gyms do. The historic reduced context
+      // (facing only) is the default so every recorded arena baseline is
+      // untouched.
+      ...(liveContext
+        ? {
+            angularVelocity: world.player.angularVelocity,
+            rotationSpeed: shipAsteroids.rotationSpeed ?? 0,
+            rotationAcceleration: shipAsteroids.rotationAcceleration ?? 0,
+            rotationDeceleration: shipAsteroids.rotationDeceleration,
+            reverseEnabled: shipAsteroids.reverseEnabled === true,
+            position: { x: world.player.x, y: world.player.y },
+            world: { width, height },
+          }
+        : {}),
     }) as AsteroidsInput;
     const moved = asteroidModel.tick(
       world.player as unknown as RotatingMovementState,
@@ -1965,6 +2533,19 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       height,
       shipAsteroids as BaseMovementConfig,
     ) as unknown as RotatingMovementState;
+    if (measureControlInputs) {
+      // Recorded after the tick's motion so the trace carries the hull's path
+      // (AH-0MWW2PFU8001J0PM · RAC5): the hold-station harness folds these
+      // positions into the distance travelled.
+      controlInputs.push({
+        tick,
+        turn: input.turnLeft ? -1 : input.turnRight ? 1 : 0,
+        thrust: input.forward === true,
+        reverse: input.reverse === true,
+        x: moved.x,
+        y: moved.y,
+      });
+    }
     world.player = {
       x: moved.x,
       y: moved.y,
@@ -2056,10 +2637,31 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     //
     // Cadence divergence: the game's beat clock is replaced by an integer tick
     // interval derived from the resolved `fireRateMs` (see `fireRateTicks`).
-    for (const weapon of resolveWeaponLoadout(
+    const loadout = resolveWeaponLoadout(
       holdChoice.getWeaponLevels(),
       weaponCache,
-    )) {
+    );
+    // The same one resolver the game's `Player` reads: a live fusion fires the
+    // evolved weapon instead of its two halves — no second pairing answer is
+    // derived here (epic AC1).
+    const evolution = resolveArenaEvolution(loadout);
+    const fusedBases = new Set<WeaponId>(evolution?.baseIds ?? []);
+    // Fire gate (AH-0MWPOET5A002IPTP): hold the trigger unless the ship has a
+    // target inside its reach on its firing line. Cooldowns do not advance
+    // while the trigger is held, mirroring the scene's suppressed auto-fire
+    // (a held shot resumes the instant the nose finds a target).
+    const mayFire =
+      !fireGate ||
+      hasFireLine({
+        origin: { x: world.player.x, y: world.player.y },
+        heading: world.player.facing,
+        weaponRange: botFireRange,
+        targets: world.hostiles,
+        world: { width, height },
+      });
+    for (const weapon of loadout) {
+      if (fusedBases.has(weapon.id)) continue;
+      if (!mayFire) continue;
       const cooldown = weaponCooldowns.get(weapon.id) ?? 0;
       if (cooldown > 0) {
         weaponCooldowns.set(weapon.id, cooldown - 1);
@@ -2071,6 +2673,24 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       );
       fireWeapon(weapon, tick);
       if (campaignFinished) break;
+    }
+    if (campaignFinished) break;
+    if (evolution && mayFire) {
+      if (evolutionCooldown > 0) {
+        evolutionCooldown -= 1;
+      } else {
+        evolutionCooldown = fireRateTicks(evolution.definition.fireRateMs, dt);
+        fireWeapon(
+          {
+            id: evolution.definition.id,
+            ownedLevel: evolution.level + 1,
+            level: evolution.level,
+            definition: evolution.definition,
+            stats: evolution.stats,
+          },
+          tick,
+        );
+      }
     }
     if (campaignFinished) break;
 
@@ -2110,10 +2730,19 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     for (const bullet of world.playerBullets) {
       advanceBulletPosition(bullet, bullet.vx, bullet.vy, dt, width, height);
       bullet.elapsed += dt;
+      if (measureAimShots) sampleShot(bullet);
     }
     for (const bullet of world.enemyBullets) {
       advanceBulletPosition(bullet, bullet.vx, bullet.vy, dt, width, height);
       bullet.elapsed += dt;
+    }
+    // Opt-in aim-shot measurement: a projectile that runs out its lifetime
+    // missed whatever it was aimed at (no new telemetry record is emitted —
+    // the shot table rides on the typed run result).
+    if (measureAimShots) {
+      for (const bullet of world.playerBullets) {
+        if (bullet.elapsed >= bullet.lifetime) resolveShot(bullet, null, tick);
+      }
     }
     world.playerBullets = world.playerBullets.filter(
       (bullet) => bullet.elapsed < bullet.lifetime,
@@ -2129,6 +2758,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         if (!hostile.alive) continue;
         if (distance(bullet, hostile) > hostile.radius + bullet.radius) continue;
         bullet.x = Number.NaN; // retired below (one bullet never passes through)
+        if (measureAimShots) resolveShot(bullet, hostile, tick);
         if (hostile.fieldHits > 0) {
           // Barrier first (epic AH-0MVJ8W4GE007OMNT AC2): the force field
           // absorbs the hit, the hull is untouched, and the bullet is still
@@ -2277,5 +2907,10 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     ticksSimulated: simulated,
     enemyBodyContacts,
     avoidableEnemyBodyContacts,
+    // Present only under the opt-in, so the default result shape (and every
+    // existing deep-equal baseline) is unchanged.
+    ...(measureAimShots ? { aimShots } : {}),
+    ...(measureAimShots ? { shotsAtNothing } : {}),
+    ...(measureControlInputs ? { controlInputs } : {}),
   };
 }

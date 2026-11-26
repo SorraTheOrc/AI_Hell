@@ -15,10 +15,21 @@
  * | Feature | Knob(s) |
  * |---|---|
  * | reaction latency | `humanInput.reactionTimeMs`, `commitment.minCommitSeconds` |
- * | key-hold distribution | `humanInput.thrustPressMinMs/MaxMs/Long` |
+ * | key-hold distribution | `humanInput.thrustPressMinMs/MaxMs/Long`, `humanInput.turnPressMinMs` |
+ * | input cadence | `humanInput.alignmentToleranceRad`, `humanInput.turnHysteresisRad` |
  * | target preferences | objective priority bands (order preserved) |
- * | engagement distances | `engagementRange`, `firePredictionHorizon` |
+ * | engagement distances | `engagementRange`, `firePredictionHorizon`, `humanInput.aimAlignmentToleranceRad` |
  * | risk appetite | `dangerMargin`, `survivalUrgencyPort` |
+ *
+ * The governor's **turn/aim** knobs are fitted too (AH-0MWLCGWUF00631UX), so
+ * the fit models the same calmer flight model the bot actually flies
+ * (AH-0MWJ1680Z001QYV2): the travel deadband and reversal hysteresis follow the
+ * human's input cadence, the turn-press hold follows the key-hold distribution
+ * and the aim deadband follows the fitted stand-off, all calibrated so a
+ * typical human (4 input changes/s, 300 ms holds, 160 px stand-off) reproduces
+ * the shipped defaults exactly. The aim-fallibility knobs are co-fitted with
+ * the aim deadband, so the governor's random aim error can never exceed the
+ * deadband it is aiming into.
  *
  * ## Safety guarantees (AC2)
  *
@@ -75,6 +86,42 @@ const SURVIVAL_URGENCY_CAUTIOUS = 7;
 const SURVIVAL_URGENCY_RISKY = 4;
 const HORIZON_MIN_SECONDS = 0.6;
 const HORIZON_MAX_SECONDS = 1.5;
+
+// ── Governor turn/aim clamps (the calmer flight model) ──────────────
+//
+// These mirror the governor knobs introduced by AH-0MWJ1680Z001QYV2. Each map
+// is anchored on the shipped default at a *typical* human sample, so a typical
+// recording leaves the bot flying the shipped governor and only a markedly
+// twitchy or deliberate human moves the knob (see `docs/STYLE_MATCHING.md`).
+
+/** Input-change rate (1/s) that reads as fully deliberate (widest deadbands). */
+const CADENCE_DELIBERATE_PER_SECOND = 2;
+/** Input-change rate (1/s) that reads as fully rapid (tightest deadbands). */
+const CADENCE_RAPID_PER_SECOND = 6;
+/** Travel deadband (rad) for a fully deliberate human. */
+const ALIGNMENT_DELIBERATE_RAD = 0.22;
+/** Travel deadband (rad) for a fully rapid human; midpoint = shipped 0.16. */
+const ALIGNMENT_RAPID_RAD = 0.1;
+/** Turn-reversal hysteresis (rad) for a fully deliberate human. */
+const TURN_HYSTERESIS_DELIBERATE_RAD = 0.36;
+/** Turn-reversal hysteresis (rad) for a fully rapid human; midpoint = 0.25. */
+const TURN_HYSTERESIS_RAPID_RAD = 0.14;
+/** Turn-press hold as a fraction of the human's mean key hold (0.1 × 300 = 30). */
+const TURN_PRESS_HOLD_FRACTION = 0.1;
+const TURN_PRESS_MIN_MS = 15;
+const TURN_PRESS_MAX_MS = 90;
+/**
+ * Lateral miss (px) the aim deadband may produce at the fitted stand-off: half
+ * the 16 px hostile contact radius, so a shot fired at the deadband edge still
+ * connects. Divided by the stand-off it *is* the deadband angle, and at the
+ * shipped 160 px stand-off it reproduces the shipped 0.05 rad exactly.
+ */
+const AIM_DEADBAND_LATERAL_PX = 8;
+const AIM_TOLERANCE_MIN_RAD = 0.03;
+const AIM_TOLERANCE_MAX_RAD = 0.12;
+/** Envelope for the fitted maximum aim error (see {@link fitStyle}). */
+const MAX_AIM_ERROR_MIN_RAD = 0.01;
+const MAX_AIM_ERROR_MAX_RAD = 0.35;
 /** How strongly a target-preference imbalance tilts a band base. */
 const TARGET_TILT = 0.5;
 
@@ -118,6 +165,46 @@ function clamp(value: number, min: number, max: number): number {
 /** Linear interpolation from `a` (t=0) to `b` (t=1), with `t` clamped. */
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * clamp(t, 0, 1);
+}
+
+/**
+ * How rapidly the human re-steers, in `[0, 1]`: `0` = fully deliberate
+ * (`CADENCE_DELIBERATE_PER_SECOND` input changes per second or fewer), `1` =
+ * fully rapid (`CADENCE_RAPID_PER_SECOND` or more).
+ *
+ * The single cadence driver for the governor's travel-turn knobs: a player who
+ * changes input four times a second sits at `0.5`, which reproduces the shipped
+ * travel deadband and reversal hysteresis.
+ */
+export function inputRapidity(features: StyleFeatures): number {
+  const cadence = Number.isFinite(features.inputChangesPerSecond)
+    ? features.inputChangesPerSecond
+    : 0;
+  return clamp(
+    (cadence - CADENCE_DELIBERATE_PER_SECOND) /
+      (CADENCE_RAPID_PER_SECOND - CADENCE_DELIBERATE_PER_SECOND),
+    0,
+    1,
+  );
+}
+
+/**
+ * The aim deadband (rad) geometrically consistent with a fitted stand-off.
+ *
+ * A shot fired with heading error `θ` at range `d` misses laterally by `d·θ`
+ * (small angle), so keeping `d·θ ≤ ` {@link AIM_DEADBAND_LATERAL_PX} keeps the
+ * projectile inside the hostile's contact radius. The resulting deadband is
+ * clamped into its safe envelope so neither a very short nor a very long
+ * fitted stand-off can reintroduce the stand-off deadlock (an enemy the bot can
+ * circle but never hit).
+ */
+export function aimDeadbandFor(engagementRange: number): number {
+  const standoff = Math.max(1, engagementRange);
+  return clamp(
+    AIM_DEADBAND_LATERAL_PX / standoff,
+    AIM_TOLERANCE_MIN_RAD,
+    AIM_TOLERANCE_MAX_RAD,
+  );
 }
 
 /**
@@ -294,14 +381,6 @@ export function fitStyle(
     warnings.push('key-hold distribution unsampled; kept the default press timing');
   }
 
-  const humanInput: BotHumanInputTunables = {
-    ...baseInput,
-    reactionTimeMs,
-    thrustPressMinMs,
-    thrustPressMaxMs,
-    thrustPressMaxMsLong,
-  };
-
   // ── Commitment hysteresis from reaction + input cadence ──────────
   let commitment = { ...base.commitment };
   if (reactionSeconds !== null && Number.isFinite(reactionSeconds)) {
@@ -351,6 +430,113 @@ export function fitStyle(
     );
     warnings.push('enemy engagement distance unsampled; derived stand-off from risk appetite');
   }
+
+  // ── Governor turn/aim knobs: fit the flight model the bot flies ──
+  //
+  // AH-0MWLCGWUF00631UX: the calmer flight model (AH-0MWJ1680Z001QYV2) added
+  // `alignmentToleranceRad`, `aimAlignmentToleranceRad`,
+  // `turnHysteresisRad` and `turnPressMinMs` to the governor. Leaving them at
+  // their shipped defaults silently modelled a governor the bot no longer
+  // flies, so each is fitted here from an existing feature and/or the fitted
+  // stand-off. A typical human reproduces the shipped defaults exactly.
+  const rapidity = inputRapidity(features);
+  let alignmentToleranceRad: number;
+  let turnHysteresisRad: number;
+  if (features.inputChangesPerSecond > 0) {
+    alignmentToleranceRad = lerp(
+      ALIGNMENT_DELIBERATE_RAD,
+      ALIGNMENT_RAPID_RAD,
+      rapidity,
+    );
+    turnHysteresisRad = lerp(
+      TURN_HYSTERESIS_DELIBERATE_RAD,
+      TURN_HYSTERESIS_RAPID_RAD,
+      rapidity,
+    );
+    const cadenceReason = `input cadence ${features.inputChangesPerSecond.toFixed(2)} /s`;
+    applied.push({
+      knob: 'humanInput.alignmentToleranceRad',
+      value: alignmentToleranceRad,
+      reason: cadenceReason,
+    });
+    applied.push({
+      knob: 'humanInput.turnHysteresisRad',
+      value: turnHysteresisRad,
+      reason: cadenceReason,
+    });
+  } else {
+    // No observed input change at all: there is no cadence to map, so keep the
+    // shipped governor rather than fitting the widest deadband to silence.
+    alignmentToleranceRad = baseInput.alignmentToleranceRad;
+    turnHysteresisRad = baseInput.turnHysteresisRad;
+    warnings.push(
+      'input cadence unsampled; kept the shipped travel deadband and turn hysteresis',
+    );
+  }
+
+  let turnPressMinMs = baseInput.turnPressMinMs;
+  if (features.meanHoldSeconds !== null && Number.isFinite(features.meanHoldSeconds)) {
+    const meanHoldMs = features.meanHoldSeconds * 1000;
+    turnPressMinMs = clamp(
+      Math.round(meanHoldMs * TURN_PRESS_HOLD_FRACTION),
+      TURN_PRESS_MIN_MS,
+      TURN_PRESS_MAX_MS,
+    );
+    applied.push({
+      knob: 'humanInput.turnPressMinMs',
+      value: turnPressMinMs,
+      reason: `mean key hold ${meanHoldMs.toFixed(0)} ms`,
+    });
+  } else {
+    warnings.push(
+      'key-hold distribution unsampled; kept the default turn-press hold',
+    );
+  }
+
+  // The aim deadband is a precision task scaled to the fitted stand-off: the
+  // angle whose lateral miss at that range stays inside the hostile's contact
+  // radius, so the calibrated stand-off can never become unhittable.
+  const aimAlignmentToleranceRad = aimDeadbandFor(engagementRange);
+  applied.push({
+    knob: 'humanInput.aimAlignmentToleranceRad',
+    value: aimAlignmentToleranceRad,
+    reason:
+      `fitted stand-off ${engagementRange} px at ` +
+      `${AIM_DEADBAND_LATERAL_PX} px lateral margin`,
+  });
+
+  // Co-fit the aim fallibility with the deadband: the governor perturbs an aim
+  // bearing by at most `maxAimErrorRad × (1 − skill)` and then holds the ship
+  // inside the effective deadband `min(alignment, aim)`, so bounding the max
+  // error by that deadband keeps a low-skill styled bot from aiming outside the
+  // band it settles into (a silent competence cliff the fit must not create).
+  const effectiveAimDeadband = Math.min(
+    alignmentToleranceRad,
+    aimAlignmentToleranceRad,
+  );
+  const maxAimErrorRad = clamp(
+    effectiveAimDeadband,
+    MAX_AIM_ERROR_MIN_RAD,
+    MAX_AIM_ERROR_MAX_RAD,
+  );
+  applied.push({
+    knob: 'humanInput.maxAimErrorRad',
+    value: maxAimErrorRad,
+    reason: 'co-fitted with the effective aim deadband',
+  });
+
+  const humanInput: BotHumanInputTunables = {
+    ...baseInput,
+    reactionTimeMs,
+    thrustPressMinMs,
+    thrustPressMaxMs,
+    thrustPressMaxMsLong,
+    alignmentToleranceRad,
+    aimAlignmentToleranceRad,
+    turnHysteresisRad,
+    turnPressMinMs,
+    maxAimErrorRad,
+  };
 
   // ── Prediction horizon from the reaction window ──────────────────
   let firePredictionHorizon = base.firePredictionHorizon;

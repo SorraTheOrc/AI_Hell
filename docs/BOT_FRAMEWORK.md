@@ -426,7 +426,8 @@ cadence itself is the governor's `reactionTimeMs`
 ([section 5](#5-brain--policy)); the competent tunables set a compatible
 `minCommitSeconds` so a goal cannot be re-picked faster than a human can
 change input. The rotation-skill knobs — `skill`, `maxAimErrorRad`,
-`aimLeadEnabled`, `aimLeadAlignSeconds`, `aimLeadIterations` — live in the
+`aimErrorRad`, `aimErrorDecay`, `aimErrorResetDistance`, `aimLeadEnabled`,
+`aimLeadAlignSeconds`, `aimLeadIterations` — live in the
 same two sources ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)),
 as do the predictive-hazard-avoidance knobs `hazardPredictionEnabled` /
 `hazardPredictionHorizon`
@@ -510,13 +511,29 @@ often:
   factor), using separate seeded RNG streams so the forward press sequence is
   unchanged. The bot never toggles reverse every frame.
 
+**Reflex vs. cadence (AH-0MWPD1IH8005GHSK).** The reverse *request* is a fast
+braking reflex, exactly like forward thrust: while the chosen bearing stays
+committed for the human reaction window, `BotInputGovernor.update`
+re-evaluates `decision.reverse` every tick (the same `else if (typeof
+decision.thrust === 'boolean')` branch) so a brake engages on time instead of
+overshooting inside a held pulse. The human-like element is the *press
+duration* hold (`reversePressMinMs`/`reversePressMaxMs`), which keeps the key
+down for a perceptible burst rather than toggling it frame by frame. The
+committed target *bearing* (`dirX`/`dirY` plus the cardinal booleans,
+`longTravel` and `aim`) is what the reaction cadence governs: it is held for
+`reactionTimeMs` and only re-chosen at a commit. So a cadence assertion must
+project out both fast-reflex fields (`thrust` **and** `reverse`) and compare
+the held bearing — otherwise an in-window brake reads as a cadence failure.
+
 The relevant tunables are single-sourced in `COMPETENT_BOT_TUNABLES`
 (`reverseBrakeEnabled`, `reverseImminentOvershootGap`, `reverseRetreatRange`)
 and `BOT_HUMAN_INPUT_TUNABLES` (`reversePressMinMs`, `reversePressMaxMs`,
-`reversePressGentleMinPct`, `reversePressGentleMaxPct`).  A deterministic
-seeded run pins the regression: the restricted model cuts reverse presses over
-an integration demo window from 38 to 9 (528 → 138 reverse ticks) versus the
-pre-change baseline.
+`reversePressGentleMinPct`, `reversePressGentleMaxPct`).  The reverse *request*
+is re-evaluated every tick like forward thrust; only the press duration is
+humanised, and the committed bearing is held for `reactionTimeMs`.  A
+deterministic seeded run pins the regression: the restricted model cuts
+reverse presses over an integration demo window from 38 to 9
+(528 → 138 reverse ticks) versus the pre-change baseline.
 
 **The reverse forward model consumes the live reverse physics
 (AH-0MV85WGOO0066I9X).** The `collect`/`engage` brake-assist does not just ask
@@ -578,14 +595,46 @@ bot-tuning gym fly identically.
   rotation constant is hard-coded in the bot layer. With `angularVelocity = 0`
   the predicted stop equals the current heading and the result is
   byte-for-byte the legacy release.
-- **Lead prediction (AC2).** The `BotSnapshot` enemy seam carries optional
-  `vx`/`vy` (sourced from entities that expose a physics body — `Asteroid`,
-  `LaneTraffic` — and defaulting to zero for formation-positioned enemies).
-  `enemyTargets` threads it into the `ContentTarget`, and `engage` solves the
-  **iterated intercept** with the pure `interceptPoint` helper: the target
-  advances over the estimated `aimLeadAlignSeconds` plus the projectile's
-  time of flight (`assumedBulletSpeed`), refined for `aimLeadIterations`
-  passes. A zero/absent velocity reduces exactly to the current position.
+- **Lead prediction (AC2; AH-0MWR04X10002VNDG, AH-0MWR04ZDU0005O8J,
+  AH-0MWR051U6003BDB9).** `engage` solves the **iterated intercept**: the
+  target advances over the ship's estimated time-to-align plus the shot's time
+  of flight, refined for `aimLeadIterations` passes.
+  - **Velocity source (tracked → snapshot → current).** The lead velocity is
+    resolved with an explicit precedence — the **bot-side tracker's** estimate
+    for the target's stable id (`BotWorld.hazards[].vx/vy`, the same estimate
+    the hazard predictor consumes), then the snapshot's optional `vx`/`vy`
+    (sourced from entities that expose a physics body — `Asteroid`,
+    `LaneTraffic`), then the current position (AH-0MWR04X10002VNDG · AC1). The
+    first step is what leads scripted formation/`chaser`/`diver`/`patroller`
+    enemies, whose motion the snapshot seam does not carry. A zero/absent
+    estimate falls through the list, so a cold start reduces exactly to the
+    current position. The source is held at the pre-change snapshot fallback
+    in the avoidance sweep and in the pinned aim-accuracy baseline
+    (`aimLeadFromTracker: false`), so neither comparison is moved by an aim
+    feature.
+  - **Live shot speed (AC2).** The time-of-flight speed is the **ship's own**
+    travelling-shot speed (`resolveShotSpeed`: explicit tuning override > live
+    ship speed > the compiled `shotSpeed` default, `PLAYER_BULLET_SPEED` =
+    **350 px/s**). It replaces the enemy-bullet tell constant
+    (`assumedBulletSpeed`, 200 px/s) that was reused here before this feature;
+    `assumedBulletSpeed` now models **enemy fire tells only** and is never the
+    ship's time of flight.
+  - **Live turn time (AC2).** The alignment term is derived from the ship's
+    live rotation model (`resolveAimAlignSeconds` → `deriveTurnAlignSeconds`,
+    acceleration/deceleration + `angularStopDisplacement`), with the fixed
+    `aimLeadAlignSeconds` retained only as the no-config fallback.
+  - **Class-sampled intercept (AC3).** When the tracked estimate names a real
+    movement class, the lead advances the target along its **sampled class
+    trajectory** (`advanceHazardMotion`, the same definition the hazard
+    predictor uses in
+    [section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)) and
+    re-estimates time of flight each iteration; a `roamer`, an unknown/absent
+    class, a disabled motion model or a stationary target falls back to the
+    pure `interceptPoint` constant-velocity solve **bit-for-bit**. The reusable
+    sampler scratch lives on `aimMotion`, so the per-tick solve allocates none.
+  - **Seam-aware (torus).** Both the lead solve and the route to the aim point
+    run on the torus (AH-0MVT2VZR7000GS15), so a target whose shortest path
+    crosses an edge is led and aimed at through that edge.
 - **`skill` aim error (AC3).** A single normalised `skill` tunable in
   `BOT_HUMAN_INPUT_TUNABLES` (default **1.0**) perturbs the committed aim
   bearing by a seeded error whose bound is
@@ -595,18 +644,106 @@ bot-tuning gym fly identically.
   intents flagged as **aim** (`SteeredIntent.aim`, set by `engage` when it
   holds its weapon axis) are perturbed, so the survival/evade tier is never
   degraded.
-- **Live tuning (AC4).** `skill`, `maxAimErrorRad`, `aimLeadAlignSeconds` and
+- **Adaptive aim error (AH-0MWR057Q8004PBOD · AC4).** `aimErrorRad`
+  (default **0.02 rad**) is a live, *learning* aim error, independent of
+  `skill`: only **aim** intents that carry the engaged target's bot-side id
+  (`SteeredIntent.targetId`, set by `engage`) are perturbed, from a sibling
+  seeded stream (`seed + 5`) so the `skill` and press sequences are unchanged.
+  Every confirmed hit on that target — delivered through the shared
+  `notifyAimHit` seam (`CombatScene.onPlayerBulletHitEnemy` →
+  `src/ai/aimHit.ts`) — multiplies the live error by `aimErrorDecay` (default
+  **0.5**), floored at 0. The full error returns after a **repositioning
+  move**: the ship having moved `aimErrorResetDistance` px (default **60**,
+  torus-aware, measured from its position at the last hit) or changing
+  engagement target. `aimErrorRad = 0` consumes no draw and is byte-for-byte
+  the pre-adaptive behaviour. All three knobs are live sliders; the boss has
+  no bot-side id in the hit seam, so it keeps the fixed `skill` error only.
+  The curated promo presets pin `aimErrorRad = 0` so their seed-tuned
+  recordings stay byte-identical to the pre-adaptive baseline (no draw at 0);
+  the shipped gameplay `Default` config carries the live 0.02 rad error.
+  When **aim damping** is on (§9.12), the error *angle* is drawn once per
+  magnitude (arm, decay, reposition re-arm or target change) and held between
+  hits, so the fallibility biases the aim instead of jittering the bearing
+  every reaction; with damping off it is redrawn every commit, as before.
+- **Aim damping (AH-0MWT4BBYO0085CN8 · RAC1).** The producer's play-test of
+  the aim-accuracy epic showed the bot **oscillating again in both the turn
+  actuator and the forward/backward control**. Two damping knobs, both live
+  and both switched on in the shipped `Default` preset; the factory defaults
+  stay off, so every pre-change harness baseline is byte-identical:
+  - **`aimDampingEnabled`** (toggle, factory **off**, shipped preset **on**)
+    is the master switch. With it on, an established **aim** turn direction
+    cannot flip for `aimTurnHoldMs`, and the adaptive aim-error angle is held
+    between hits (above). With it off the governor is exactly the pre-change
+    code.
+  - **`aimTurnHoldMs`** (default **300 ms**, the reaction window) releases a
+    requested aim reversal inside the window instead of pressing the opposite
+    key, so the closed-loop turn coasts through an overshoot rather than
+    dithering left/right. The per-tick *release* is untouched — aim precision
+    is unchanged, and `0` disables only the flip hold.
+- **Standoff hysteresis (AH-0MWT4BBYO0085CN8 · RAC2).**
+  `engagementRangeHysteresis` (default **40 px** in the shipped preset, **0**
+  factory) makes the engage behaviour's in/out-of-standoff decision sticky:
+  once inside `engagementRange` it stays inside until the target is
+  `engagementRange + band` away, and outside it keeps closing until it is back
+  inside. The same state gates the reverse brake, so thrust and reverse cannot
+  chase each other across the boundary. A `0` band is the pre-change
+  single-boundary rule.
+- **Oscillation measurement (RAC3).** Two deterministic harnesses, both
+  folded by the same `countControlOscillation` rule (turn sign flips,
+  thrust/reverse on↔off transitions, and forward↔reverse **drive sign flips**
+  — the "lunge" count):
+  - `src/ai/eval/oscillation.ts` drives the shipped competent brain, the
+    shipped `BotInputGovernor` and the shipped `AsteroidsModel` against a
+    scripted target that breathes across the standoff boundary while its
+    bearing sweeps (the two live symptoms). Both arms see the identical
+    script, so a change in the counts is attributable to the damping.
+    `src/ai/eval/oscillation.test.ts` asserts the shipped arm is strictly
+    below the pinned pre-fix baseline (`src/ai/eval/oscillation.baseline.json`)
+    and below the documented caps.
+  - `runAimOscillation` in `src/ai/eval/aimAccuracy.ts` runs the **live
+    arena fight** with the arena's opt-in `measureControlInputs` trace and
+    `liveControlContext` (the ship's angular velocity, rotation model and
+    reverse flag, as the game supplies them), reporting the same counts beside
+    shots/hits/hit-rate/miss-distance per movement class and seed. Its pre-fix
+    observation is pinned in `src/ai/eval/aimOscillation.baseline.json`.
+- **Live tuning (AC4).** `skill`, `maxAimErrorRad`, `aimErrorRad`,
+  `aimErrorDecay`, `aimErrorResetDistance`, `aimLeadAlignSeconds` and
   `aimLeadIterations` are sliders and `aimLeadEnabled` a toggle in
   `BOT_TUNING_NUMERIC_FIELDS` / `BOT_TUNING_TOGGLES`
   ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)), applied live by
-  `GymBotTuning` exactly like the existing knobs.
-- **Validation (AC5).** `src/ai/botHumanLike.test.ts` covers the turn hold and
-  the skill error, `src/ai/framework/competent/steering.test.ts` and
-  `behaviours.test.ts` cover the intercept solve and the engage aim, and
+  `GymBotTuning` exactly like the existing knobs. The posture knobs
+  `holdFireEnabled` (toggle), `holdFireHorizonSeconds` and
+  `holdFireLineRadiusPx` (sliders) sit on the same surface — see
+  [section 9.13](#913-hold-station-posture-stay-still-and-shoot-ah-0mww2pfu8001j0pm).
+- **Validation (AC5).** `src/ai/botHumanLike.test.ts` covers the turn hold,
+  the skill error and the adaptive decay/re-arm/determinism,
+  `src/ai/framework/competent/steering.test.ts` and `behaviours.test.ts` cover
+  the intercept solve and the engage aim/target id, and
   `src/ai/botRotationSkills.integration.test.ts` wires the shared
   competent brain + governor + shipped `AsteroidsModel` into a deterministic
   60 Hz run that tracks an off-axis moving enemy with a settled bearing error
-  ≤ **0.05 rad**.
+  ≤ **0.05 rad**, and zeroes the live adaptive error in under repeated hits.
+- **Accuracy harness (AH-0MWR05EZE0044Z01 · AC5).** The proof that the solve
+  is more accurate is a number, not an opinion:
+  `src/ai/eval/aimAccuracy.test.ts` measures the **shipped** aim path in the
+  headless arena over a fixed seed list (`AIM_ACCURACY_SEEDS` = `[1, 7, 42]`),
+  `AIM_ACCURACY_TICKS` = 1 800 ticks at `AIM_ACCURACY_DT` = 1/60 s, one
+  scenario per movement class (`chaser` / `diver` / `patroller` / `formation` /
+  `roamer`). Each shot is graded by `tallyAimShots`: **hit rate** =
+  `shotsHit / shotsFired` and **mean miss distance** = the mean of
+  `ArenaAimShot.missDistance` over shots that did not connect with the aimed
+  target. The current solve is measured with `aimErrorRad = 0`
+  (`runAimAccuracy({ aimErrorRad: 0 })`) so the comparison is of the solve, not
+  of the fallibility knob; the pre-change baseline is reproduced with
+  `aimLeadFromTracker: false` and pinned in `src/ai/eval/aimAccuracy.baseline.json`.
+  The regression test `beats the pinned pre-change baseline, pooled, with
+  aimErrorRad = 0` asserts the **pooled hit rate** is strictly higher and the
+  **pooled mean miss distance** strictly lower, printing the per-class
+  before/after table (`formatAimAccuracyComparison`) on failure. Recorded
+  pooled reached **0.5624 vs 0.5099** hit rate and **22.3498 vs 23.6664** px
+  mean miss distance (current vs baseline). The fixture is a recorded
+  observation: a future deliberate tuning change must re-baseline on purpose,
+  never silently re-snap it to pass.
 
 ### 9.9 Live thruster config carried in the snapshot (AH-0MV85WFWD0029DL7)
 
@@ -861,9 +998,12 @@ behaviour now treat flying as a coarse, human action.
   key for a human-like burst instead of toggling on and off within a reaction;
   a flip requested inside the window is **released**, never dithered to the
   opposite key. Thrust and reverse are untouched, so a safety brake is never
-  delayed. **Aim intents are exempt** — holding the weapon axis on a target is
-  a precision task the producer did not ask to change, so an `aim` intent
-  keeps the closed-loop per-tick release (§9.8).
+  delayed. **Aim intents are exempt from this hold** — holding the weapon axis
+  on a target is a precision task, so an `aim` intent keeps the closed-loop
+  per-tick release (§9.8). Aim intents instead get their own, narrower
+  anti-dither guard: with `aimDampingEnabled` on, an established aim turn
+  cannot flip for `aimTurnHoldMs` while releases stay immediate
+  (AH-0MWT4BBYO0085CN8 · RAC1, §9.8).
 - **Pass-through collection.** Pickups are collected on **contact**, so the
   collect behaviour no longer retro-brakes onto one (`collectReverseBrake`
   defaults to `false`; the retro thruster is still available behind the
@@ -893,6 +1033,135 @@ behaviour now treat flying as a coarse, human action.
   and `collectOvershootMargin` slider) are in the bot-tuning surface
   (`src/ai/tuningFields.ts`) and the bundled baseline
   (`src/data/bot-tuning.json`).
+
+### 9.13 Hold-station posture: stay still and shoot (AH-0MWW2PFU8001J0PM)
+
+The aim solve (§9.8) made the bot *able* to hit a moving target, but a
+play-test rejected the result for the opposite reason: **the bot kept driving
+while it engaged**, and the movement spoiled the aim.
+
+> "It is still moving when it doesn't need to and this movement means it is
+> inaccurate. When it is not under threat from an incoming bullet, enemy or
+> asteroid and it is not collecting powerups or minerals it should stay still
+> using only the left and right thrusters to aim. … In short the bot should
+> predict future hits and only move if there is no likely hit within the next
+> 1s" — producer audit rejection, 2026-11-25
+
+The posture is therefore a **prediction**, not a tuning preference.
+
+- **Fire solution (`src/ai/framework/competent/hitPrediction.ts`).**
+  `evaluateFireSolution` judges a shot aimed at a solved lead point: the
+  horizon covers **the time to finish the turn** (derived from the live
+  rotation model, §9.8) **plus the shot's time of flight** on the torus, so a
+  distant or fast target the shot would reach too late does not justify
+  holding. `resolveFireSolution` solves the lead first — the same
+  `interceptPointClassAware` solve the aim uses, advancing the target along
+  `advanceHazardMotion` (no second trajectory model) — and `classSampling:
+  false` is its documented bit-for-bit fallback to the legacy
+  constant-velocity lead, which is the cheap screen the target scan uses.
+  `countShotLineTargets` is the producer's "line of targets": how many other
+  hazards the shot line sweeps, on the torus.
+- **Hold station while a hit is likely (`holdFireEnabled`).** While `engage`
+  is **calm** — nothing incoming threatens the hull (`threatens` shots) and no
+  hazard other than the engagement target is on a collision course
+  (`hazardThreatensPlayer`, the class-shaped predictive test) — and a solution
+  exists inside `holdFireHorizonSeconds` (**1 s**), the intent requests **no
+  forward and no reverse thrust**, whatever the distance to the target, and
+  `planSteering`'s `hold` option suppresses the fan's "force the throttle on
+  while turning" rule. The hull only rotates onto the solved lead, so the
+  weapon axis stays still instead of the ship chasing a standoff.
+- **Move only when nothing can be hit.** With no solution inside the horizon
+  the ordinary approach/standoff policy runs unchanged and the ship closes to
+  where its shot lands in time. Danger still overrides everything: a
+  threatening shot keeps diverting to `evade`, and the kiting / retro-brake
+  paths still fire on a genuine threat.
+- **Line-of-fire target preference (`holdFireLineRadiusPx`, default 14 px).**
+  With the posture on, the engaged target is chosen from the candidates the
+  ship can **actually hit** — and, among those, the one whose line also sweeps
+  more bodies (`countShotLineTargets`) — instead of the merely nearest body.
+  With no hittable candidate the ordinary weighted choice stands. The
+  preference lives entirely inside the behaviour: goal utilities and the hard
+  priority bands are untouched, and the boss goal keeps its boss-only target
+  set.
+- **Measurement (AC5).** `src/ai/eval/holdStation.ts` folds the scripted
+  control-loop trace (§9.12's calm scenario: nothing fires, nothing dies, no
+  other hazard or pickup) into **drive duty** (ticks with forward or reverse
+  held) and **drift** (the distance the hull travelled), because a steady
+  pointless throttle never shows up in a transition count. Measured over the
+  documented matrix (5 movement classes × seeds 1/7/42 × 1 800 ticks):
+  - **drive duty 9.33 % → 0.24 %** and **drift 6 087.94 px → 67.26 px**
+    (forward-held ticks 2 247 → 49, reverse-held 272 → 16);
+  - live accuracy on the same seeded fights (chaser/diver/patroller × the same
+    seeds) **63.50 % → 71.68 %** hit rate (395/622 → 453/632 hits) — standing
+    still does not cost hits.
+- **Factory default off, shipped preset on.** `holdFireEnabled` is `false` in
+  the compiled defaults, so every pre-change measurement (aim accuracy,
+  oscillation, arena telemetry and the gym-parity fixtures) stays byte-for-
+  byte identical; the shipped `Default` preset turns it on, exactly like the
+  oscillation damping (AH-0MWT4BBYO0085CN8). `holdFireHorizonSeconds` and
+  `holdFireLineRadiusPx` are ordinary live sliders
+  ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)).
+
+### 9.14 Fire discipline: never fire at nothing (AH-0MWPOET5A002IPTP)
+
+The hold-station posture (§9.13) stopped the bot driving while it engaged, but
+a later play-test rejected the result from the other side of the same problem:
+
+> "The bot will sometimes appear to be firing at nothing. It should be aware of
+> the range of its weapons … The ship should never be firing away from targets,
+> unless maneuvering for a defined purpose." — producer audit rejection,
+> 2026-11-25
+
+The cause is structural. The player **auto-fires along its committed facing**
+(`CombatCoreScene._autoFire` → `player.tryFire`) with no aim gate, which is the
+intended "hold the trigger" feel for a human. A bot that is collecting,
+evading or repositioning points its nose away from every target for much of a
+run, so the unconditional trigger keeps shooting into empty space. Separately,
+the fire solution judged a shot only by **time** against the horizon, never by
+the active weapon's **reach**, so the hold-station posture could hold at
+`engagementRange` (140 px) with a short-reach weapon (Rapid ≈ 131 px) and fire
+at nothing.
+
+- **Weapon-range awareness.** `Player.getEffectiveWeaponRange()` derives the
+  ship's reach from the live active loadout — `PLAYER_BULLET_SPEED ×
+  bulletLifetime` for a travelling shot, `hitscan.length` for a beam,
+  `aoe.projectileSpeed × bulletLifetime` for a random-detonation AOE and the
+  effect radius for an instant AOE — and takes the **farthest** active weapon
+  (the ship fires them all together). It is carried on the snapshot seam as
+  `BotPlayer.weaponRange` (the `shotSpeed` precedent), so `src/ai` never
+  hard-codes a weapon constant. `evaluateFireSolution` / `resolveFireSolution`
+  report `inRange` and only count a shot as a hit inside that reach; the
+  hold-station posture and the line-of-fire target preference require it. A
+  snapshot **without** a range (`0`/absent) disables the gate and reproduces
+  the pre-change time-of-flight-only judgement byte-for-byte, which is what
+  keeps the pinned accuracy/oscillation fixtures unchanged.
+- **The fire-line gate (`src/ai/framework/competent/fireLine.ts`).**
+  `hasFireLine` is the single definition of "this shot has a target": a live
+  body lies **ahead of the muzzle**, inside the weapon's reach, and close
+  enough to the shot's ray that the body and the bullet would meet
+  (perpendicular offset ≤ the body's hit radius + `BOT_FIRE_LINE_RADIUS_PX`,
+  the shared bullet radius). It is torus-aware and pure.
+- **One shared scene hook.** `CombatCoreScene.botFireAllowed()` defaults to
+  `true` (a scene with no bot, and every human session, is unchanged). A
+  bot-bearing scene overrides it with `hasFireLine` over the same targets the
+  shared hitscan path intercepts — `PlayScene` in demo mode and `GymBotTuning`
+  — so the game and the bot gym cannot diverge. When it returns `false` the
+  shared player step spawns no bullets, muzzle flashes or fire cues, exactly
+  like the run-end suppression, and the beat clock keeps advancing so the
+  beat-modulated hum and explosion grid do not stall. A held shot resumes on
+  the first tick the nose finds a target in reach.
+- **Measurement.** `src/ai/eval/fireDiscipline.test.ts` flies the documented
+  accuracy matrix (5 movement classes × seeds 1/7/42 × 1 800 ticks) twice —
+  gate off (the shipped unconditional trigger) and gate on — and reports
+  shots fired / hits / hit rate / **shots-at-nothing** per arm. The gate arm
+  fires nothing at nothing, never fires more shots than the ungated arm and
+  keeps at least the ungated hit rate. The arena models the same gate behind
+  the opt-in `ArenaConfig.botFireGate`, so the measurement drives the real
+  predicate rather than a harness-only copy.
+- **Scope boundary.** The gate applies to the demo/attract bot only. A human
+  holding fire keeps the unconditional trigger; a level-resolved loadout can
+  extend the reach, and `hasFireLine` reports `true` when the reach is unknown
+  so an older snapshot or fixture can never be silently silenced.
 
 ## 10. Testing
 
@@ -1066,15 +1335,57 @@ and adjust its parameters in real time.
   model, the human-input reaction/press cadence (including the smooth-turning
   knobs `alignmentToleranceRad` / `turnHysteresisRad` / `turnPressMinMs`),
   collection's `collectReverseBrake` toggle and `collectOvershootMargin`
-  slider, and the rotation-skill knobs `skill` / `maxAimErrorRad` /
-  `aimLeadAlignSeconds` / `aimLeadIterations` (`aimLeadEnabled` toggle)
-  (AH-0MV1DUSM2005HL98 · AC4; smooth turning:
+  slider, the rotation-skill knobs `skill` / `maxAimErrorRad` /
+  `aimErrorRad` / `aimErrorDecay` / `aimErrorResetDistance` /
+  `aimLeadAlignSeconds` / `aimLeadIterations` (`aimLeadEnabled` toggle), and
+  the hold-station posture `holdFireEnabled` (toggle) /
+  `holdFireHorizonSeconds` / `holdFireLineRadiusPx` (sliders)
+  (AH-0MV1DUSM2005HL98 · AC4; posture: AH-0MWW2PFU8001J0PM,
+  [section 9.13](#913-hold-station-posture-stay-still-and-shoot-ah-0mww2pfu8001j0pm);
+  smooth turning:
   AH-0MWJ1680Z001QYV2 audit rejection, [section 9.12](#912-smooth-turning-and-overshoot-tolerance-ah-0mwj1680z001qyv2-audit-rejection)).
   Moving a slider rebuilds the live brain and governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
   are **overrides**: moving one away from its default makes it win over the
   live ship config; left at the default it is a fallback and the ship's live
   config wins (the same precedence the shipped demo resolves —
   [section 9.4](#94-single-sourced-tuning-ac5)).
+- **Adaptive aim-error knobs (AH-0MWR057Q8004PBOD · AH-0MWR05J320041SAA).**
+  Three live sliders drive the learning aim error described in
+  [section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98):
+  - **`aimErrorRad`** (default **0.02** rad) — the live aim-error magnitude.
+    It starts at this value and only perturbs intents flagged as **aim**
+    (never survival/evade/travel). At **`0`** the governor consumes no draw and
+    the committed decision is byte-for-byte the pre-adaptive aim.
+  - **`aimErrorDecay`** (default **0.5**) — the multiplier applied to the live
+    error on every confirmed hit on the engaged target (`notifyAimHit` seam),
+    floored at **0**, so a bot that keeps connecting zeroes in. At **`1`** the
+    error never decays (a fixed aim error); at **`0`** a single hit removes it.
+  - **`aimErrorResetDistance`** (default **60** px, torus-aware) — the ship
+    travel, measured from its position at the last hit, after which the error
+    is restored to `aimErrorRad` (a **repositioning move**). Changing the
+    engagement target also re-arms it. At **`0`** any movement re-arms
+    immediately (the error never stays reduced).
+  All three are ordinary `BOT_TUNING_NUMERIC_FIELDS` sliders (live-rebuild,
+  persisted in `src/data/bot-tuning.json`), and the boss — which has no
+  bot-side id in the hit seam — keeps the fixed `skill` error only.
+- **Oscillation-damping knobs (AH-0MWT4BBYO0085CN8 · RAC5).** Three controls
+  complete the anti-oscillation surface described in
+  [section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98):
+  - **`aimDampingEnabled`** (toggle, factory **off**, shipped `Default` preset
+    **on**) — damps the aim actuator: an established aim turn cannot flip for
+    `aimTurnHoldMs`, and the adaptive aim-error angle is held between confirmed
+    hits instead of being redrawn every reaction. Off restores the exact
+    pre-change actuator.
+  - **`aimTurnHoldMs`** (default **300 ms**) — the aim flip-hold window. A
+    requested reversal inside it is released (the ship coasts); a release is
+    still honoured immediately, so aim precision is unchanged. At **`0`** only
+    the flip hold is disabled.
+  - **`engagementRangeHysteresis`** (default **40 px** in the shipped preset,
+    **0** factory) — the sticky band around `engagementRange`. Inside the
+    standoff the bot stays inside until the target is this much farther away,
+    and the band also suppresses the reverse brake, so the forward and retro
+    thrusters cannot toggle across the boundary. At **`0`** the pre-change
+    single-boundary rule is restored.
 - **Per-parameter tooltips.** Every slider and toggle carries a plain-English
   `description` in its `BotTuningFieldSpec`/`BotTuningToggleSpec`
   (`src/ai/tuningFields.ts`), authored in lockstep with the tunables' JSDoc.

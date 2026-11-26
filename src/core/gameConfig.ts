@@ -9,6 +9,7 @@ import { PauseScene } from '../scenes/PauseScene';
 import { HelpScene } from '../scenes/HelpScene';
 import { MineralChoiceScene } from '../scenes/MineralChoiceScene';
 import { MiniBossWheelScene } from '../scenes/MiniBossWheelScene';
+import { HexCombatResultScene } from '../scenes/HexCombatResultScene';
 import { SettingsScene } from '../scenes/SettingsScene';
 import { TelemetryConsentScene } from '../scenes/TelemetryConsentScene';
 import { GameOverScene } from '../scenes/GameOverScene';
@@ -31,7 +32,10 @@ import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
  *   (`HexMapScene`, AH-0MVUXCAG90086LH2) renders the ring with its known-ahead
  *   intel and is one click from the hangar. A deployment that ends lands on the
  *   **hex map** directly (AH-0MWDC3L9I008INDP), which reports the between-sortie
- *   tick and reveals any resolved reward.
+ *   tick and reveals any resolved reward. A finished deployment also presents
+ *   the post-battle **results dialog** (`HexCombatResultScene`,
+ *   AH-0MWMGPTNF004EX3T) over the paused map: the outcome, the run's score,
+ *   every reward that was paid and — on a defeat — the boss intel.
  * - **Leaderboard** → opens the shared full-score view (`LeaderboardScene`).
  * - **Gym Scene Index** → navigates to the dev-only `GymIndex` scene.
  *
@@ -45,7 +49,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     height: GAME_HEIGHT,
     backgroundColor: GAME_BACKGROUND_COLOR,
     parent: 'game-container',
-    scene: [MenuScene, PlayScene, HangarScene, HexMapScene, BotUpgradeScene, PauseScene, HelpScene, MineralChoiceScene, MiniBossWheelScene, SettingsScene, TelemetryConsentScene, GameOverScene, LeaderboardScene, GymIndex],
+    scene: [MenuScene, PlayScene, HangarScene, HexMapScene, BotUpgradeScene, PauseScene, HelpScene, MineralChoiceScene, MiniBossWheelScene, HexCombatResultScene, SettingsScene, TelemetryConsentScene, GameOverScene, LeaderboardScene, GymIndex],
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,

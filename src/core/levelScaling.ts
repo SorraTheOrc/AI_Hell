@@ -107,6 +107,29 @@ export function clampLevel(
 }
 
 /**
+ * Normalised progress through the campaign's level-scaling span.
+ *
+ * Returns `t` in `[0, 1]` where `0` is level 1 and `1` is the campaign
+ * maximum (`rules.levelScalingMaxLevel`, default 10). Level 1 is exactly `0`
+ * because the whole campaign's tuning is defined relative to it; every
+ * level-scaled value (count multiplier, drop chance, the elite mineral bump)
+ * interpolates with this same fraction, so a new curve cannot drift from the
+ * shipped scaling definition.
+ *
+ * @param level - Campaign level (clamped by {@link clampLevel}).
+ * @param rules - Rules supplying the span; defaults to {@link DEFAULT_RULES}.
+ * @returns The progress fraction in `[0, 1]`.
+ */
+export function levelScalingProgress(
+  level: number,
+  rules: GameRules = DEFAULT_RULES,
+): number {
+  const maxLevel = sanitiseMaxLevel(rules.levelScalingMaxLevel);
+  if (maxLevel <= 1) return 0;
+  return (clampLevel(level, maxLevel) - 1) / (maxLevel - 1);
+}
+
+/**
  * Enemy-count multiplier for a campaign level.
  *
  * Linear from `1` at level 1 to `rules.enemyCountMultiplierAtMaxLevel`
@@ -122,13 +145,10 @@ export function enemyCountMultiplier(
   level: number,
   rules: GameRules = DEFAULT_RULES,
 ): number {
-  const maxLevel = sanitiseMaxLevel(rules.levelScalingMaxLevel);
   const maxMultiplier = sanitiseMultiplier(
     rules.enemyCountMultiplierAtMaxLevel,
   );
-  const resolved = clampLevel(level, maxLevel);
-  if (maxLevel <= 1) return 1;
-  const t = (resolved - 1) / (maxLevel - 1);
+  const t = levelScalingProgress(level, rules);
   return 1 + (maxMultiplier - 1) * t;
 }
 
@@ -149,7 +169,6 @@ export function powerUpDropChance(
   level: number,
   rules: GameRules = DEFAULT_RULES,
 ): number {
-  const maxLevel = sanitiseMaxLevel(rules.levelScalingMaxLevel);
   const level1 = sanitiseChance(
     rules.powerUpDropChanceAtLevel1,
     POWER_UP_DROP_CHANCE,
@@ -158,9 +177,7 @@ export function powerUpDropChance(
     rules.powerUpDropChanceAtMaxLevel,
     DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
   );
-  const resolved = clampLevel(level, maxLevel);
-  if (maxLevel <= 1) return level1;
-  const t = (resolved - 1) / (maxLevel - 1);
+  const t = levelScalingProgress(level, rules);
   return level1 + (atMax - level1) * t;
 }
 

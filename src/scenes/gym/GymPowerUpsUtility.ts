@@ -7,9 +7,9 @@
  * collecting drops; each collected drop applies its FULL GDD §4.4
  * behaviour observable without threats:
  *
- * - **Speed Boost** — +50% thrust/max-speed and +50% rate of fire live
- *   for 10 s (refresh on re-collect), applied to the ship via
- *   `Player.setSpeedMultiplier` + `Player.setFireRateMultiplier`.
+ * - **Speed Boost** — +50% rate of fire (weapons only) live for 10 s
+ *   (refresh on re-collect), applied to the ship via
+ *   `Player.setFireRateMultiplier`; ship movement is untouched.
  * - **Extra Life** — +1 life immediately (starts 3, cap 5).
  * - **Magnet** — drops within `1× ship size +50%/stack` are pulled
  *   toward the ship at `MAGNET_ATTRACTION_SPEED` (slower than ship max
@@ -365,6 +365,9 @@ export class GymPowerUpsUtility extends CombatCoreScene<
    * AH-0MVJ79739008396I).
    */
   private _collectGymMineral(mineral: Mineral): void {
+    // One chime per player pickup through the single shared dispatch
+    // (AH-0MWNMRDY60005Z4K).
+    this.noteMineralCollected();
     this.mineralHold.collect(mineral.value);
     this._syncMineralHud();
   }

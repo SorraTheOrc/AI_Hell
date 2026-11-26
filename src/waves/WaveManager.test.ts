@@ -7,11 +7,13 @@
  * on observable behaviour through the public API — no source inspection.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
 import type { EnemyConfig } from '../core/configTypes';
+import { resetConfigStore, seedConfigStore } from '../core/configStore';
+import { createSeededRng } from '../core/rng';
 import {
   LEVELS,
   LEVEL_COUNT,
@@ -1010,5 +1012,170 @@ describe('WaveManager — campaign injection origin (AH-0MVLJF30O000E3J3)', () =
     wm.beginGame();
     expect(wm.levelName).toBe('Seventh');
     expect(wm.waveCount).toBe(1);
+  });
+});
+
+// ── Elite spawning & determinism (AH-0MWU665DM00669U0) ────────────
+
+describe('WaveManager — elite spawning & determinism (AH-0MWU665DM00669U0)', () => {
+  /** Config store fixture: scout is the only elite-capable archetype. */
+  beforeEach(() => {
+    const scout: EnemyConfig = {
+      ...DEFAULT_ENEMY_CONFIGS.scout,
+      eliteBehaviour: 'splitter',
+      eliteBonusHp: 1,
+    };
+    seedConfigStore([scout]);
+  });
+  afterEach(() => resetConfigStore());
+
+  /**
+   * A two-level campaign built from one archetype: the exempt level 1 plus a
+   * level 2 whose first wave holds `count` scouts and whose second wave holds
+   * one. The manager's level number is index-based, so tests `beginGame(2)`
+   * to exercise the elite budget.
+   */
+  function eliteCampaign(count = 1): LevelDefinition[] {
+    return [
+      level(1, 'Entry Test', [wave('scout', 'single', 1)]),
+      level(2, 'Elite Test', [
+        wave('scout', count === 1 ? 'single' : 'v', count),
+        wave('scout', 'single', 1),
+      ]),
+    ];
+  }
+
+  it('fields the shipped seeded budget by default and none at chance 0', () => {
+    const wm = new WaveManager(eliteCampaign(3));
+    wm.beginGame(2);
+
+    // The shipped 15 % budget is live: over seeds, some level-2 plan carries
+    // exactly one flagged spawn.
+    const flagged = new Set<number>();
+    for (let seed = 1; seed <= 60; seed += 1) {
+      wm.setRunSeed(seed);
+      flagged.add(wm.planSpawns().filter((spawn) => spawn.elite).length);
+    }
+    expect([...flagged].some((count) => count > 0)).toBe(true);
+
+    // The elite-free baseline is an explicit override, not the default.
+    wm.setRunSeed(4242);
+    wm.setEliteWaveChance(0);
+    expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(0);
+  });
+
+  it('flags exactly one counted spawn at chance 1 without changing the wave size', () => {
+    const wm = new WaveManager(eliteCampaign(3));
+    wm.setRunSeed(4242);
+    wm.setEliteWaveChance(1);
+    wm.beginGame(2);
+
+    const spawns = wm.planSpawns(createSeededRng(1));
+    expect(spawns).toHaveLength(wm.waveEnemyCount());
+    expect(spawns).toHaveLength(wm.enemiesAlive);
+
+    const elites = spawns.filter((spawn) => spawn.elite === true);
+    expect(elites).toHaveLength(1);
+    // The elite elevates an authored spawn: its archetype is one of the
+    // wave's groups and the wave's declared size is unchanged.
+    expect(elites[0].enemyKey).toBe('scout');
+  });
+
+  it('keeps level 1 elite-free even at chance 1', () => {
+    const wm = new WaveManager([level(1, 'Entry Test', [wave('scout', 'v', 3)])]);
+    wm.setRunSeed(4242);
+    wm.setEliteWaveChance(1);
+    wm.beginGame();
+    expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(0);
+  });
+
+  it('flags an authored elite with the seeded budget off', () => {
+    const authored: WaveDefinition = {
+      ...wave('scout', 'v', 3),
+      elite: 'scout',
+    };
+    const wm = new WaveManager([
+      level(1, 'Entry Test', [wave('scout', 'single', 1)]),
+      level(2, 'Elite Test', [authored, wave('scout', 'single', 1)]),
+    ]);
+    wm.beginGame(2);
+    const elites = wm.planSpawns().filter((spawn) => spawn.elite === true);
+    expect(elites).toHaveLength(1);
+    expect(elites[0].enemyKey).toBe('scout');
+  });
+
+  it('is deterministic for the same seed and varies across seeds', () => {
+    const planSignature = (seed: number): string => {
+      const wm = new WaveManager(eliteCampaign(4));
+      wm.setRunSeed(seed);
+      wm.setEliteWaveChance(1);
+      wm.beginGame(2);
+      const spawns = wm.planSpawns(createSeededRng(seed));
+      const index = spawns.findIndex((spawn) => spawn.elite === true);
+      return `${spawns[index]?.enemyKey ?? '-'}:${index}`;
+    };
+
+    expect(planSignature(4242)).toBe(planSignature(4242));
+    const signatures = new Set([1, 2, 3, 4, 5, 6, 7, 8].map(planSignature));
+    expect(signatures.size).toBeGreaterThan(1);
+  });
+
+  it('gates the wave on the elite exactly like every other counted spawn', () => {
+    const wm = new WaveManager(eliteCampaign(3));
+    wm.setRunSeed(4242);
+    wm.setEliteWaveChance(1);
+    wm.beginGame(2);
+
+    const spawns = wm.planSpawns(createSeededRng(1));
+    expect(spawns.filter((spawn) => spawn.elite)).toHaveLength(1);
+
+    // Everything but one spawn (the elite is one of them) is destroyed: the
+    // wave must still be alive, so the elite is genuinely in the count.
+    for (let i = 0; i < spawns.length - 1; i++) {
+      expect(wm.onEnemyDestroyed()).toBe('continue');
+    }
+    expect(wm.enemiesAlive).toBe(1);
+    expect(wm.onEnemyDestroyed()).toBe('waveCleared');
+  });
+
+  it('adopts a carried-over elite like any ordinary survivors', () => {
+    const wm = new WaveManager(eliteCampaign(1));
+    wm.setRunSeed(4242);
+    wm.setEliteWaveChance(1);
+    wm.beginGame(2);
+
+    // Wave 1 holds exactly one elite (the only spawn).
+    expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(1);
+
+    // Simulate the wave timeout: advance onto wave 2, then adopt the surviving
+    // elite through the shared carry-over seam.
+    expect(wm.onEnemyDestroyed()).toBe('waveCleared');
+    expect(wm.enemiesAlive).toBe(1); // wave 2's fresh spawn
+    wm.adoptCarriedSurvivors(1);
+    expect(wm.enemiesAlive).toBe(2);
+
+    // The fresh spawn dies, the carried elite keeps the wave alive.
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.onEnemyDestroyed()).toBe('bossTriggered');
+  });
+
+  it('clamps the tuning seam to [0, 1] and restores the default for junk', () => {
+    const wm = new WaveManager(eliteCampaign(1));
+    wm.setRunSeed(4242);
+    wm.beginGame(2);
+
+    wm.setEliteWaveChance(0);
+    expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(0);
+    wm.setEliteWaveChance(5);
+    expect(wm.planSpawns().filter((spawn) => spawn.elite)).toHaveLength(1);
+    // Junk restores the **shipped** budget, which is now the 15 % default:
+    // match a fresh manager rather than assuming "off".
+    const fresh = new WaveManager(eliteCampaign(1));
+    fresh.setRunSeed(4242);
+    fresh.beginGame(2);
+    wm.setEliteWaveChance(Number.NaN);
+    expect(wm.planSpawns().map((spawn) => spawn.elite)).toEqual(
+      fresh.planSpawns().map((spawn) => spawn.elite),
+    );
   });
 });

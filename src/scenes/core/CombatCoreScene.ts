@@ -100,6 +100,10 @@ import {
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
+import type {
+  EvolvedWeaponId,
+  EvolutionTransitionKind,
+} from '../../utils/weaponEvolutions';
 import {
   advanceOrbitPhase,
   optionsPodFireDirections,
@@ -111,6 +115,12 @@ import {
 } from '../../utils/movementModel';
 import type { WasdKeysLike } from '../../utils/input';
 import { createSeededRng } from '../../core/rng';
+import type { EliteBehaviour } from '../../core/eliteVocabulary';
+import {
+  applyEliteDeathBehaviour,
+  type EliteBurstShot,
+  type EliteSplitOffset,
+} from './eliteMechanics';
 import { EffectsRegistry } from '../../powerups/effects';
 import { stopMysteryUfoWarbleSound } from '../../audio/effects';
 import { PowerUp } from '../../powerups/PowerUp';
@@ -170,11 +180,17 @@ import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import {
+  playMineralCollectChimeSound,
   playPowerUpBlockedSound,
   setExplosionBeatClock,
   setThrusterBeatClock,
   updateThrusterSound,
 } from '../../audio/effects';
+import {
+  mineralChimeStep,
+  noteMineralCollected as advanceMineralChime,
+  resetMineralChimeStreak,
+} from '../../audio/mineralChime';
 import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
@@ -221,6 +237,14 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
    * player-bearing gym. Entities that do not beam omit it.
    */
   getCaptureBeam?(): CaptureBeamState | null;
+  /**
+   * The elite behaviour this spawn carries (AH-0MWU665XK000ZT4S), or absent
+   * for an ordinary enemy. `BaseEnemy` resolves it once at spawn through the
+   * shared factory, and the shared kill finalisation
+   * ({@link CombatScene.finaliseEnemyKill}) reads it to dispatch the one
+   * bounded death behaviour — so no scene re-implements the decision.
+   */
+  readonly eliteBehaviour?: EliteBehaviour;
   /**
    * Called by the shared capture step when this entity's beam completed a
    * capture, so the entity can withdraw and re-form (Galaga capturer).
@@ -582,6 +606,53 @@ export class CombatCoreScene<
   /** Replaces the enemy-bullet collection after a collision pass. */
   protected setEnemyBullets(_bullets: TBullet[]): void {}
 
+  // ── Elite death behaviours (AH-0MWU665XK000ZT4S) ────────────────
+
+  /**
+   * Scene seam: spawns one ordinary `splitter` child at `offset` from the
+   * dead elite's wreck.
+   *
+   * A scene implements it with its **shipped spawn path** — the game uses
+   * `createEnemyFromConfig` + `registerDynamicSpawn`, a gym registers the
+   * child in its live formation list — so the child construction is never
+   * re-implemented inside the shared decision. The default is a no-op, so a
+   * scene that never fields an elite (or has not wired the seam yet) is
+   * unchanged. The shared `_applyEliteDeathBehaviour` owns *how many* and
+   * *where*; only the spawn mechanics live here.
+   */
+  protected spawnEliteSplitChild(
+    _enemy: TEnemy,
+    _offset: EliteSplitOffset,
+  ): void {}
+
+  /**
+   * Scene seam: spawns one `volatile` death-burst bullet through the scene's
+   * shared enemy-bullet seam (the game's `spawnEnemyBullet`; a gym's live
+   * bullet list). The shared dispatcher owns the fan; the bullet identity and
+   * lifetime are the scene's shipped seam. Default no-op.
+   */
+  protected spawnEliteVolatileBullet(
+    _enemy: TEnemy,
+    _shot: EliteBurstShot,
+  ): void {}
+
+  /**
+   * Applies a dead elite's one bounded behaviour through the shared
+   * `eliteMechanics` dispatcher.
+   *
+   * Called exactly once per kill from the shared finalisation seam *before*
+   * `onEnemyDestroyed`, so a `splitter`'s children are wave-registered while
+   * the parent is still counted (the wave can never clear in the gap). A
+   * blank/absent behaviour is a total no-op — today's kill, byte-for-byte.
+   */
+  protected _applyEliteDeathBehaviour(enemy: TEnemy): void {
+    applyEliteDeathBehaviour(enemy.eliteBehaviour, {
+      spawnSplitChild: (offset) => this.spawnEliteSplitChild(enemy, offset),
+      spawnVolatileBullet: (shot) =>
+        this.spawnEliteVolatileBullet(enemy, shot),
+    });
+  }
+
   // ── Collector drones (Mystery UFO reward) ─────────────────────────
 
   /**
@@ -686,6 +757,40 @@ export class CombatCoreScene<
   protected onWeaponFired(_weaponId: WeaponId): void {}
 
   /**
+   * Plays the firing cue for a live weapon evolution (epic
+   * AH-0MWL7OWPF003E4TP, field tier). Called by
+   * {@link CombatCoreScene._autoFire} once per evolved volley, through the same
+   * shared spawn path as a catalogue weapon, so the game and every gym fire an
+   * identical evolved shot. Default no-op; the fusion feedback child overrides
+   * it with the dedicated cue.
+   *
+   * @param _evolvedId - The evolved weapon that fired.
+   * @param _def - The evolved weapon's resolved definition.
+   */
+  protected onEvolvedWeaponFired(
+    _evolvedId: EvolvedWeaponId,
+    _def: WeaponDefinition,
+  ): void {}
+
+  /**
+   * Plays the distinct fusion/expiry cue when an evolution transitions (epic
+   * AH-0MWL7OWPF003E4TP, legibility child). Called by
+   * {@link CombatCoreScene._autoFire} once per latched transition — a
+   * `'fusion'` when an evolved weapon becomes live, an `'expiry'` when a
+   * field-tier fusion reverts to its halves on the bar downbeat — through the
+   * same shared seam as {@link CombatCoreScene.onEvolvedWeaponFired}, so the
+   * game and every gym see the same events. Default no-op; the legibility
+   * child overrides it with the dedicated cue + HUD badge.
+   *
+   * @param _kind - `'fusion'` (became live) or `'expiry'` (reverted).
+   * @param _evolvedId - The evolved weapon that transitioned.
+   */
+  protected onEvolutionTransition(
+    _kind: EvolutionTransitionKind,
+    _evolvedId: EvolvedWeaponId,
+  ): void {}
+
+  /**
    * Shared AOE dispatch hook (parent AH-0MUOOB3OR001V8CD): called by
    * {@link CombatCoreScene._autoFire} once for every AOE weapon that fires,
    * with the firing weapon and the ship position. Default no-op; the shared
@@ -736,6 +841,30 @@ export class CombatCoreScene<
    */
   protected _playPickupCue(drop: TDrop): void {
     playDropPickupCue(drop);
+  }
+
+  /**
+   * The single shared **player** mineral-pickup dispatcher
+   * (AH-0MWNMRDY60005Z4K).
+   *
+   * Every player collection path in the game and the gyms calls this exactly
+   * once per collected mineral. It reads the **scene clock** (`this.time.now`,
+   * game time — it pauses with the scene, never wall time), advances the one
+   * shared A-minor escalation state machine and plays the baked chime at the
+   * resulting ladder step. The escalation rule, ladder and reset gap live in
+   * `audio/mineralChime.ts`, so no scene ever re-implements them
+   * (AGENTS.md gym↔game parity).
+   *
+   * **Enemy absorption never calls this** — the feedback is player-only, so a
+   * mineral hoovered up by an enemy stays silent.
+   *
+   * Defined exactly once here; no scene calls
+   * `playMineralCollectChimeSound` directly. The repo-wide guard in
+   * `mineralChime.parity.test.ts` enforces both rules.
+   */
+  protected noteMineralCollected(): void {
+    advanceMineralChime(this.time.now);
+    playMineralCollectChimeSound(mineralChimeStep());
   }
 
   /**
@@ -902,6 +1031,31 @@ export class CombatCoreScene<
   }
 
   /**
+   * Whether the demo/attract **bot** may auto-fire this frame
+   * (AH-0MWPOET5A002IPTP · fire-discipline remediation). Default `true` — a
+   * scene with no bot (and every human session) keeps firing exactly as
+   * before. A bot-bearing scene overrides this with the shared fire-line
+   * predicate (`hasFireLine`), so the ship only fires when a live target lies
+   * within the active weapon's reach on its firing line, and never "fires at
+   * nothing" while it collects, evades or repositions.
+   *
+   * This is deliberately a **separate** hook from
+   * {@link CombatCoreScene.playerFireSuppressed}: that one models a finished
+   * run (no new shots, beat clock keeps advancing), whereas this one is a
+   * per-frame weapon-discipline decision. It shares the same suppression
+   * outcome — no bullets, muzzle flashes or fire cues, while the shared beat
+   * clock still advances so the beat-modulated hum and explosion grid do not
+   * stall — so a held shot never desynchronises the beat.
+   *
+   * Gym↔game parity: `PlayScene` (demo mode) and `GymBotTuning` override this
+   * with the **same** shared predicate, so the game and the bot gym cannot
+   * diverge. Scenes without a bot leave it at the default.
+   */
+  protected botFireAllowed(): boolean {
+    return true;
+  }
+
+  /**
    * Shared screen-wide Phase Shift juice step (parent AH-0MUIYX1EE008FVS8).
    *
    * This is the **single** place the player treatment is advanced: the game
@@ -972,9 +1126,9 @@ export class CombatCoreScene<
     // Advance timed-weapon countdowns before auto-fire so an expired
     // weapon stops firing this frame.
     player.tickWeaponTimers(dt * 1000);
-    // Speed Boost live boost: scale thrust/max-speed and fire rate each frame.
+    // Speed Boost live boost: a weapons-only fire-rate boost. Ship movement
+    // is untouched, so the movement config is never rescaled (AC1).
     const registry = this.getEffectsRegistry();
-    player.setSpeedMultiplier(registry.speedMultiplier());
     player.setFireRateMultiplier(registry.fireRateMultiplier());
     const input = this._readPlayerInput();
     if (input) player.setInput(input);
@@ -984,13 +1138,13 @@ export class CombatCoreScene<
     // capture on this frame suppresses fire on this frame. Runs after physics
     // so the drag is applied to the ship's current position.
     this._updateCaptureBeams(dt);
-    if (this.playerFireSuppressed()) {
-      // Run-end suppression (AH-0MVCB6LBE007I6R8): spawn no bullets, muzzle
-      // flashes or fire cues, but keep the shared beat clock advancing so the
-      // beat-modulated thruster hum (GDD §7.3) and the explosion grid do not
-      // stall through the victory hold (AC4). Normal fire resumes with the
-      // next run, because a scene restart re-anchors this clock and clears the
-      // scene's per-run flag (AC6).
+    if (this.playerFireSuppressed() || !this.botFireAllowed()) {
+      // Run-end suppression (AH-0MVCB6LBE007I6R8) and the bot's fire
+      // discipline (AH-0MWPOET5A002IPTP) share one outcome: spawn no bullets,
+      // muzzle flashes or fire cues, but keep the shared beat clock advancing
+      // so the beat-modulated thruster hum (GDD §7.3) and the explosion grid
+      // do not stall. Normal fire resumes with the next run (run-end) or the
+      // next tick the bot has a target in reach on its line (fire gate).
       this.beatClock.advance(dt * 1000);
       if (player.getBeatClock() !== this.beatClock) {
         player.setBeatClock(this.beatClock);
@@ -1039,11 +1193,47 @@ export class CombatCoreScene<
       player.setBeatClock(this.beatClock);
     }
     const fired = player.tryFire(dt);
-    if (fired.length === 0) return;
+    // Deliver every latched fusion/expiry transition exactly once, even when
+    // no weapon fired this frame (the expiry lands on a bar downbeat that may
+    // not coincide with an evolved shot). The latch is consumed here, so a
+    // transition latched by a weapon collection is delivered on the next
+    // auto-fire tick without being duplicated (epic AC7).
+    for (
+      let transition = player.consumeEvolutionTransition();
+      transition !== null;
+      transition = player.consumeEvolutionTransition()
+    ) {
+      this.onEvolutionTransition(transition.kind, transition.evolvedId);
+    }
+    // A live evolution consumes its two halves and fires the evolved pattern
+    // instead. It dispatches through this same shared spawn path, so the game
+    // and every gym spawn an identical evolved shot (epic AC3).
+    const evolvedId = player.getEvolutionFired();
+    if (fired.length === 0 && !evolvedId) return;
+    const shots: Array<{
+      weaponId: WeaponId;
+      def: WeaponDefinition;
+      evolvedId: EvolvedWeaponId | null;
+    }> = fired.map((weaponId) => ({
+      weaponId,
+      def: player.getWeaponDef(weaponId),
+      evolvedId: null,
+    }));
+    if (evolvedId) {
+      const def = player.getEvolvedWeaponDef(evolvedId);
+      shots.push({ weaponId: def.id, def, evolvedId });
+    }
     const headingDeg = (player.getHeading() * 180) / Math.PI;
-    for (const weaponId of fired) {
-      this.onWeaponFired(weaponId);
-      const def = player.getWeaponDef(weaponId);
+    for (const {
+      weaponId,
+      def,
+      evolvedId: shotEvolution,
+    } of shots) {
+      if (shotEvolution) {
+        this.onEvolvedWeaponFired(shotEvolution, def);
+      } else {
+        this.onWeaponFired(weaponId);
+      }
       // The shot's heading is resolved **once per shot, before** any VFX is
       // spawned. Hitscan weapons (the wave laser) draw a random direction from
       // the scene's seeded RNG, biased toward the nearest living enemy
@@ -1149,6 +1339,9 @@ export class CombatCoreScene<
         // resolved by the shared impact seam when the shot connects
         // (AH-0MV8228YW0050IXS). Absent → generic impact behaviour.
         bullet.impactFx = def.impactFx;
+        // The shot's weapon identity, carried to the hit seam so the hex
+        // matchup rule can resolve this weapon's verdict (AH-0MWL88REU009MO5G).
+        bullet.weaponId = def.id;
         // Wall-bounce feedback for ricochet: play impact VFX/SFX on each
         // edge reflection (AH-0MV822AP1006W2F9).
         if (def.bounce !== undefined) {
@@ -1401,6 +1594,10 @@ export class CombatCoreScene<
       // (AH-0MV822B1B0048UZT). The parent shell only ever splits, never
       // deals a direct hit, so it never reaches the impact seam itself.
       warhead.impactFx = def.impactFx;
+      // The warhead inherits the firing weapon's identity so a split shot
+      // still honours the hex matchup rule at the hit seam
+      // (AH-0MWL88REU009MO5G).
+      warhead.weaponId = def.id;
       this._pendingSplitWarheads.push(warhead);
     }
     this.spawnSplitBurst(bullet.x, bullet.y, count);
@@ -1526,6 +1723,9 @@ export class CombatCoreScene<
       // baked hit cue), resolved by the shared impact seam when the shot
       // connects — identical in the game and every gym (AH-0MV822BDN008IYL6).
       bullet.impactFx = def.impactFx;
+      // The pod shot inherits the firing weapon's identity for the hex
+      // matchup rule (AH-0MWL88REU009MO5G).
+      bullet.weaponId = def.id;
     }
   }
 
@@ -2188,6 +2388,11 @@ export class CombatCoreScene<
     // clean (Galaga capturer, AH-0MV01EFII008298D).
     this._captureHoldMs = 0;
     this._captureDisabledMs = 0;
+    // The mineral-chime streak is run-scoped: a restarted run starts from the
+    // base pitch on its first pickup (AH-0MWNMRDY60005Z4K). The scene
+    // instance is reused across restarts, so the shared singleton must be
+    // reset here as well as on teardown.
+    resetMineralChimeStreak();
   }
 
   /**
@@ -2242,6 +2447,10 @@ export class CombatCoreScene<
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();
+    // A scene shutdown returns the shared mineral-chime streak to base, so a
+    // restarted run never inherits the previous run's pitch
+    // (AH-0MWNMRDY60005Z4K).
+    resetMineralChimeStreak();
     // Detach the beat-synced explosion schedule so a stopped scene cannot
     // leak its clock into the next one (AH-0MV01HNLU008S5E3).
     setExplosionBeatClock(null);

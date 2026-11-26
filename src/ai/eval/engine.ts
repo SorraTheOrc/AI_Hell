@@ -91,6 +91,11 @@ export interface EvaluationRunConfig {
   /** Enemy force-field toggle; `false` → hull-only baseline. */
   readonly forceFields?: boolean;
   /**
+   * Override the seeded elite (anomaly) budget for full-campaign mode
+   * (AH-0MWU667OG00287SY). Omitted → the shipped `ELITE_WAVE_CHANCE`.
+   */
+  readonly eliteWaveChance?: number;
+  /**
    * Full-campaign mode: every run plays the **whole shipped campaign**
    * through the shared WaveManager (AH-0MVD1RGKM005GW0C). An explicit
    * `level` always takes precedence (per-level mode).
@@ -271,6 +276,13 @@ export interface BatchConfig {
    */
   readonly forceFields?: boolean;
   /**
+   * Seeded elite (anomaly) budget for full-campaign mode
+   * (AH-0MWU667OG00287SY): a `0..1` override forwarded to every arena run, so
+   * a batch can measure the mechanic with elites on (or capture the
+   * elite-free baseline with `0`). Omitted → the shipped `ELITE_WAVE_CHANCE`.
+   */
+  readonly eliteWaveChance?: number;
+  /**
    * Full-campaign mode: every run plays the **whole shipped campaign**
    * through the shared WaveManager (AH-0MVD1RGKM005GW0C), so balance reports
    * carry real `waveReached`/`levelReached` distributions. An explicit
@@ -366,6 +378,7 @@ export function runBatch(config: BatchConfig): BatchOutput {
         level: config.level,
         scaleLevels: config.scaleLevels,
         forceFields: config.forceFields,
+        eliteWaveChance: config.eliteWaveChance,
         campaign,
         campaignLevels: config.campaignLevels,
         hold: config.hold,
@@ -438,6 +451,7 @@ function runSeed(
     level: config.level,
     scaleLevels: config.scaleLevels,
     forceFields: config.forceFields,
+    eliteWaveChance: config.eliteWaveChance,
     campaign: config.campaign,
   });
   const run = recordingRunFromRecords(arena.records, 0);

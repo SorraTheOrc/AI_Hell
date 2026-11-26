@@ -444,6 +444,11 @@ function cloneHangar(hangar: HangarState): HangarState {
     activeLoadout: {
       startingWeapons: [...hangar.activeLoadout.startingWeapons],
       modifiers: [...hangar.activeLoadout.modifiers],
+      // Preserve the tri-state: an absent selection stays absent (never
+      // defaulted to `[]`) so a pre-feature save keeps "install every owned".
+      ...(hangar.activeLoadout.powerUps !== undefined
+        ? { powerUps: [...hangar.activeLoadout.powerUps] }
+        : {}),
     },
   };
   // Clone the power-up owned set only when it is present, so a pre-change
@@ -805,6 +810,9 @@ function upgradeKind(id: string): 'weapon' | 'power-up' | null {
  */
 function isNonUpgradeablePowerUp(id: string): boolean {
   const entry = POWER_UP_CATALOGUE[id as PowerUpId];
+  // Total: an id the shipped catalogue does not know is not a *non*-upgradeable
+  // power-up; the `upgradeKind` guard is what refuses it elsewhere.
+  if (entry === undefined) return false;
   return entry.consumable === true || entry.fieldPickupOnly === true;
 }
 
@@ -1125,6 +1133,55 @@ export function hangarPermanentLevels(hangar: HangarState): PermanentUpgradeLeve
 }
 
 /**
+ * The fleet's **installable** power-ups: every owned, level-bearing power-up
+ * (shipped catalogue) with its permanent level (base `1` when no row was
+ * bought).
+ *
+ * This is the one source the deployment (`buildHangarDeployment`), the hangar
+ * screen's selector and the boss-aware auto-loadout selector read, so "which
+ * power-ups can a deployment install, and at what level" is answered once:
+ *
+ * - a persisted `powerUpLevels` row is included (a row implies ownership, so
+ *   no stored row is orphaned) in its own row order;
+ * - an id in `unlockedPowerUps` with no row is appended at the base level;
+ * - consumables (charge pools) and the field-pickup-only kind are excluded —
+ *   they carry no permanent level to install (producer Q2 = (a), AC5).
+ *
+ * The **shipped** `POWER_UP_CATALOGUE` is the level-bearing authority, exactly
+ * as it was for the pre-selection deployment (which granted every
+ * `hangar.powerUpLevels` row). A power-up the fleet owns through a hex grant
+ * (not sold in the hangar catalogue) is therefore still installable; the hangar
+ * catalogue only supplies the row's display name.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @returns fresh `{ id, level }` rows in the install order.
+ */
+export function ownedLevelBearingPowerUpLevels(
+  hangar: HangarState,
+): Array<{ id: PowerUpId; level: number }> {
+  const rows: Array<{ id: PowerUpId; level: number }> = [];
+  const seen = new Set<string>();
+  const add = (rawId: string, rawLevel: number): void => {
+    const id = rawId.trim();
+    if (id === '' || seen.has(id) || !isUpgradeablePowerUpId(id)) return;
+    seen.add(id);
+    rows.push({
+      id: id as PowerUpId,
+      level: Math.max(BASE_PERMANENT_LEVEL, toCount(rawLevel)),
+    });
+  };
+  // Normalised level rows first (the purchase order, clamped by the shared
+  // ceiling), then any owned-set id with no row at the base level.
+  for (const row of normalisePermanentLevels({ powerUps: hangar.powerUpLevels ?? [] }).powerUps) {
+    add(row.id, row.level);
+  }
+  for (const id of hangar.unlockedPowerUps ?? []) {
+    add(id, BASE_PERMANENT_LEVEL);
+  }
+  return rows;
+}
+
+/**
  * Writes a permanent-level snapshot into a fresh hangar (the persistence write
  * path after {@link buyUpgrade}).
  *
@@ -1198,11 +1255,31 @@ function ownedEntriesOf(
  * selection stays empty — owning a starter weapon never equips it, so a
  * deployment without a selection starts with only the ship's permanent cannon
  * (AH-0MVZJ6V1J001DA9D).
+ *
+ * **Power-ups (tri-state).** The resolved `powerUps` is the selection the
+ * deployment installs:
+ *
+ * - an **absent** persisted field (a pre-feature save) resolves to **every**
+ *   owned level-bearing power-up, preserving today's all-owned behaviour;
+ * - an explicit list resolves to exactly its owned, level-bearing ids, in the
+ *   requested order (unowned, unknown and non-level-bearing ids dropped).
+ *
+ * @returns a fresh loadout; the input hangar is never mutated.
  */
 export function resolveActiveLoadout(
   hangar: HangarState,
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
 ): HangarLoadout {
+  const ownedPowerUps = ownedLevelBearingPowerUpLevels(hangar).map(
+    (row) => row.id as string,
+  );
+  const requested = hangar.activeLoadout.powerUps;
+  const powerUps = requested === undefined
+    ? ownedPowerUps
+    : requested.filter(
+        (id, index) =>
+          ownedPowerUps.includes(id) && requested.indexOf(id) === index,
+      );
   return {
     startingWeapons: ownedEntriesOf(
       hangar,
@@ -1216,6 +1293,7 @@ export function resolveActiveLoadout(
       'modifier',
       catalogue,
     ),
+    powerUps,
   };
 }
 
@@ -1240,17 +1318,49 @@ export function equipHull(hangar: HangarState, hullId: string): HangarState {
  * and an empty weapon selection stays empty: the player may deploy with no
  * extra weapon at all (AH-0MVZJ6V1J001DA9D).
  *
+ * **Power-ups** follow the same ownership filter but keep their tri-state:
+ *
+ * - `loadout.powerUps === undefined` **preserves** the hangar's own raw
+ *   selection (absent stays absent, a list stays that list) — so toggling a
+ *   weapon or modifier can never silently materialise or discard the player's
+ *   power-up choice;
+ * - a provided list (including `[]`) is filtered to owned, level-bearing ids
+ *   and written explicitly, so a deliberate empty selection is persisted.
+ *
  * @returns a fresh hangar; the input is never mutated.
  */
 export function equipLoadout(
   hangar: HangarState,
   loadout: HangarLoadout,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
 ): HangarState {
   const next = cloneHangar(hangar);
-  next.activeLoadout = {
-    startingWeapons: ownedEntriesOf(hangar, loadout.startingWeapons, 'weapon'),
-    modifiers: ownedEntriesOf(hangar, loadout.modifiers, 'modifier'),
+  const ownedPowerUpIds = ownedLevelBearingPowerUpLevels(hangar).map(
+    (row) => row.id as string,
+  );
+  const nextLoadout: HangarLoadout = {
+    startingWeapons: ownedEntriesOf(
+      hangar,
+      loadout.startingWeapons,
+      'weapon',
+      catalogue,
+    ),
+    modifiers: ownedEntriesOf(
+      hangar,
+      loadout.modifiers,
+      'modifier',
+      catalogue,
+    ),
   };
+  if (loadout.powerUps !== undefined) {
+    nextLoadout.powerUps = loadout.powerUps.filter(
+      (id, index) =>
+        ownedPowerUpIds.includes(id) && loadout.powerUps!.indexOf(id) === index,
+    );
+  } else if (hangar.activeLoadout.powerUps !== undefined) {
+    nextLoadout.powerUps = [...hangar.activeLoadout.powerUps];
+  }
+  next.activeLoadout = nextLoadout;
   return next;
 }
 

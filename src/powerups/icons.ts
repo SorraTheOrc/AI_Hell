@@ -11,6 +11,11 @@ import Phaser from 'phaser';
 import { PowerUpId } from './types';
 import { WeaponId } from '../utils/weapons';
 import {
+  getEvolvedWeaponDefinition,
+  type EvolutionTransitionKind,
+  type EvolvedWeaponId,
+} from '../utils/weaponEvolutions';
+import {
   FORCE_FIELD_COLOR,
   POWER_UP_BUBBLE_GLOW_ALPHA,
   POWER_UP_BUBBLE_RADIUS_FACTOR,
@@ -719,6 +724,189 @@ export function drawWeaponIcon(
 ): void {
   graphics.clear();
   _drawWeaponIcon(graphics, weaponId, x, y, size);
+}
+
+// ── Evolved weapon icons and the fusion/expiry badge glyph (epic AC7) ─
+
+/**
+ * The palette colour an evolved weapon's icon (and its HUD badge glyph) is
+ * drawn in. Read from the evolved definition's own `colour` field so the icon
+ * can never drift from the bullet tint the same definition drives.
+ */
+export function evolvedWeaponIconColour(evolvedId: EvolvedWeaponId): number {
+  return getEvolvedWeaponDefinition(evolvedId).colour;
+}
+
+/**
+ * Draws the icon for an evolved weapon into `graphics` (cleared first),
+ * centred at (x, y) with the given size (radius extent in px). Each glyph is
+ * a distinct shape hinting at the evolved weapon's behaviour — a chain of
+ * linked circles for Chain Ricochet, a burst of radial spikes for Cluster
+ * Barrage, and a spread fan for Fan Escort.
+ *
+ * @param graphics — Caller-owned Phaser Graphics.
+ * @param evolvedId — The evolved weapon to draw.
+ * @param x — Centre x position.
+ * @param y — Centre y position.
+ * @param size — Icon radius extent in px.
+ */
+export function drawEvolvedWeaponIcon(
+  graphics: Phaser.GameObjects.Graphics,
+  evolvedId: EvolvedWeaponId,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  graphics.clear();
+  graphics.lineStyle(2, evolvedWeaponIconColour(evolvedId), 1);
+  const icon = getEvolvedWeaponDefinition(evolvedId).icon;
+  switch (icon) {
+    case 'chain':
+      drawChainGlyph(graphics, x, y, size);
+      break;
+    case 'barrage':
+      drawBarrageGlyph(graphics, x, y, size);
+      break;
+    case 'fan':
+      drawFanGlyph(graphics, x, y, size);
+      break;
+  }
+}
+
+/**
+ * Draws the fusion/expiry badge glyph — the **shape** half of the
+ * fusion-vs-expiry distinction (epic AC7). The two glyphs are geometric
+ * opposites that read without colour: a **merge** chevron (two lines joining
+ * into one upward stem) for fusion, and a **split** chevron (one stem breaking
+ * into two downward lines) for expiry. The HUD badge pairs the glyph with the
+ * evolved weapon's name, so a player never has to distinguish the two by hue
+ * alone.
+ *
+ * The glyph is drawn WITHOUT clearing first, so the caller can layer it onto
+ * the badge's existing Graphics object (mirroring `drawCountdownRing`). The
+ * stroke colour is supplied by the caller (the evolved weapon's palette hue);
+ * the shape — never the hue — is what distinguishes the two kinds.
+ *
+ * @param graphics - Caller-owned Phaser Graphics.
+ * @param kind - `'fusion'` (merge chevron) or `'expiry'` (split chevron).
+ * @param x - Centre x position.
+ * @param y - Centre y position.
+ * @param size - Radius extent in px.
+ * @param colour - Stroke colour (palette hue; not the distinguishing signal).
+ */
+export function drawEvolutionBadgeGlyph(
+  graphics: Phaser.GameObjects.Graphics,
+  kind: EvolutionTransitionKind,
+  x: number,
+  y: number,
+  size: number,
+  colour: number,
+): void {
+  graphics.lineStyle(2, colour, 1);
+  if (kind === 'fusion') {
+    drawMergeChevron(graphics, x, y, size);
+  } else {
+    drawSplitChevron(graphics, x, y, size);
+  }
+}
+
+/** Chain Ricochet — two linked circles, hinting at the chained bounce. */
+function drawChainGlyph(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.arc(x - s * 0.35, y, s * 0.28, 0, Math.PI * 2);
+  g.strokePath();
+  g.beginPath();
+  g.arc(x + s * 0.35, y, s * 0.28, 0, Math.PI * 2);
+  g.strokePath();
+  // The link joining the two links.
+  g.beginPath();
+  g.moveTo(x - s * 0.07, y);
+  g.lineTo(x + s * 0.07, y);
+  g.strokePath();
+}
+
+/** Cluster Barrage — a burst of radial spikes around a central dot. */
+function drawBarrageGlyph(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.arc(x, y, s * 0.16, 0, Math.PI * 2);
+  g.strokePath();
+  for (let i = 0; i < 4; i += 1) {
+    const angle = (i * Math.PI) / 2;
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + Math.cos(angle) * s * 0.6, y + Math.sin(angle) * s * 0.6);
+    g.strokePath();
+  }
+}
+
+/** Fan Escort — a fan of three lines from a common origin, matching Spread. */
+function drawFanGlyph(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  const originX = x - s * 0.3;
+  const spreadAngle = Math.PI / 6;
+  for (const offset of [-1, 0, 1]) {
+    g.beginPath();
+    g.moveTo(originX, y);
+    g.lineTo(
+      originX + s * 0.9,
+      y + Math.sin(offset * spreadAngle) * s * 0.6,
+    );
+    g.strokePath();
+  }
+}
+
+/** Fusion merge chevron — two lines joining into one upward stem. */
+function drawMergeChevron(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  const topY = y - s * 0.55;
+  const bottomY = y + s * 0.5;
+  g.beginPath();
+  g.moveTo(x - s * 0.5, bottomY);
+  g.lineTo(x, y);
+  g.lineTo(x, topY);
+  g.strokePath();
+  g.beginPath();
+  g.moveTo(x + s * 0.5, bottomY);
+  g.lineTo(x, y);
+  g.strokePath();
+}
+
+/** Expiry split chevron — one stem breaking into two downward lines. */
+function drawSplitChevron(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  const topY = y - s * 0.55;
+  const bottomY = y + s * 0.5;
+  g.beginPath();
+  g.moveTo(x, topY);
+  g.lineTo(x, y);
+  g.lineTo(x - s * 0.5, bottomY);
+  g.strokePath();
+  g.beginPath();
+  g.moveTo(x, y);
+  g.lineTo(x + s * 0.5, bottomY);
+  g.strokePath();
 }
 
 // ── HUD countdown ring (parent AH-0MVZ8YQQV006Q09W) ───────────────────

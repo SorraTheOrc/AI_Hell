@@ -100,6 +100,9 @@ describe('the between-sortie report is documented as rolled into the map (AH-0MW
     expect(GDD).toMatch(/mini-boss defeat → \*\*`HexMapScene`\*\*/);
     expect(GDD).toMatch(/No reward overlay on the win path/);
     expect(GDD).toMatch(/WIN BONUS BANKED: \+N MINERALS/);
+    // The held-hex income is announced beside the win bonus
+    // (AH-0MWL8CDGN005878A) — the third persistent-mineral source.
+    expect(GDD).toMatch(/HEX INCOME BANKED: \+N MINERALS/);
     expect(GDD).not.toMatch(/mini-boss \*\*reward\*\* overlay[\s\S]{0,220}?`HexMapScene`/);
   });
 
@@ -111,6 +114,17 @@ describe('the between-sortie report is documented as rolled into the map (AH-0MW
     expect(surface).toMatch(/left-hand attack panel/i);
     // The attract bot has no report step to auto-advance.
     expect(OUTER_LOOP).toMatch(/no report step to auto-advance/i);
+  });
+
+  it('documents the held-hex income rule and its balance knob (AH-0MWL8CDGN005878A)', () => {
+    // README and the GDD name the income line; the GDD §8.2 economy section and
+    // Candidate D describe the rule and flag `10 × aggression` a balance knob.
+    expect(README).toContain('HEX INCOME BANKED: +N MINERALS');
+    expect(GDD).toMatch(/HEX INCOME BANKED: \+N MINERALS/);
+    expect(GDD).toMatch(/10 × (its |hex )?aggression/i);
+    expect(GDD).toMatch(/balance knob/i);
+    expect(OUTER_LOOP).toMatch(/per-tick arithmetic rule over the region's holdings/i);
+    expect(OUTER_LOOP).toMatch(/10 × (its |hex )?aggression/i);
   });
 
   it('gameplay-capture documents two Hangar War capture targets and the map landing', () => {

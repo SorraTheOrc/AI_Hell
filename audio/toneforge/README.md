@@ -102,6 +102,7 @@ ToneForge module is imported into the browser entry graph.
 Seed block **32100–32299** is reserved for game-specific recipes (widened from
 `32100–32199` once the net-new unlock-pool weapon seeds reached 32286; no shipped
 seed was renumbered, and `manifest.json`'s `seedBlock` records the same range).
+
 New recipes take the **next free seed above the current manifest maximum** and
 reserve a contiguous pair up front, so two items authoring cues in parallel cannot
 collide. One-shots use
@@ -150,6 +151,8 @@ derived from the render seed).
 | `aihell-broadside-impact.yaml` | `playBroadsideImpactSound` | Short teal dart tick: triangle 2400→1600 Hz + quiet 3600 Hz sine + 3000 Hz HP noise contact tick, no square click, ~0.10 s (AH-0MVV0WNOX0078G9G) | 32284 |
 | `aihell-heavy-slug-fire.yaml` | `playHeavySlugFireSound` | Heaviest single shot: low saw boom 110→55 Hz + metallic square clank 1800→900 Hz + 60→40 Hz sine sub + LP noise air, ~0.26 s — deepest fundamental and longest decay of the packaged weapons; never aliases the aihell-mortar-detonation 0.32 s boom (metallic clank + shorter sustain) (AH-0MVV0WO4M001KEDG) | 32285 |
 | `aihell-heavy-slug-impact.yaml` | `playHeavySlugImpactSound` | Dull red thud: low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s — duller/lower than the aihell-mortar-impact dry crack (AH-0MVV0WO4M001KEDG) | 32286 |
+| `aihell-matchup-effective-impact.yaml` | `playMatchupEffectiveImpactSound` | Bright critical shatter: hot triangle 3200→2400 Hz + glassy 4800 Hz sine overtone + high-passed noise shard crack, ~0.12 s; played at the raised matchup state rate (×1.5) (AH-0MWL88YYO0053DWH) | 32293 |
+| `aihell-matchup-resisted-impact.yaml` | `playMatchupResistedImpactSound` | Dull armour clang: low-passed square 300→110 Hz + quiet 120 Hz sine body + low-passed noise scuff, ~0.16 s; played at the lowered matchup state rate (×0.75) (AH-0MWL88YYO0053DWH) | 32294 |
 | `aihell-pickup-spread.yaml` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz | 32220 |
 | `aihell-pickup-dual.yaml` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid.yaml` | `playRapidPickupSound` | Triangle rise 400→1600 Hz | 32222 |

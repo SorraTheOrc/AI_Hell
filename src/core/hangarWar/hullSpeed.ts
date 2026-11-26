@@ -15,9 +15,9 @@
  * the game's hull physics (gym↔game parity, `AGENTS.md`).
  *
  * The multiplier is applied to the **base** tuning (the config the game hands
- * the player), so a hull stat composes with the run's Speed Boost rather than
- * overwriting it: `Player.setSpeedMultiplier` multiplies on top of this value
- * every frame.
+ * the player), so a hull stat composes with any other base-config scaling
+ * rather than overwriting it. Speed Boost is weapons-only and no longer scales
+ * movement, so it never touches this value (AH-0MWLU8A7P001O391).
  *
  * @module src/core/hangarWar/hullSpeed
  */

@@ -100,6 +100,62 @@ function aggressionPoints(aggression: number): number {
 }
 
 /**
+ * Aggression a ring's deployments gain **across the whole ring's captures**
+ * (AH-0MWFDQ9EY004NO4X).
+ *
+ * The ramp is proportional to in-ring progress: a ring starts at its authored
+ * aggression and reaches this much extra by the time every hex is held, so
+ * "win a hex and it goes up a little, win another and it goes up a little more".
+ * It is stated per ring (not per hex) so a longer ring ramps more gently: a
+ * six-hex ring gains a point every third capture, a twelve-hex ring every
+ * sixth. The ramp is bounded rather than open-ended, so a cleared ring can
+ * never push its deployments out of the authored aggression space
+ * (`MAX_HEX_AGGRESSION`).
+ */
+export const HEX_AGGRESSION_RAMP_PER_RING = 2;
+
+/**
+ * The aggression a deployment actually faces at a hex.
+ *
+ * The authored aggression of the target hex plus the ring's **capture-progress
+ * ramp**: {@link HEX_AGGRESSION_RAMP_PER_RING} scaled by the fraction of the
+ * ring already held, bounded by {@link MAX_HEX_AGGRESSION}. This is the
+ * **single** rule the game's deployment builder and the ring-timing harness
+ * both call, so a measured ring and a played ring ramp identically (no
+ * divergent difficulty path).
+ *
+ * Total: every input is sanitised — non-finite or negative values contribute
+ * nothing and an empty ring ramps nothing — so a corrupt save resolves to a
+ * real aggression in `[0, maxAggression]` instead of throwing.
+ *
+ * @param hexAggression — the target hex's authored aggression.
+ * @param heldInRing — hexes already held in the same ring (`0` on a fresh ring).
+ * @param hexesInRing — the ring's hex count (the ramp's denominator).
+ * @param rampPerRing — aggression gained across the whole ring (default the
+ *   authored ramp).
+ * @param maxAggression — the frontier's aggression ceiling.
+ * @returns the deployment's aggression (a non-negative whole number).
+ */
+export function deploymentAggressionFor(
+  hexAggression: number,
+  heldInRing: number,
+  hexesInRing: number,
+  rampPerRing: number = HEX_AGGRESSION_RAMP_PER_RING,
+  maxAggression: number = MAX_HEX_AGGRESSION,
+): number {
+  const base = aggressionPoints(hexAggression);
+  const held = aggressionPoints(heldInRing);
+  const size = aggressionPoints(hexesInRing);
+  const ramp =
+    typeof rampPerRing === 'number' && Number.isFinite(rampPerRing)
+      ? Math.max(0, rampPerRing)
+      : 0;
+  const cap = aggressionPoints(maxAggression);
+  const progress = size === 0 ? 0 : (ramp * held) / size;
+  return Math.min(cap, Math.max(0, Math.trunc(base + progress)));
+}
+
+/**
  * The shipped campaign level a hex's aggression deploys against.
  *
  * Aggression `0` is level 1 (the shipped opening), each whole point advances

@@ -13,7 +13,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { defenderRatingFromSnapshot, deriveDefenderRating } from './hangarEconomy';
+import {
+  defenderRatingFromSnapshot,
+  deriveDefenderRating,
+  findHangarEntry,
+} from './hangarEconomy';
 import * as hangarEconomyModule from './hangarEconomy';
 import { buyHangarUpgrade, createDefaultPayload } from './hangarWarStore';
 import {
@@ -111,20 +115,59 @@ describe('resolveHexGrant', () => {
     });
   });
 
-  it('keeps a shipped weapon/upgrade hull that the catalogue does not itemise', () => {
-    expect(resolveHexGrant('rapid')).toMatchObject({
-      entryId: 'rapid',
-      kind: 'weapon',
-      weaponId: 'rapid',
-    });
+  // Red-first (AH-0MWWI3JYN001SPVA, parent AC7): this replaces the old spec
+  // that *protected* the catalogue-unknown fallback. Wrapped in Vitest
+  // `it.fails(...)` (the repo's red-before/green-after convention) so `dev`
+  // stays green while the body is a genuine red witness — `rapid` has no
+  // catalogue entry today. The derivation item flips it to a plain `it(...)`.
+  it('resolves every authored hex grant through the catalogue, never the unknown fallback', () => {
+    // The documented effect-free allowlist (AC5(e), owned by
+    // AH-0MWWARIW6003F7OV): three ring-2 modifier grants that intentionally
+    // have no catalogue entry yet. Everything else the authored rings grant
+    // must resolve to a real entry, so a captured weapon can be displayed,
+    // equipped and deployed (AH-0MWWARFUK009KQM7).
+    const effectFreeAllowlist = new Set([
+      'armour-plating',
+      'systems-upgrade',
+      'firepower-up',
+    ]);
+
+    for (const definition of HEX_RING_DEFINITIONS) {
+      const authored = definition.grants;
+      if (typeof authored !== 'string' || authored.trim() === '') continue;
+      if (effectFreeAllowlist.has(authored)) continue;
+
+      const grant = resolveHexGrant(authored);
+      expect(grant, `authored grant ${authored} (${definition.id})`).not.toBeNull();
+      // `findHangarEntry` is the same lookup the hangar screen and the loadout
+      // use: a null here is exactly the catalogue-unknown fallback that made a
+      // granted weapon invisible.
+      expect(
+        findHangarEntry(grant!.entryId, HANGAR_CATALOGUE),
+        `catalogue entry for authored grant ${authored} (${definition.id})`,
+      ).not.toBeNull();
+    }
+  });
+
+  it('keeps the catalogue-unknown fallback as defence-in-depth (non-authored ids)', () => {
+    // Authored ring data never reaches the fallback any more, but it stays so
+    // an owned-but-unitemised id is recorded rather than silently dropped.
     expect(resolveHexGrant('core-bank')).toMatchObject({
       entryId: 'core-bank',
       kind: 'modifier',
       weaponId: null,
     });
-    expect(resolveHexGrant('hull-3')).toMatchObject({
-      entryId: 'hull-3',
+    expect(resolveHexGrant('hull-9')).toMatchObject({
+      entryId: 'hull-9',
       kind: 'hull',
+      weaponId: null,
+    });
+    // `cannon` is permanently excluded from the unlock tree, so it exercises
+    // the shipped-weapon branch of the fallback for a non-authored grant.
+    expect(resolveHexGrant('cannon')).toMatchObject({
+      entryId: 'cannon',
+      kind: 'weapon',
+      weaponId: 'cannon',
     });
   });
 

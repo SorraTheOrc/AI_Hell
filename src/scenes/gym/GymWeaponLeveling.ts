@@ -388,6 +388,9 @@ export class GymWeaponLeveling extends CombatScene<
       const dy = mineral.entity.y - player.y;
       if (dx * dx + dy * dy <= collectRadius * collectRadius) {
         this.hold.collect(MINERAL_COLLECT_AMOUNT);
+        // One chime per mineral collected by this bespoke overlap loop, via
+        // the single shared dispatch (AH-0MWNMRDY60005Z4K).
+        this.noteMineralCollected();
         mineral.destroy();
       } else {
         remaining.push(mineral);

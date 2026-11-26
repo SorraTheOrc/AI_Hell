@@ -5,7 +5,6 @@ import {
   P8_LIVES_START,
   P9_MAGNET_DURATION,
   P10_SCOOP_DURATION,
-  applySpeedMultiplier,
   magnetRadius,
   selectAutoDefence,
   type AutoDefenceChoice,
@@ -30,13 +29,6 @@ import {
   activateEffectAtUpgradeLevel,
   createEffectRegistry,
 } from '../test/powerUpEffectFixtures';
-
-// Movement config used to verify live speed application.
-const BASE_CONFIG = {
-  thrust: 300,
-  maxSpeed: 175,
-  friction: 100,
-};
 
 /** Resolved Speed Boost speed multiplier at the given upgrade level. */
 function p5Multiplier(upgradeLevel: number): number {
@@ -109,22 +101,21 @@ describe('single run-scoped level store (AC1)', () => {
 // ── AC2 — resolved stats replace raw constants ───────────────────────
 
 describe('resolved stats replace raw constants (AC2)', () => {
-  it('P5 multiplier is the level-resolved value while active, 1 otherwise', () => {
+  it('P5 fire-rate multiplier is the level-resolved value while active, 1 otherwise', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
-    expect(reg.speedMultiplier()).toBe(1);
+    expect(reg.fireRateMultiplier()).toBe(1);
     reg.applyCollect('speed_boost');
-    expect(reg.speedMultiplier()).toBeCloseTo(p5Multiplier(0), 10);
+    expect(reg.fireRateMultiplier()).toBeCloseTo(p5Multiplier(0), 10);
     // A level-up strengthens the live effect (resolved-live).
     reg.applyCollect('speed_boost');
-    expect(reg.speedMultiplier()).toBeCloseTo(p5Multiplier(1), 10);
-    expect(reg.speedMultiplier()).toBeGreaterThan(p5Multiplier(0));
+    expect(reg.fireRateMultiplier()).toBeCloseTo(p5Multiplier(1), 10);
+    expect(reg.fireRateMultiplier()).toBeGreaterThan(p5Multiplier(0));
   });
 
-  it('fire-rate multiplier is the same level-resolved P5 value (single source)', () => {
+  it('fireRateMultiplier is the single authority for the P5 value', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('speed_boost');
-    expect(reg.fireRateMultiplier()).toBe(reg.speedMultiplier());
     expect(reg.fireRateMultiplier()).toBeCloseTo(p5Multiplier(0), 10);
   });
 
@@ -375,7 +366,7 @@ describe('timing and reset semantics (AC6)', () => {
     reg.applyCollect('speed_boost'); // temporary level 1
     reg.tick(1);
     reg.applyCollect('speed_boost'); // temporary level 2, refreshes timer
-    expect(reg.speedMultiplier()).toBeCloseTo(p5Multiplier(1), 10);
+    expect(reg.fireRateMultiplier()).toBeCloseTo(p5Multiplier(1), 10);
     reg.tick(1000);
     expect(reg.isActive('speed_boost')).toBe(false);
     expect(store.getEffectiveLevel('speed_boost')).toBe(0); // temporary level gone
@@ -1597,13 +1588,6 @@ describe('registry aggregation (feed for the HUD)', () => {
     reg.applyCollect('magnet', true);
     expect(reg.lives()).toBe(4);
     expect(reg.magnetStacks()).toBe(2);
-  });
-
-  it('applies the multiplier live to both thrust and max-speed', () => {
-    const boosted = applySpeedMultiplier(BASE_CONFIG, 1.5);
-    expect(boosted.thrust).toBeCloseTo(BASE_CONFIG.thrust * 1.5);
-    expect(boosted.maxSpeed).toBeCloseTo(BASE_CONFIG.maxSpeed * 1.5);
-    expect(boosted.friction).toBe(BASE_CONFIG.friction);
   });
 });
 

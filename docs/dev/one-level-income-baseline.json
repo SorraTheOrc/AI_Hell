@@ -9,13 +9,13 @@
     ],
     "income": {
       "deployments": 18,
-      "captured": 8,
-      "captureRate": 0.4444444444444444,
-      "mineralsPerDeployment": 7.444444444444445,
-      "coresPerDeployment": 0.4444444444444444,
-      "mineralsPerCapturedDeployment": 16.75,
+      "captured": 9,
+      "captureRate": 0.5,
+      "mineralsPerDeployment": 5.333333333333333,
+      "coresPerDeployment": 0.5,
+      "mineralsPerCapturedDeployment": 10.666666666666666,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 51.888888888888886
+      "mineralEquivalentPerDeployment": 55.333333333333336
     },
     "unlockPace": [
       {
@@ -27,9 +27,9 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 30,
-        "coreBoundDeployments": 7,
-        "deploymentsToAfford": 30
+        "mineralBoundDeployments": 42,
+        "coreBoundDeployments": 6,
+        "deploymentsToAfford": 42
       },
       {
         "id": "hull-3",
@@ -40,9 +40,9 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 43,
-        "coreBoundDeployments": 9,
-        "deploymentsToAfford": 43
+        "mineralBoundDeployments": 60,
+        "coreBoundDeployments": 8,
+        "deploymentsToAfford": 60
       },
       {
         "id": "wave_laser",
@@ -53,9 +53,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 17,
-        "coreBoundDeployments": 3,
-        "deploymentsToAfford": 17
+        "mineralBoundDeployments": 23,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 23
       },
       {
         "id": "ricochet",
@@ -66,9 +66,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 13,
-        "coreBoundDeployments": 5,
-        "deploymentsToAfford": 13
+        "mineralBoundDeployments": 17,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 17
       },
       {
         "id": "cluster",
@@ -79,9 +79,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 22,
-        "coreBoundDeployments": 3,
-        "deploymentsToAfford": 22
+        "mineralBoundDeployments": 30,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 30
       },
       {
         "id": "hardened_plating",
@@ -92,9 +92,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 11,
-        "coreBoundDeployments": 3,
-        "deploymentsToAfford": 11
+        "mineralBoundDeployments": 15,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 15
       },
       {
         "id": "anti_maw_plating",
@@ -105,9 +105,35 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 15,
-        "coreBoundDeployments": 5,
-        "deploymentsToAfford": 15
+        "mineralBoundDeployments": 21,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 21
+      },
+      {
+        "id": "bomb",
+        "name": "Bomb Rack",
+        "kind": "power-up",
+        "price": {
+          "minerals": 130,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 25,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 25
+      },
+      {
+        "id": "magnet",
+        "name": "Salvage Magnet",
+        "kind": "power-up",
+        "price": {
+          "minerals": 200,
+          "cores": 2
+        },
+        "minRing": 2,
+        "mineralBoundDeployments": 38,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 38
       }
     ]
   },
@@ -220,6 +246,32 @@
         "mineralBoundDeployments": null,
         "coreBoundDeployments": null,
         "deploymentsToAfford": null
+      },
+      {
+        "id": "bomb",
+        "name": "Bomb Rack",
+        "kind": "power-up",
+        "price": {
+          "minerals": 130,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "magnet",
+        "name": "Salvage Magnet",
+        "kind": "power-up",
+        "price": {
+          "minerals": 200,
+          "cores": 2
+        },
+        "minRing": 2,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
       }
     ]
   },
@@ -233,13 +285,13 @@
     ],
     "income": {
       "deployments": 36,
-      "captured": 12,
-      "captureRate": 0.3333333333333333,
-      "mineralsPerDeployment": 2.6666666666666665,
-      "coresPerDeployment": 0.3333333333333333,
-      "mineralsPerCapturedDeployment": 8,
+      "captured": 18,
+      "captureRate": 0.5,
+      "mineralsPerDeployment": 3.0555555555555554,
+      "coresPerDeployment": 0.5,
+      "mineralsPerCapturedDeployment": 6.111111111111111,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 35.99999999999999
+      "mineralEquivalentPerDeployment": 53.05555555555556
     },
     "unlockPace": [
       {
@@ -251,9 +303,9 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 83,
-        "coreBoundDeployments": 9,
-        "deploymentsToAfford": 83
+        "mineralBoundDeployments": 72,
+        "coreBoundDeployments": 6,
+        "deploymentsToAfford": 72
       },
       {
         "id": "hull-3",
@@ -264,9 +316,9 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 120,
-        "coreBoundDeployments": 12,
-        "deploymentsToAfford": 120
+        "mineralBoundDeployments": 105,
+        "coreBoundDeployments": 8,
+        "deploymentsToAfford": 105
       },
       {
         "id": "wave_laser",
@@ -277,9 +329,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 45,
-        "coreBoundDeployments": 3,
-        "deploymentsToAfford": 45
+        "mineralBoundDeployments": 40,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 40
       },
       {
         "id": "ricochet",
@@ -290,9 +342,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 34,
-        "coreBoundDeployments": 6,
-        "deploymentsToAfford": 34
+        "mineralBoundDeployments": 30,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 30
       },
       {
         "id": "cluster",
@@ -303,9 +355,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 60,
-        "coreBoundDeployments": 3,
-        "deploymentsToAfford": 60
+        "mineralBoundDeployments": 53,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 53
       },
       {
         "id": "hardened_plating",
@@ -316,9 +368,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 30,
-        "coreBoundDeployments": 3,
-        "deploymentsToAfford": 30
+        "mineralBoundDeployments": 27,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 27
       },
       {
         "id": "anti_maw_plating",
@@ -329,9 +381,35 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 42,
-        "coreBoundDeployments": 6,
-        "deploymentsToAfford": 42
+        "mineralBoundDeployments": 36,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 36
+      },
+      {
+        "id": "bomb",
+        "name": "Bomb Rack",
+        "kind": "power-up",
+        "price": {
+          "minerals": 130,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 43,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 43
+      },
+      {
+        "id": "magnet",
+        "name": "Salvage Magnet",
+        "kind": "power-up",
+        "price": {
+          "minerals": 200,
+          "cores": 2
+        },
+        "minRing": 2,
+        "mineralBoundDeployments": 66,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 66
       }
     ]
   },
@@ -441,6 +519,32 @@
           "cores": 2
         },
         "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "bomb",
+        "name": "Bomb Rack",
+        "kind": "power-up",
+        "price": {
+          "minerals": 130,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "magnet",
+        "name": "Salvage Magnet",
+        "kind": "power-up",
+        "price": {
+          "minerals": 200,
+          "cores": 2
+        },
+        "minRing": 2,
         "mineralBoundDeployments": null,
         "coreBoundDeployments": null,
         "deploymentsToAfford": null

@@ -7,7 +7,12 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { defaultBotTuningValues, type BotTuningValues } from '../ai/tuningFields';
+import {
+  BOT_TUNING_NUMERIC_FIELDS,
+  BOT_TUNING_TOGGLES,
+  defaultBotTuningValues,
+  type BotTuningValues,
+} from '../ai/tuningFields';
 import { bundledBotTuningJson } from './bundledConfig';
 import {
   BOT_TUNING_SCHEMA_VERSION,
@@ -159,6 +164,51 @@ describe('bot tuning store (AH-0MV4D7LAD009XYR0)', () => {
     const fresh = await loadFreshStore();
     expect(fresh.getCurrentBotTuningName()).toBe('Recorder');
     expect(fresh.getCurrentBotTuningConfig().values.competent['mineralSeekRange']).toBe(4321);
+  });
+
+  it('exports the complete registry surface for every configuration (AH-0MWW4UK5M009Q36R)', () => {
+    // The Export is what a designer commits back as `src/data/bot-tuning.json`,
+    // so it must always name every registered field and toggle — a knob
+    // registered in the gym but missing from the exported blob silently drops
+    // out of the committed baseline (the holdFire* regression).
+    const exported = JSON.parse(serialiseBotTuningState()) as BotTuningState;
+    expect(exported.configs.length).toBeGreaterThan(0);
+    for (const config of exported.configs) {
+      for (const field of BOT_TUNING_NUMERIC_FIELDS) {
+        expect(
+          typeof config.values[field.group][field.key],
+          `${config.name}.${field.key} must survive the Export as a number`,
+        ).toBe('number');
+      }
+      for (const toggle of BOT_TUNING_TOGGLES) {
+        expect(
+          typeof config.values[toggle.group][toggle.key],
+          `${config.name}.${toggle.key} must survive the Export as a boolean`,
+        ).toBe('boolean');
+      }
+    }
+  });
+
+  it('exports the hold-fire knobs the shipped Default preset authors (AH-0MWW4UK5M009Q36R)', () => {
+    const exported = JSON.parse(serialiseBotTuningState()) as BotTuningState;
+    const def = exported.configs.find((config) => config.name === DEFAULT_BOT_TUNING_NAME);
+    expect(def).toBeDefined();
+    const authored = (
+      (JSON.parse(bundledBotTuningJson) as BotTuningState).configs.find(
+        (config) => config.name === DEFAULT_BOT_TUNING_NAME,
+      )!.values as { competent: Record<string, unknown> }
+    ).competent;
+    for (const key of [
+      'holdFireEnabled',
+      'holdFireHorizonSeconds',
+      'holdFireLineRadiusPx',
+    ]) {
+      expect(authored[key], `the committed baseline must author ${key}`).toBeDefined();
+      expect(
+        def!.values.competent[key],
+        `the Export must carry ${key} with the authored value`,
+      ).toBe(authored[key]);
+    }
   });
 });
 

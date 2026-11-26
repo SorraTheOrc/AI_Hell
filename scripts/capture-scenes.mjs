@@ -95,6 +95,50 @@ export const HANGAR_WAR_SCENE_KEYS = Object.freeze([
 ]);
 
 /**
+ * Boot-registered shipped scenes a capture config may **not** target.
+ *
+ * `capture-scenes.test.ts` pins this list against the shipped boot list in
+ * `src/core/gameConfig.ts`, so a newly boot-registered scene has to be
+ * **classified explicitly**: either it joins {@link HANGAR_WAR_SCENE_KEYS} /
+ * the capturable registry (because every launch field has a shipped default),
+ * or it is recorded here with its reason. Neither registry can silently drift
+ * from the scenes the game actually boots.
+ *
+ * The reasons fall into three groups:
+ *
+ * - **Launch-data overlays** — the scene renders caller-supplied data and has
+ *   nothing meaningful to show without it: `MineralChoiceScene` (options),
+ *   `MiniBossWheelScene` (wedges + resolved outcome) and
+ *   `HexCombatResultScene` (the finished sortie's title + rows,
+ *   AH-0MWMGPTNF004EX3T). A capture config cannot supply those fields, so
+ *   capturing them standalone would record an empty overlay.
+ * - **Menu / navigation screens** — `MenuScene`, `GymIndex` and
+ *   `BotUpgradeScene` are entries into other surfaces rather than a scene of
+ *   their own.
+ * - **Run-lifecycle screens** — `PauseScene`, `HelpScene`, `SettingsScene`,
+ *   `TelemetryConsentScene`, `GameOverScene` and `LeaderboardScene` only mean
+ *   something with a live run, a settings cursor or a finished score behind
+ *   them.
+ *
+ * Neither this list nor its members is capturable: it is documentation the
+ * test enforces, not a second capturable registry.
+ */
+export const NON_CAPTURABLE_SCENE_KEYS = Object.freeze([
+  'BotUpgradeScene',
+  'GameOverScene',
+  'GymIndex',
+  'HelpScene',
+  'HexCombatResultScene',
+  'LeaderboardScene',
+  'MenuScene',
+  'MineralChoiceScene',
+  'MiniBossWheelScene',
+  'PauseScene',
+  'SettingsScene',
+  'TelemetryConsentScene',
+]);
+
+/**
  * Every scene key a capture config may target: the watchable gym scenes plus
  * the shipped Hangar War screens. Sorted and frozen so the CLI hint and the
  * director's validation read the same, deterministic list.

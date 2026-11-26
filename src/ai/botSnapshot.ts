@@ -72,6 +72,21 @@ export interface BotThrusterConfig {
   readonly reverseMaxSpeed: number;
 }
 
+/**
+ * The ship's live rotation tuning (Asteroids scheme): top spin rate, spin-up
+ * and spin-down rates. Field names match `Player.getRotationConfig()` so the
+ * snapshot carries the player's tuning unchanged
+ * (AH-0MWR04ZDU0005O8J · AC2).
+ */
+export interface BotRotationConfig {
+  /** Top angular rate (rad/s). */
+  readonly rotationSpeed: number;
+  /** Spin-up acceleration (rad/s²). */
+  readonly rotationAcceleration: number;
+  /** Spin-down deceleration (rad/s²). */
+  readonly rotationDeceleration: number;
+}
+
 /** Player position and velocity. */
 export interface BotPlayer {
   readonly x: number;
@@ -86,6 +101,30 @@ export interface BotPlayer {
    * semantics hold).
    */
   readonly thruster?: BotThrusterConfig;
+  /**
+   * The ship's live rotation tuning, sourced through the same structural
+   * seam (AH-0MWR04ZDU0005O8J · AC2). The competent aim solve derives its
+   * turn-time (alignment) term from it; absent on snapshots whose source does
+   * not expose the config, where the compiled fallback constant applies.
+   */
+  readonly rotation?: BotRotationConfig;
+  /**
+   * The ship's live primary travelling-shot speed (px/s), sourced through the
+   * same structural seam (AH-0MWR04ZDU0005O8J · AC2). The aim solve uses it
+   * as the projectile speed for its time of flight. Absent on snapshots whose
+   * source does not expose it, where the compiled `PLAYER_BULLET_SPEED`
+   * applies.
+   */
+  readonly shotSpeed?: number;
+  /**
+   * The ship's live **effective weapon reach** (px), sourced through the same
+   * structural seam (AH-0MWPOET5A002IPTP · fire-discipline remediation). The
+   * aim fire solution uses it to tell a target that can be hit from one that
+   * is simply too far away, and the bot's fire gate uses it to only fire when
+   * a shot has a target. Absent on snapshots whose source does not expose it,
+   * where the range gate is disabled (today's behaviour exactly).
+   */
+  readonly weaponRange?: number;
 }
 
 /** A single enemy (or asteroid) and its threat-relevant state. */
@@ -248,6 +287,27 @@ export interface BotPlayerSource {
    * player, preserving the existing no-config shape.
    */
   getThrusterConfig?(): BotThrusterConfig;
+  /**
+   * The ship's live rotation tuning (Asteroids scheme)
+   * (AH-0MWR04ZDU0005O8J · AC2). Optional so older structural sources remain
+   * valid; an absent getter omits the `rotation` field from the snapshot
+   * player, preserving the no-config shape and fallback semantics.
+   */
+  getRotationConfig?(): BotRotationConfig;
+  /**
+   * The ship's live primary travelling-shot speed (px/s)
+   * (AH-0MWR04ZDU0005O8J · AC2). Optional so older structural sources remain
+   * valid; an absent getter omits the `shotSpeed` field, leaving the compiled
+   * `PLAYER_BULLET_SPEED` as the fallback.
+   */
+  getProjectileSpeed?(): number;
+  /**
+   * The ship's live **effective weapon reach** (px)
+   * (AH-0MWPOET5A002IPTP · fire-discipline remediation). Optional so older
+   * structural sources remain valid; an absent getter omits the `weaponRange`
+   * field, leaving the range gate disabled (the pre-change behaviour).
+   */
+  getEffectiveWeaponRange?(): number;
 }
 
 /** Minimal enemy source (a `BaseEnemy`/`EnemyEntity` satisfies this). */
@@ -384,6 +444,10 @@ export function buildBotSnapshot(
   const freeze = options.freeze !== false;
   const playerSource = scene.getPlayer();
   const bossSource = scene.getBoss();
+  // Read the live shot speed once: the getter may be stateful in a source.
+  const liveShotSpeed = playerSource?.getProjectileSpeed?.();
+  // Read the live weapon reach once, on the same structural seam.
+  const liveWeaponRange = playerSource?.getEffectiveWeaponRange?.();
 
   const player: BotPlayer | null = playerSource
     ? {
@@ -393,6 +457,24 @@ export function buildBotSnapshot(
         // shape (the no-config fallback semantics hold) (AH-0MV85WFWD0029DL7).
         ...(playerSource.getThrusterConfig
           ? { thruster: playerSource.getThrusterConfig() }
+          : {}),
+        // Carry the live rotation tuning and the primary travelling-shot
+        // speed the same way (AH-0MWR04ZDU0005O8J · AC2): the aim solve reads
+        // the ship's physics through this snapshot seam, never a bot-layer
+        // constant.
+        ...(playerSource.getRotationConfig
+          ? { rotation: playerSource.getRotationConfig() }
+          : {}),
+        ...(typeof liveShotSpeed === 'number' && Number.isFinite(liveShotSpeed)
+          ? { shotSpeed: liveShotSpeed }
+          : {}),
+        // The ship's effective weapon reach (AH-0MWPOET5A002IPTP): carried the
+        // same way as the shot speed, so the aim/fire solve can tell an
+        // in-reach target from a firing-at-nothing one through the snapshot
+        // seam rather than a bot-layer weapon constant.
+        ...(typeof liveWeaponRange === 'number' &&
+        Number.isFinite(liveWeaponRange)
+          ? { weaponRange: liveWeaponRange }
           : {}),
       }
     : null;
@@ -409,7 +491,7 @@ export function buildBotSnapshot(
   const snapshot = {
     player,
     enemies: scene.getEnemies().map((enemy) => ({
-      id: stableEnemyId(enemy),
+      id: botEntityId(enemy),
       x: enemy.x,
       y: enemy.y,
       alive: enemy.alive,
@@ -466,21 +548,27 @@ export function buildBotSnapshot(
   return freeze ? deepFreeze(snapshot) : (snapshot as BotSnapshot);
 }
 
-/**
- * Allocates (or returns) the stable bot-side id for an enemy source
- * (AH-0MVI4QDN90037DIN · AC1).
- *
- * A source that already exposes a numeric `id` keeps it; otherwise the builder
- * assigns one from a module-local `WeakMap` and counter. The map is keyed by
- * object identity, so the same live entity keeps its id across every snapshot
- * (and the id is released with the entity) — no per-archetype entity changes
- * and no snapshot-seam mutation of the source.
- */
+/** Module-local identity map: the source object -> its stable bot-side id. */
 const enemyIds = new WeakMap<object, number>();
 let nextEnemyId = 1;
 
-function stableEnemyId(source: BotEnemySource): number {
-  if (typeof source.id === 'number') return source.id;
+/**
+ * Allocates (or returns) the stable bot-side id for an entity source
+ * (AH-0MVI4QDN90037DIN · AC1).
+ *
+ * A source that already exposes a numeric `id` keeps it; otherwise the builder
+ * assigns one from the module-local `WeakMap` and counter above. The map is
+ * keyed by object identity, so the same live entity keeps its id across every
+ * snapshot (and the id is released with the entity) — no per-archetype entity
+ * changes and no snapshot-seam mutation of the source.
+ *
+ * Exported so the shared aim-hit seam resolves identity through the **same**
+ * map the snapshot builder uses (AH-0MWR054VE006YSLN): the id a hit reports is
+ * exactly the id the governor aimed at, never a parallel identity scheme.
+ */
+export function botEntityId(source: object): number {
+  const declaredId = (source as { readonly id?: unknown }).id;
+  if (typeof declaredId === 'number') return declaredId;
   const existing = enemyIds.get(source);
   if (existing !== undefined) return existing;
   const id = nextEnemyId;

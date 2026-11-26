@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest';
 import { AsteroidsModel } from '../utils/movementModel';
 import type { AsteroidsInput } from '../utils/movementModel';
 import { BotInputGovernor } from './botHumanLike';
-import { buildBotSnapshot, type BotSnapshot } from './botSnapshot';
+import { botEntityId, buildBotSnapshot, type BotSnapshot } from './botSnapshot';
 import { createCompetentBotBrain } from './framework/competent';
 
 const DT = 1 / 60;
@@ -60,6 +60,8 @@ interface TrackingTrace {
   finalFacing: number;
   /** The ship's final settled aim error against the committed intent. */
   finalAimError: number;
+  /** The governor's live adaptive aim-error magnitude after the run. */
+  finalAimErrorRad: number;
   /**
    * Longest run of consecutive settled ticks in which the ship's facing stayed
    * within 0.05 rad of the committed aim bearing.
@@ -74,13 +76,23 @@ interface TrackingTrace {
  * moving enemy, tracking the ship's aim error against the governor's committed
  * aim bearing.
  */
-function traceMovingEnemy(ticks: number, enemyVy = -20, reactionTimeMs = 0): TrackingTrace {
+function traceMovingEnemy(
+  ticks: number,
+  enemyVy = -20,
+  reactionTimeMs = 0,
+  adaptive?: { aimErrorRad: number; hitEveryTick: boolean },
+): TrackingTrace {
   const brain = createCompetentBotBrain();
   const governor = new BotInputGovernor({
     alignmentToleranceRad: 0.05,
     // The aim-tracking accuracy is observable without the periodic objective
     // refresh; the default cadence is exercised by a separate assertion below.
     reactionTimeMs,
+    // The rotation-skill traces isolate the fixed skill error from the
+    // adaptive one (AH-0MWR057Q8004PBOD); the adaptive trace opts in below.
+    aimErrorRad: adaptive?.aimErrorRad ?? 0,
+    // Keep the decay observable for the whole run: no reposition re-arm.
+    aimErrorResetDistance: 100000,
   });
   const enemy: MovingEnemy = {
     x: 600,
@@ -145,11 +157,20 @@ function traceMovingEnemy(ticks: number, enemyVy = -20, reactionTimeMs = 0): Tra
         rotationAcceleration: ROTATION.rotationAcceleration,
         rotationDeceleration: ROTATION.rotationDeceleration,
         reverseEnabled: false,
+        // Live position and torus, exactly as the game and gym feed them
+        // (AH-0MWR057Q8004PBOD · AC4).
+        position: { x: state.x, y: state.y },
+        world: { width: WIDTH, height: HEIGHT },
       },
     ) as AsteroidsInput;
 
     const intent = governor.currentIntent();
     const aim = Math.atan2(intent.dirY ?? 0, intent.dirX ?? 0);
+    if (adaptive?.hitEveryTick) {
+      // One confirmed hit per tick, delivered through the shared seam exactly
+      // as the game's `notifyAimHit` does (AH-0MWR057Q8004PBOD · AC4).
+      governor.noteAimHit(botEntityId(enemy));
+    }
     if (previousAim !== null) {
       maxAimBearingStep = Math.max(
         maxAimBearingStep,
@@ -184,6 +205,7 @@ function traceMovingEnemy(ticks: number, enemyVy = -20, reactionTimeMs = 0): Tra
   return {
     finalFacing: state.facing,
     finalAimError: Math.abs(angleDiff(state.facing, finalAim)),
+    finalAimErrorRad: governor.currentAimErrorRad(),
     longestSettledRun,
     maxAimBearingStep,
   };
@@ -212,5 +234,23 @@ describe('demo bot rotation skills — 60 Hz integration (AH-0MV1DUSM2005HL98 AC
     const first = traceMovingEnemy(180);
     const second = traceMovingEnemy(180);
     expect(second).toEqual(first);
+  });
+
+  it('shrinks the live adaptive aim error on repeated confirmed hits (AH-0MWR057Q8004PBOD AC4)', () => {
+    // Without hits the full error is held (no reposition in 240 ticks).
+    const noHits = traceMovingEnemy(240, -20, 0, {
+      aimErrorRad: 0.2,
+      hitEveryTick: false,
+    });
+    expect(noHits.finalAimErrorRad).toBeCloseTo(0.2, 12);
+
+    // A stream of confirmed hits on the engaged target zeroes it in, and the
+    // settled aim still lands inside the aim deadband.
+    const hitting = traceMovingEnemy(240, -20, 0, {
+      aimErrorRad: 0.2,
+      hitEveryTick: true,
+    });
+    expect(hitting.finalAimErrorRad).toBeLessThan(1e-6);
+    expect(hitting.finalAimError).toBeLessThanOrEqual(0.05);
   });
 });

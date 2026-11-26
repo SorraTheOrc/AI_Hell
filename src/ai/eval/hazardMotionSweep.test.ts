@@ -56,7 +56,11 @@
  *    it shoots), so a field of *shootable* enemies measures engagement. The
  *    fielded archetypes are therefore declared `threat: 0`, `aim: 'none'`
  *    hazards in the bot's content registry: the sweep isolates the hazard
- *    predictor instead of the combat policy.
+ *    predictor instead of the combat policy. The aim-lead **source** is held at
+ *    the pre-change snapshot fallback in both arms
+ *    (`aimLeadFromTracker: false`, AH-0MWR04X10002VNDG), so an aim feature can
+ *    never move this avoidance metric: the only difference between the arms is
+ *    `hazardMotionModelEnabled`.
  * 4. **Escapable contacts.** Each class is fielded at a pace near the ship's own
  *    speed in a field sized so it keeps meeting the ship, which keeps the
  *    encounter rate high enough to compare and the contacts genuinely avoidable.
@@ -272,7 +276,11 @@ function runArm(
   const result = runArena(
     policy
       ?? createCompetentBotBrain({
-        tunables: { hazardMotionModelEnabled },
+        // The aim-lead source is a confounder for an avoidance measurement:
+        // hold it at the pre-change snapshot fallback in **both** arms, so the
+        // only difference between them is the hazard motion model
+        // (AH-0MWR04X10002VNDG).
+        tunables: { hazardMotionModelEnabled, aimLeadFromTracker: false },
         content: hazardOnlyContent(archetype),
       }),
     {

@@ -92,14 +92,18 @@
  * - **Entering ring *n*** — the starter kit plus every grant of the previous
  *   rings, earned in the same plan order (ring 2: the `ricochet`, `rapid` and
  *   `wave_laser` weapons, the `hull-2` hull, `hardened_plating`, and the
- *   effect-free `core-bank` modifier).
+ *   grant-only `hull-4` special-mission hull, which replaced the old
+ *   `core-bank` grant).
  * - **Equip convention (deterministic)** — every owned weapon is equipped
  *   (trimmed by the shipped `capDropIdsToSlotPool` six-slot cap), the
  *   **strongest owned hull** is active (most starting lives, then speed), and
  *   every owned `extra-lives` modifier is applied, capped at `MAX_LIVES`. A
- *   grant the catalogue does not itemise (`hull-9`, `rapid`, `core-bank`) is
- *   owned but contributes no run stats — the same "recorded but effect-free"
- *   rule the shipped capture cycle uses.
+ *   hypothetical grant the catalogue does not itemise (a future `hull-9`) is
+ *   owned but contributes no run stats — the capture cycle's defence-in-depth
+ *   fallback. Every **authored** grant resolves to a catalogue entry (guard (e)
+ *   in `hangarCatalogue`), so the five weapon grants (`rapid`, `arc`,
+ *   `broadside`, `dual`, `nova`) are equipped and deployable like any other
+ *   owned weapon.
  *
  * The loadout is an **explicit model input** ({@link
  * RingTimingOptions.ownership}, default {@link ringEntryOwnership}) and reaches
@@ -138,12 +142,15 @@
  * the ring; a rush segment is reported `not-applicable` for the budget.
  *
  * Re-rated against the derived windows (AH-0MWHU5AV800969NA), the shipped
- * one-level deployment measures ring 1 grind as **`missed`** (16.4 min against
- * 30–90) and ring 2 grind as **`within-tolerance`** (48.1 min against 60–180,
- * at the ±12-minute floor — seeds 1–3 in `docs/dev/ring-timing-baseline.json`).
- * The measured figures are recorded, never re-worded; the ruling is tracked by
- * two linked rebalancing items — ring 1 AH-0MWFDQ9EY004NO4X, ring 2
- * AH-0MWFDQCFV007BZE5.
+ * one-level deployment measures ring 1 grind as **`missed`** (23.7 min against
+ * 30–90 — 0.3 min under the 24-minute tolerance floor) and ring 2 grind as
+ * **`within-tolerance`** (51.7 min against 60–180: 8.3 min under the window
+ * floor, inside the ±12-minute tolerance whose floor is 48 — seeds 1–3 in
+ * `docs/dev/ring-timing-baseline.json`).
+ * The measured figures are recorded, never re-worded; the rulings are tracked
+ * by two linked rebalancing items — ring 1 AH-0MWFDQ9EY004NO4X (ruled: honour
+ * the wave `shootEnabled` gate, ramp each ring's aggression with its captures,
+ * keep the window and the allowances), ring 2 AH-0MWFDQCFV007BZE5.
  *
  * ## Fidelity boundary
  *
@@ -171,17 +178,25 @@
  * core is banked per capture. Both runners play the game's own truncated wave
  * set and share the income fields.
  * The campaign segment is measured from each ring's **authored base
- * aggressions** (the numbers the map publishes); the frontier's between-sortie
- * rise is a separate risk mechanic (B3/B6), and {@link
- * RingTimingOptions.aggressionRisePerSortie} exists as an explicit sensitivity
- * knob (default `0`) rather than a hidden assumption.
+ * aggressions** plus the ring's own capture-progress ramp
+ * ({@link deploymentAggressionFor}): the first deployment into a fresh ring
+ * faces the authored aggression, and every hex captured in the ring raises the
+ * next deployment, by up to {@link HEX_AGGRESSION_RAMP_PER_RING} across the
+ * whole ring — the same rule the game's deployment builder applies
+ * (AH-0MWFDQ9EY004NO4X). The frontier's
+ * between-sortie rise is a separate risk mechanic (B3/B6) and is not modelled
+ * here.
  *
  * @module src/ai/eval/ringTiming
  */
 
 import { DEFAULT_LIVES, MAX_LIVES } from '../../core/GameState';
 import { DEFAULT_FRONTIER_TUNING } from '../../core/hangarWar/hexDefence';
-import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
+import {
+  HEX_AGGRESSION_RAMP_PER_RING,
+  deploymentAggressionFor,
+  hexDifficultyProfile,
+} from '../../core/hangarWar/hexDifficulty';
 import { generateRing, type HexRingDefinition } from '../../core/hangarWar/hexRing';
 import { resolveHexGrant } from '../../core/hangarWar/captureCycle';
 import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
@@ -310,13 +325,14 @@ export function deriveRingTimingTarget(
  * and the per-hex target is authored once.
  *
  * Re-rated against these derived windows (AH-0MWHU5AV800969NA), the shipped
- * one-level sortie measures ring 1 grind at **16.4 minutes** (`missed`) and
- * ring 2 grind at **48.1 minutes** (`within-tolerance` of 60–180: the ±12-min
- * tolerance floor is 48). The measured figures were **superseded** by the
- * shipped one-level five-wave sortie (AH-0MWCOWSVN003X81A); the windows are
- * never re-worded to match a measurement — each ruling is tracked by the
- * linked rebalancing items **AH-0MWFDQ9EY004NO4X** (ring 1) and
- * **AH-0MWFDQCFV007BZE5** (ring 2), not silently changed here.
+ * one-level sortie measures ring 1 grind at **23.7 minutes** (`missed`) and
+ * ring 2 grind at **51.7 minutes** (`within-tolerance` of 60–180: 8.3 min under
+ * the window floor, inside the ±12-min tolerance whose floor is 48). Ring 1's
+ * figure moved 15.4 → 23.7 when the producer's ruling on
+ * **AH-0MWFDQ9EY004NO4X** landed (honour the wave `shootEnabled` gate; ramp a
+ * ring's aggression with its captures) and it still **misses** — the windows
+ * are never re-worded to match a measurement. Ring 2's own ruling is tracked by
+ * **AH-0MWFDQCFV007BZE5**, not silently changed here.
  */
 export const RING_TIMING_TARGETS: Readonly<Record<number, RingTimingTarget>> =
   Object.freeze({
@@ -440,12 +456,14 @@ export interface RingTimingOptions {
   /** Chance an exposed hex is retaken, percent (default the frontier's 70). */
   readonly retakeChancePercent?: number;
   /**
-   * Aggression added per sortie already played in this ring (default `0`).
-   * A sensitivity knob for the frontier's growth: `0` measures the ring from
-   * its authored base aggressions, exactly as the design's budget arithmetic
-   * does; a positive value shows how the frontier's rise lengthens the ring.
+   * Aggression the ring's deployments gain **across the whole ring's captures**
+   * (default {@link HEX_AGGRESSION_RAMP_PER_RING}). The ring's progress ramp:
+   * a fresh ring measures its authored aggression, and every capture raises
+   * the later deployments proportionally (`ramp × held / hexes`) — the same
+   * rule the game's deployment builder applies
+   * ({@link deploymentAggressionFor}), so the measurement tracks play.
    */
-  readonly aggressionRisePerSortie?: number;
+  readonly aggressionRampPerRing?: number;
   /** Bot policy (default the shipped `competent` brain). */
   readonly policy?: PolicyFactory;
   /** Resolved balance config (default the shared config store). */
@@ -469,7 +487,14 @@ export interface RingTimingOptions {
 export interface RingTimingDeployment {
   /** The target hex's authored id. */
   readonly hexId: string;
-  /** The hex's aggression when the line deployed to it. */
+  /**
+   * Hexes already held in this ring when the line deployed (the ramp's input:
+   * `0` on a fresh ring, one more per captured hex).
+   */
+  readonly heldInRing: number;
+  /** The hex's authored aggression. */
+  readonly baseAggression: number;
+  /** The aggression the deployment faced (authored base + the ring's ramp). */
   readonly aggression: number;
   /** The campaign level the aggression selected. */
   readonly level: number;
@@ -626,6 +651,19 @@ function nonNegativeOr(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   const integer = Math.trunc(value as number);
   return integer < 0 ? 0 : integer;
+}
+
+/**
+ * `value` when it is a finite non-negative number, else `fallback` — a
+ * **fractional** allowance (the aggression ramp may step by less than one
+ * point per held hex; whole-number sanitising would silently drop it).
+ */
+function nonNegativeFractionOr(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, value as number);
 }
 
 /** `value` clamped to `[0, 100]`. */
@@ -795,9 +833,9 @@ function ownedHullDefinition(
  * lives first, then the faster hull, then catalogue order (deterministic).
  *
  * A hull grant the catalogue does not itemise (a future `hull-9`) is owned but
- * supplies no run stats, exactly as `rapid` / `core-bank` are recorded as
- * effect-free modifiers, so it cannot invent lives the deployment path would
- * not grant.
+ * supplies no run stats, exactly as the capture cycle's defence-in-depth
+ * fallback records an unknown upgrade, so it cannot invent lives the deployment
+ * path would not grant.
  */
 function strongestOwnedHull(
   ownedHulls: readonly string[],
@@ -1149,10 +1187,12 @@ export function evaluateRingTimingBudget(
  * Measures one ring for one playstyle line.
  *
  * For every hex the line plays, the deployment's aggression is the hex's
- * authored base aggression plus {@link RingTimingOptions.aggressionRisePerSortie}
- * times the number of sorties already played in the ring (default `0`). The
- * aggression resolves through the shipped `hexDifficultyProfile`, the runner
- * plays the deployment, and the measured duration is summed. Losses add one
+ * authored base aggression plus the ring's capture-progress ramp
+ * ({@link HEX_AGGRESSION_RAMP_PER_RING} scaled by the fraction of the ring
+ * already held — the game's own rule, {@link deploymentAggressionFor};
+ * {@link RingTimingOptions.aggressionRampPerRing} overrides it). The aggression resolves through the shipped
+ * `hexDifficultyProfile`, the runner plays the deployment, and the measured
+ * duration is summed. Losses add one
  * modelled retry each; the line's between-sortie time and (for a rush) its
  * exposed-hex re-capture work are added; the total is judged against the ring's
  * budget.
@@ -1179,9 +1219,9 @@ export function simulateRingTiming(
   );
   const retakeChance =
     percentOr(options.retakeChancePercent, DEFAULT_RETAKE_CHANCE_PERCENT) / 100;
-  const aggressionRisePerSortie = nonNegativeOr(
-    options.aggressionRisePerSortie,
-    0,
+  const aggressionRampPerRing = nonNegativeFractionOr(
+    options.aggressionRampPerRing,
+    HEX_AGGRESSION_RAMP_PER_RING,
   );
   const balance = options.balance ?? loadBalanceConfig();
   const hexes = options.hexes ?? ringTimingHexes(ringIndex);
@@ -1209,8 +1249,22 @@ export function simulateRingTiming(
     let salvageForfeited = 0;
     let salvageCores = 0;
 
-    played.forEach((hex, sortieIndex) => {
-      const aggression = hex.baseAggression + aggressionRisePerSortie * sortieIndex;
+    played.forEach((hex) => {
+      // Hexes already held when this deployment starts — the ramp's input, and
+      // the value recorded on the deployment (read before this sortie can add
+      // to it).
+      const heldInRing = captured;
+      // The ring's progress ramp (AH-0MWFDQ9EY004NO4X): the authored base plus
+      // one point per hex already captured in this ring — never the sortie
+      // index, so a lost deployment does not raise the ring's difficulty
+      // without the strength a capture earns. The rule is the game's own
+      // ({@link deploymentAggressionFor}).
+      const aggression = deploymentAggressionFor(
+        hex.baseAggression,
+        heldInRing,
+        hexes.length,
+        aggressionRampPerRing,
+      );
       const level = hexDifficultyProfile(aggression).level;
       // Resolved once per deployment (never per tick): the loadout the player
       // owns at this point in the ring's plan.
@@ -1247,6 +1301,8 @@ export function simulateRingTiming(
       }
       deployments.push({
         hexId: hex.id,
+        heldInRing,
+        baseAggression: hex.baseAggression,
         aggression,
         level,
         seconds: result.seconds,

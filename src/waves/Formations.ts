@@ -143,6 +143,19 @@ export interface WaveDefinition {
    * leaves the wave exactly as it was.
    */
   miniBoss?: boolean;
+  /**
+   * Authored elite archetype key (AH-0MWU665DM00669U0 AC1). When set, the
+   * wave fields exactly one elite: the first spawn of this group's archetype
+   * is elevated (one bonus hit-point pool and one bounded
+   * `eliteBehaviour`, both authored on the archetype in
+   * `src/data/enemy-configs.csv`). The key must be one of this wave's
+   * groups and its archetype must declare an elite behaviour, otherwise no
+   * elite is planned — a bad authoring value never spawns a broken elite.
+   * Absent (the default) leaves the wave to the seeded budget in
+   * `./eliteSpawn.ts` (shipped `ELITE_WAVE_CHANCE = 0.15`). Level 1 never
+   * spawns an elite regardless of this field.
+   */
+  elite?: string;
 }
 
 /** An ordered sequence of waves forming one level. */

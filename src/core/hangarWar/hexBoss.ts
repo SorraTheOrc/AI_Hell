@@ -58,6 +58,10 @@ import {
 } from './hexDifficulty';
 import { resolveHexGrant, type HexGrant } from './captureCycle';
 import { hexPersonalityMechanicsFor, nebulaVolleySpeedScale, type HexPersonalityMechanic } from '../../scenes/core/hexPersonalityMechanics';
+import {
+  buildAuthoredVerdictLookup,
+  type WeaponVerdictLookup,
+} from './hexMatchup';
 import type { HexPersonalityId, HexRingDefinition } from './hexRing';
 import { MAX_LEVEL } from '../GameState';
 import {
@@ -139,6 +143,14 @@ export interface HexBossProfile {
   readonly mechanics: readonly HexPersonalityMechanic[];
   /** The shipped difficulty profile behind the encounter (single source). */
   readonly difficulty: HexDifficultyProfile;
+  /**
+   * The hex's authored matchup verdicts, as an injectable weapon-id lookup
+   * (`core/hangarWar/hexMatchup`). Built once from the authored
+   * `strengths`/`weaknesses` here, then carried into the run through
+   * `hexMiniBossConfigForLevel`, so the game, the attract run and every gym
+   * read one value (AH-0MWL88REU009MO5G AC4). Empty for an unauthored hex.
+   */
+  readonly matchup: WeaponVerdictLookup;
 }
 
 /** FNV-1a offset basis / prime (the repo's deterministic string mixing). */
@@ -391,6 +403,13 @@ export function buildHexBossProfile(
       ? BULLET_COLORS[grant.weaponId]
       : null;
   const bodyColor = hexBossBodyColor(definition, hexId);
+  // The verdict lookup is authored data, computed once from the hex's
+  // strengths/weaknesses. The pure resolver trusts this lookup alone, so a
+  // future damage-type table can replace it with no edit at the hit seam.
+  const matchup = buildAuthoredVerdictLookup(
+    definition?.strengths,
+    definition?.weaknesses,
+  );
 
   return {
     hexId,
@@ -407,5 +426,6 @@ export function buildHexBossProfile(
     personality,
     mechanics: hexPersonalityMechanicsFor(personality),
     difficulty,
+    matchup,
   };
 }
