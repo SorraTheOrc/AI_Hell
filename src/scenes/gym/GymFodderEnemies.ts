@@ -43,6 +43,18 @@ import {
 import { makeCollapsible } from '../../utils/gymPanel';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
 import { fireForEnemy } from '../../entities/enemyFire';
+import { createBullet } from '../../entities/bulletUtils';
+import {
+  isEliteBehaviour,
+  isUncountedHazardKey,
+  type EliteBehaviour,
+} from '../../core/eliteVocabulary';
+import {
+  ELITE_VOLATILE_BURST_LIFETIME,
+  eliteForceFieldBonus,
+  type EliteBurstShot,
+  type EliteSplitOffset,
+} from '../core/eliteMechanics';
 import { Asteroid } from '../../entities/Asteroid';
 import type { SceneSetupState } from '../core/sceneSetup';
 import type { FormationSceneBullet } from './core/GymFormationScene';
@@ -106,6 +118,24 @@ export const ENEMY_DIFFICULTY_ID = 'enemy-gym-difficulty';
  * the level curve the game and the level gym share.
  */
 export const ENEMY_FORCE_FIELD_NOTE_ID = 'enemy-gym-force-field-note';
+
+/**
+ * In-panel elite scenario selector (AH-0MWU6673N008FO1D). The gym elevator
+ * picks the one bounded behaviour it wants to exercise; the spawn itself keeps
+ * its ordinary slot, transit and archetype.
+ */
+export const ENEMY_ELITE_SELECT_ID = 'enemy-gym-elite-select';
+
+/** Selector value meaning "no elite — every spawn ordinary" (the default). */
+export const GYM_ELITE_NONE = 'none' as const;
+
+/** Every selector value, in panel order. */
+export const GYM_ELITE_OPTIONS = [
+  GYM_ELITE_NONE,
+  'splitter',
+  'reinforced',
+  'volatile',
+] as const;
 
 // Numeric slider ranges (mirrors GymPlayer SLIDER_RANGES pattern).
 const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
@@ -221,6 +251,26 @@ export function gymDirectForceFieldHits(config: EnemyConfig): number {
   return Math.min(5, Math.max(0, Math.round(hits)));
 }
 
+/**
+ * Force-field hits a formation-gym spawn carries, including the shared elite
+ * bonus (AH-0MWU6673N008FO1D).
+ *
+ * The gym keeps its documented direct-hits divergence (there is no campaign
+ * level here, AH-0MVM8GXEF009883O) while the `reinforced` extra hit comes from
+ * the shared `eliteForceFieldBonus` rule — never a per-gym copy of the number.
+ * The game composes the same bonus through `eliteForceFieldHits` over
+ * `enemyForceFieldHits`.
+ *
+ * @param config — the archetype being spawned.
+ * @param behaviour — the elite behaviour, or `null` for an ordinary spawn.
+ */
+export function gymEliteForceFieldHits(
+  config: EnemyConfig,
+  behaviour: EliteBehaviour | null | undefined,
+): number {
+  return gymDirectForceFieldHits(config) + eliteForceFieldBonus(behaviour);
+}
+
 const FORMATION_KINDS = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march'] as const;
 const SHOT_PATTERNS = ['none', 'aimed', 'spread', 'radial', 'orbital', 'coordinated'] as const;
 // Behavioural classification enums (AH-0MV29NWI1007NKN7): coarse
@@ -239,7 +289,10 @@ function hexToColor(value: string): number {
 
 type GymFodderEnemiesBullet = FormationSceneBullet;
 
-function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<EnemyEntity, GymFodderEnemiesBullet> {
+function enemyConfigToFormationConfig(
+  enemyKey: string,
+  elite: EliteBehaviour | null = null,
+): EnemyFormationConfig<EnemyEntity, GymFodderEnemiesBullet> {
   const cfg: EnemyConfig = loadEnemyConfig(enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY);
   const key = cfg.key || enemyKey || GYM_FODDER_ENEMIES_DEFAULT_KEY;
   const builder = getFormationBuilder(cfg.formationKind);
@@ -272,11 +325,17 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     // (AH-0MUNR5LM1004B223). The base class runs the shared
     // major-explosion cue + limiter on expiry.
     timeoutDuration: key === GYM_FODDER_ENEMIES_BOSS_KEY ? undefined : WAVE_TIME_LIMIT_SECONDS,
+    // Elite scenario elevation (AH-0MWU6673N008FO1D): exactly one spawn is
+    // elevated, through the shared `EliteSpawnModifiers` the game's per-spawn
+    // plan flag produces. The spawn keeps its slot, transit and archetype.
+    eliteSpawn: elite
+      ? { slotIndex: 0, behaviour: elite, bonusHp: cfg.eliteBonusHp }
+      : undefined,
     // Opt-in power-up layer: one drop at a time on the rules interval,
     // weighted-random ID (Shield–Magnet plus weapon drops) and
     // enemy/player-avoiding placement.
     powerUps: {},
-    createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset) =>
+    createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset, _setup, spawnElite) =>
       createEnemyFromConfig(
         scene,
         cfg,
@@ -286,10 +345,12 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
         undefined,
         // Documented divergence (AH-0MVM8GXEF009883O): a formation gym has
         // no campaign level, so the authored start hits are applied directly
-        // instead of evaluating `enemyForceFieldHits`. Must never leak into
-        // the shipped campaign CSV path — the game and level gym always use
-        // the level curve.
-        gymDirectForceFieldHits(cfg),
+        // instead of evaluating `enemyForceFieldHits`. The `reinforced` elite
+        // bonus is still the shared rule (AH-0MWU6673N008FO1D). Must never
+        // leak into the shipped campaign CSV path — the game and level gym
+        // always use the level curve.
+        gymEliteForceFieldHits(cfg, spawnElite?.behaviour),
+        spawnElite,
       ),
     collectBullets,
     // Asteroid split seam (GDD §4.1 — E6 Asteroid): a destroyed large/medium
@@ -347,6 +408,8 @@ function centipedePanelConfig(): EnemyConfig {
 export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEnemiesBullet> {
   private pendingKey: string = GYM_FODDER_ENEMIES_DEFAULT_KEY;
   private activeConfig: EnemyConfig = loadEnemyConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY);
+  /** The scenario-selected elite behaviour, or `null` for an ordinary field. */
+  private _eliteBehaviour: EliteBehaviour | null = null;
   private panel: HTMLDivElement | null = null;
   /** Config-tuning controls container; hidden while a non-config archetype runs. */
   private _configBody: HTMLDivElement | null = null;
@@ -356,13 +419,16 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     super(enemyConfigToFormationConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY));
   }
 
-  init(data?: { enemyKey?: string; enemy?: string } & SceneSetupState): void {
+  init(data?: { enemyKey?: string; enemy?: string; elite?: string } & SceneSetupState): void {
     // The shared capture setup names the formation enemy `enemy`
     // (AH-0MVNW8UCZ004CY0R); the legacy direct-gym launch uses `enemyKey`, so
     // accept both and keep old callers working.
     const key = data?.enemy ?? data?.enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
     super.init(data);
     this.pendingKey = key;
+    // Elite scenario (AH-0MWU6673N008FO1D): a launch/capture setup may select
+    // one bounded behaviour; an absent/unknown value leaves the field ordinary.
+    this._eliteBehaviour = isEliteBehaviour(data?.elite) ? data.elite : null;
     if (key === GYM_FODDER_ENEMIES_CENTIPEDE_KEY) {
       // The Centipede is a chain archetype (wave opt-in), not a CSV config:
       // boot the shared centipede formation the game and GymCentipede run.
@@ -370,7 +436,7 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
       this.config = centipedeFormationConfig('GymFodderEnemies');
     } else {
       this.activeConfig = loadEnemyConfig(key);
-      const next = enemyConfigToFormationConfig(key);
+      const next = enemyConfigToFormationConfig(key, this._eliteSelection());
       this.config = next;
     }
     this._resolveFormationBase();
@@ -426,6 +492,11 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     // that is hidden while the centipede is the active archetype.
     const configBody = document.createElement('div');
     configBody.id = ENEMY_CONFIG_BODY_ID;
+
+    // Elite scenario selector (AH-0MWU6673N008FO1D): elevates exactly one
+    // spawn of the selected archetype through the shared `eliteMechanics`
+    // modifiers, so every bounded behaviour can be exercised in the gym.
+    configBody.appendChild(this._eliteSelectRow());
 
     // Numeric sliders.
     for (const [field, range] of Object.entries(ENEMY_SLIDER_RANGES)) {
@@ -543,6 +614,33 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     const value = document.createElement('output');
     value.dataset['configValue'] = field;
     row.append(label, input, value);
+    return row;
+  }
+
+  /**
+   * The elite scenario select row (AH-0MWU6673N008FO1D). Not a persisted
+   * `EnemyConfig` field: choosing a value elevates one spawn of the active
+   * archetype through the shared elite seam so the gym can exercise each
+   * bounded behaviour, while `none` keeps the field ordinary (the default).
+   */
+  private _eliteSelectRow(): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'gym-panel-row';
+    const label = document.createElement('span');
+    label.textContent = 'elite';
+    label.className = 'gym-panel-label';
+    const select = document.createElement('select');
+    select.id = ENEMY_ELITE_SELECT_ID;
+    select.setAttribute('aria-label', 'Elite behaviour');
+    for (const option of GYM_ELITE_OPTIONS) {
+      const o = document.createElement('option');
+      o.value = option;
+      o.textContent = option;
+      select.appendChild(o);
+    }
+    select.value = this._eliteBehaviour ?? GYM_ELITE_NONE;
+    select.addEventListener('change', () => this._onEliteSelect());
+    row.append(label, select);
     return row;
   }
 
@@ -697,6 +795,10 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
 
   private _applyPanelValues(config: EnemyConfig): void {
     if (!this.panel) return;
+    const eliteSelect = this.panel.querySelector<HTMLSelectElement>(
+      `#${ENEMY_ELITE_SELECT_ID}`,
+    );
+    if (eliteSelect) eliteSelect.value = this._eliteBehaviour ?? GYM_ELITE_NONE;
     for (const field of Object.keys(ENEMY_SLIDER_RANGES)) {
       const input = this.panel.querySelector<HTMLInputElement>(`input[data-config="${field}"]`);
       const value = this.panel.querySelector<HTMLElement>(`output[data-config-value="${field}"]`);
@@ -822,6 +924,41 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
   // ── Respawn / Player toggle ─────────────────────────────────────
 
   /**
+   * The behaviour this gym may actually elevate (AH-0MWU6673N008FO1D).
+   *
+   * The vocabulary refuses uncounted hazards (asteroid/lane traffic/centipede
+   * and the ghost/strike hazards), and the Centipede option is a linked-chain
+   * archetype built by the shared chain seam rather than a CSV config, so the
+   * elite scenario is neutral for both — the same eligibility rule the game's
+   * `planEliteSpawn` applies.
+   */
+  private _eliteSelection(): EliteBehaviour | null {
+    if (!this._eliteBehaviour) return null;
+    if (this.pendingKey === GYM_FODDER_ENEMIES_CENTIPEDE_KEY) return null;
+    if (isUncountedHazardKey(this.pendingKey)) return null;
+    return this._eliteBehaviour;
+  }
+
+  /**
+   * Elite-selector change handler (AH-0MWU6673N008FO1D): applies the chosen
+   * behaviour to the next formation spawn and rebuilds it through the shared
+   * clean-slate respawn seam, so a scenario change is immediately visible.
+   */
+  private _onEliteSelect(): void {
+    if (this.pendingKey === GYM_FODDER_ENEMIES_CENTIPEDE_KEY) return;
+    const select = this.panel?.querySelector<HTMLSelectElement>(
+      `#${ENEMY_ELITE_SELECT_ID}`,
+    );
+    const value = select?.value ?? GYM_ELITE_NONE;
+    this._eliteBehaviour = isEliteBehaviour(value) ? value : null;
+    this.config = enemyConfigToFormationConfig(
+      this.pendingKey,
+      this._eliteSelection(),
+    );
+    this.respawnFormation();
+  }
+
+  /**
    * Enemy-selector change handler (AH-0MV13G5EV008D41E): swaps the active
    * archetype to the chosen key, rebuilding the whole scene from that config.
    * Unknown/empty values are ignored.
@@ -873,7 +1010,7 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     }
 
     this.activeConfig = loadEnemyConfig(key);
-    this.config = enemyConfigToFormationConfig(key);
+    this.config = enemyConfigToFormationConfig(key, this._eliteSelection());
     this._setConfigBodyVisible(true);
 
     // Shared formation-respawn seam — destroys the old formation and spawns
@@ -916,7 +1053,14 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     this.config.startXMax = cfg.startXMax;
     this.config.startYMin = cfg.startYMin;
     this.config.startYMax = cfg.startYMax;
-    this.config.createEntity = (scene, x, y, offset) =>
+    // Keep the elite scenario elevation in sync with the edited config (its
+    // authored bonus hit points may have changed) so the next spawn still
+    // elevates exactly one slot (AH-0MWU6673N008FO1D).
+    const eliteBehaviour = this._eliteSelection();
+    this.config.eliteSpawn = eliteBehaviour
+      ? { slotIndex: 0, behaviour: eliteBehaviour, bonusHp: cfg.eliteBonusHp }
+      : undefined;
+    this.config.createEntity = (scene, x, y, offset, _setup, spawnElite) =>
       createEnemyFromConfig(
         scene,
         cfg,
@@ -925,8 +1069,10 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
         offset,
         undefined,
         // Documented divergence (AH-0MVM8GXEF009883O): direct slider value,
-        // never the campaign level curve.
-        gymDirectForceFieldHits(cfg),
+        // never the campaign level curve. The elite `reinforced` bonus is the
+        // shared rule (AH-0MWU6673N008FO1D).
+        gymEliteForceFieldHits(cfg, spawnElite?.behaviour),
+        spawnElite,
       );
 
     // A manual respawn is a clean slate for the player's shots too; the
@@ -1020,6 +1166,77 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     }
   }
 
+  // ── Elite death seams (AH-0MWU6673N008FO1D) ────────────────────
+
+  /**
+   * `splitter` elite children: spawned through this gym's shipped formation
+   * factory, so a child is an ordinary spawn of the same archetype with no
+   * behaviour and no bonus hit points — exactly as `PlayScene` spawns them
+   * through `createEnemyFromConfig`. The shared dispatcher
+   * (`applyEliteDeathBehaviour`) owns how many and where; this seam owns only
+   * the gym's spawn mechanics.
+   */
+  protected override spawnEliteSplitChild(
+    enemy: EnemyEntity,
+    offset: EliteSplitOffset,
+  ): void {
+    const cfg = loadEnemyConfig(enemy.archetype || this.pendingKey);
+    const x = enemy.x + offset.x;
+    const y = enemy.y + offset.y;
+    // The gym positions every live entity from its formation base + offset
+    // each frame, so the child is slotted at the wreck through the equivalent
+    // fractional offset — it stays at the death site and drifts with the
+    // formation, the same relationship `PlayScene` keeps by giving a child its
+    // own `startX`/`startY` plus the global drift.
+    const spacingX = this.config.spacingX;
+    const spacingY = this.config.spacingY;
+    const childOffset: FormationOffset = {
+      row: spacingY > 0 ? (y - this.formationBaseY) / spacingY : 0,
+      col: spacingX > 0 ? (x - this.formationBaseX) / spacingX : 0,
+    };
+    const child = createEnemyFromConfig(
+      this,
+      cfg,
+      x,
+      y,
+      childOffset,
+      undefined,
+      // Children are ordinary: the archetype's own (gym-direct) field strength,
+      // never the elite bonus — the same neutral child the game spawns.
+      gymDirectForceFieldHits(cfg),
+    );
+    child.shootEnabled = enemy.shootEnabled;
+    this.add.existing(child);
+    this.registerDynamicEntity(child);
+  }
+
+  /**
+   * `volatile` elite death burst: each precomputed shot is created through the
+   * shared cached-texture bullet seam (`createBullet`) and appended to this
+   * gym's live enemy-bullet list, so the burst is an ordinary player-damaging
+   * bullet handled by the shared collision pass — never a VFX-only copy.
+   */
+  protected override spawnEliteVolatileBullet(
+    enemy: EnemyEntity,
+    shot: EliteBurstShot,
+  ): void {
+    const cfg = loadEnemyConfig(enemy.archetype || this.pendingKey);
+    const { graphics } = createBullet({
+      scene: this,
+      color: enemy.bulletColor,
+      size: cfg.bulletSize,
+      x: enemy.x,
+      y: enemy.y,
+    });
+    this.bullets.push({
+      graphics,
+      vx: shot.vx,
+      vy: shot.vy,
+      lifetime: ELITE_VOLATILE_BURST_LIFETIME,
+      elapsed: 0,
+    });
+  }
+
   // ── Public accessors ────────────────────────────────────────────
 
   get formationEnemies(): EnemyEntity[] {
@@ -1028,6 +1245,14 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
 
   get activeEnemyKey(): string {
     return this.pendingKey;
+  }
+
+  /**
+   * The elite behaviour this gym's scenario currently elevates, or `null` when
+   * every spawn is ordinary (including a non-elite-capable archetype).
+   */
+  get eliteBehaviour(): EliteBehaviour | null {
+    return this._eliteSelection();
   }
 
   /**

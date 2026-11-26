@@ -254,6 +254,13 @@ export interface BotSteeringIntent extends FourDirectionalInput {
    * aim without degrading collision avoidance.
    */
   readonly aim?: boolean;
+  /**
+   * The bot-side id of the target an **aim** intent is engaging
+   * (AH-0MWR057Q8004PBOD · AC4). The governor compares a confirmed aim hit
+   * against it and re-arms the adaptive aim error when it changes. Absent on
+   * non-aim intents and on aim intents with no identity (for example a boss).
+   */
+  readonly targetId?: number;
 }
 
 // ── Direction primitives ────────────────────────────────────────────

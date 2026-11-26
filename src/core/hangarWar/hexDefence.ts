@@ -391,6 +391,16 @@ export interface FrontierTickRecord {
   readonly rose: number;
   /** How many hexes fell in aggression this tick. */
   readonly fell: number;
+  /**
+   * The minerals this tick banked from the hexes the player still holds —
+   * `HEX_INCOME_MINERALS_PER_AGGRESSION × aggression`, summed over the ring's
+   * post-tick held hexes (AH-0MWL8CDGN005878A). `0` when no hex is held.
+   *
+   * Published so the report/map announces the payout verbatim and no surface
+   * re-derives it; the same total was already added to
+   * `payload.hangar.bankedMinerals` by {@link runFrontierTick}.
+   */
+  readonly hexIncome: number;
   /** Every defence resolved this tick, weakest margin last (empty when quiet). */
   readonly attacks: readonly HexDefenceRecord[];
 }
@@ -439,6 +449,36 @@ export interface FrontierTickOptions {
 
 /** Multiplier applied to the attack per point of aggression (percent). */
 const AGGRESSION_MULTIPLIER_BASE_PERCENT = 100;
+
+/**
+ * Minerals a held hex pays per tick, per point of its frontier aggression
+ * (AH-0MWL8CDGN005878A, producer Q1).
+ *
+ * **Balance knob.** A held hex pays `HEX_INCOME_MINERALS_PER_AGGRESSION ×
+ * aggression` every between-sortie tick, so the ring compounds into the
+ * weapons and upgrades the player buys instead of only granting a one-off
+ * capture reward. At `10`, a fully held ring 1 (`Σ aggression = 18`) pays
+ * `180`/tick — far above the `WIN_BONUS_MINERALS` bonus and the measured
+ * ~24-minerals-per-deployment anchor (AH-0MWCOWTOR00994NA); the producer chose
+ * that rate (Q1), so any retune of this one constant is a balance change, not
+ * a schema change (no migration is needed — the income is derived from the
+ * already-persisted `held`/`aggression` fields).
+ */
+export const HEX_INCOME_MINERALS_PER_AGGRESSION = 10;
+
+/**
+ * The minimal hex shape {@link hexIncome} reads: ownership and aggression.
+ *
+ * A stored {@link HexState} satisfies it structurally, so a caller passes the
+ * ring's hexes directly; the fields are optional so the rule is total over a
+ * partial/corrupt payload.
+ */
+export interface HexIncomeSource {
+  /** Whether the player holds the hex; anything but `true` pays nothing. */
+  readonly held?: boolean;
+  /** The hex's frontier aggression (normalised to a non-negative integer). */
+  readonly aggression?: number;
+}
 
 /** Tick-stream mixer: a distinct stream per `(seed, tick)`. */
 const TICK_SEED_MIX = 0x9e37_79b9;
@@ -1104,6 +1144,39 @@ export function heldRingDefenderSum(ring: HexRingState): number {
 }
 
 /**
+ * The minerals the player's held hexes pay on one between-sortie tick
+ * (AH-0MWL8CDGN005878A).
+ *
+ * `Σ over hexes where held: HEX_INCOME_MINERALS_PER_AGGRESSION × aggression`.
+ * It is **pure arithmetic over stored numbers** (the design-of-record's
+ * algorithmic-economy rule, `docs/OUTER_LOOP_CANDIDATES.md` Candidate D): it
+ * consumes **no RNG** (so it never shifts the seeded frontier stream and a
+ * replay stays byte-identical) and **no wall clock**, and it is total — a
+ * non-held hex contributes `0`, and a corrupt, negative or fractional
+ * aggression collapses to a non-negative integer via {@link toCount}.
+ *
+ * **Timing.** {@link runFrontierTick} calls this **after** the tick's
+ * aggression redistribution and after every AI attack has resolved, so the
+ * income is read from the ring's **post-tick** state: a hex lost to an attack
+ * this tick pays nothing (producer Q2 = b). No new persisted field is required
+ * — the rule reads the already-stored `held`/`aggression`, so a save written
+ * before the income landed ticks as soon as it is loaded.
+ *
+ * @param hexes — the ring's hexes (normally the post-tick payload's ring).
+ * @returns the banked mineral income, a non-negative whole number.
+ */
+export function hexIncome(hexes: readonly HexIncomeSource[]): number {
+  if (!Array.isArray(hexes)) return 0;
+  let total = 0;
+  for (const hex of hexes) {
+    if (hex === null || typeof hex !== 'object') continue;
+    if (hex.held !== true) continue;
+    total += HEX_INCOME_MINERALS_PER_AGGRESSION * toCount(hex.aggression);
+  }
+  return toCount(total);
+}
+
+/**
  * Resolves the hangar assault from stored numbers — the ring-end counterpart
  * to {@link resolveDefence}.
  *
@@ -1261,6 +1334,14 @@ function applyDefence(
  * tick on it raises aggression and reports **no attacks** — there is no hangar
  * defence pass (producer decision 2026-10-30, Q2 = a).
  *
+ * **Owned hexes provide minerals** (AH-0MWL8CDGN005878A). At the end of the tick
+ * — after redistribution and after every attack resolves — the ring's still-held
+ * hexes pay `hexIncome(next.ring.hexes)` into the persistent balance
+ * (`next.hangar.bankedMinerals`), and that amount is published on the record as
+ * {@link FrontierTickRecord.hexIncome}. The payout is pure arithmetic over
+ * stored numbers (no RNG draw, no wall clock), so the whole transition remains
+ * deterministic and a replay reproduces it exactly.
+ *
  * @param payload — the ring state to advance.
  * @param options — the injected clock and optional balance overrides.
  * @returns the next payload, the next clock and the tick's record.
@@ -1382,6 +1463,15 @@ export function runFrontierTick(
   // returns exactly the returned `clock`.
   next.frontierTick = clock.tick + 1;
 
+  // Owned hexes provide minerals (AH-0MWL8CDGN005878A): bank one tick's income
+  // from the ring **after** redistribution and attacks, so a hex lost this tick
+  // pays nothing (producer Q2 = b). Pure arithmetic, no RNG draw — the seeded
+  // aggression/attack streams are untouched. The balance is clamped to a
+  // non-negative integer on write, and the same amount is published on the
+  // record so the report/map announces exactly what was banked.
+  const income = hexIncome(next.ring.hexes);
+  next.hangar.bankedMinerals = toCount(next.hangar.bankedMinerals) + income;
+
   return {
     payload: next,
     clock: advanceClock(clock, 1),
@@ -1393,6 +1483,7 @@ export function runFrontierTick(
       deltas: redistribution.deltas,
       rose,
       fell,
+      hexIncome: income,
       attacks,
     },
   };

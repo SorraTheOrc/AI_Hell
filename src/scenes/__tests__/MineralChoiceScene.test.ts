@@ -18,6 +18,7 @@ import {
 } from '../core/choiceDescriptionWrap';
 import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
+import { BOT_MINERAL_CHOICE_DELAY_MS } from '../../ai/botHumanLike';
 import { RecordingSfxProvider } from '../../test/audioTestDouble';
 import type { ChoiceOption } from '../../powerups/choice';
 import { buildOwnedLoadout, type OwnedLoadoutRow } from '../../powerups/ownedLoadout';
@@ -1102,6 +1103,139 @@ describe('MineralChoiceScene', () => {
       expect(scene.getOptionLabels()).toHaveLength(0);
       expect(scene.isCountdownActive()).toBe(true);
       expect(scene.getCountdownText()).toBe('3');
+    });
+  });
+
+  describe('countdown title and 2.5 s bot dwell (AH-0MWLCMBZ0001A1HX)', () => {
+    const OPTIONS: ChoiceOption[] = [
+      { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+      { id: 'spread', name: 'Spread Shot Lv.3', kind: 'weapon-level', level: 3 },
+      { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+    ];
+
+    /**
+     * The title-readout contract added by AH-0MWLCME4100655UR. Pinned here so
+     * the test compiles clean (`tsc --noEmit`) while the method is still
+     * absent, and fails loudly against a readable message rather than a
+     * `TypeError` until the implementation lands.
+     */
+    type CountdownTitleScene = MineralChoiceScene & {
+      getCountdownTitle(): string | null;
+    };
+
+    /** Reads the red-first title contract, asserting the API exists first. */
+    function withCountdownTitle(scene: MineralChoiceScene): CountdownTitleScene {
+      const exposing = scene as CountdownTitleScene;
+      expect(
+        typeof exposing.getCountdownTitle,
+        'MineralChoiceScene must expose getCountdownTitle() (AH-0MWLCME4100655UR)',
+      ).toBe('function');
+      return exposing;
+    }
+
+    /** Every live text object rendering exactly `text`. */
+    function textObjectsWith(
+      scene: Phaser.Scene,
+      text: string,
+    ): Phaser.GameObjects.Text[] {
+      return scene.children.list.filter(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text && child.text === text,
+      );
+    }
+
+    /** Boots the overlay with the shared options plus any extra init data. */
+    async function bootChoice(
+      data: Record<string, unknown> = {},
+    ): Promise<MineralChoiceScene> {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: OPTIONS,
+        ...data,
+      });
+      await advanceGame(booted!.game, 50);
+      return booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+    }
+
+    it('AC2 — exposes and renders the chosen title under the numeral, then clears it', async () => {
+      const scene = await bootChoice();
+      const exposing = withCountdownTitle(scene);
+
+      // Nothing chosen yet: no title is exposed or drawn.
+      expect(exposing.getCountdownTitle()).toBeNull();
+      expect(textObjectsWith(scene, OPTIONS[1].name)).toHaveLength(0);
+
+      scene.select(1);
+
+      // Exposed and rendered from the moment of selection.
+      expect(exposing.getCountdownTitle()).toBe(OPTIONS[1].name);
+      const rendered = textObjectsWith(scene, OPTIONS[1].name);
+      expect(rendered).toHaveLength(1);
+      expect(rendered[0].visible).toBe(true);
+      // Beneath the large 3-2-1 numeral and inside the 960 x 720 playfield.
+      const [numeral] = textObjectsWith(scene, '3');
+      expect(numeral).toBeDefined();
+      expect(rendered[0].y).toBeGreaterThan(numeral.y);
+      expect(rendered[0].y).toBeLessThanOrEqual(GAME_HEIGHT);
+
+      // Completing the countdown destroys the title with the numeral.
+      scene.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
+      expect(exposing.getCountdownTitle()).toBeNull();
+      expect(textObjectsWith(scene, OPTIONS[1].name)).toHaveLength(0);
+    });
+
+    it('AC2 — a manual selection shows its own title, not the first option', async () => {
+      const scene = await bootChoice();
+      const exposing = withCountdownTitle(scene);
+
+      scene.select(2);
+
+      expect(exposing.getCountdownTitle()).toBe(OPTIONS[2].name);
+      expect(textObjectsWith(scene, OPTIONS[2].name)).toHaveLength(1);
+      expect(textObjectsWith(scene, OPTIONS[0].name)).toHaveLength(0);
+    });
+
+    it('AC1 — the bot dwell is pinned to 2.5 s; auto-select waits for it', async () => {
+      // The pace is single-sourced: pin the named constant once, then drive
+      // the overlay with it so no timing assertion repeats the literal.
+      expect(BOT_MINERAL_CHOICE_DELAY_MS).toBe(2500);
+
+      const calls: number[] = [];
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.loop.stop();
+      booted.game.scene.start('MineralChoiceScene', {
+        options: OPTIONS,
+        autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
+        onSelect: (index: number) => calls.push(index),
+      });
+      let time = 0;
+      const dt = 1000 / 60;
+      const stepInto = (ms: number) => {
+        const frames = Math.ceil(ms / dt);
+        for (let i = 0; i < frames; i += 1) {
+          time += dt;
+          booted!.game.step(time, dt);
+        }
+      };
+      // One create frame so the auto-select timer is armed.
+      stepInto(dt);
+
+      const scene = booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+
+      // Just before the dwell: the bot has not chosen yet.
+      stepInto(BOT_MINERAL_CHOICE_DELAY_MS - 200);
+      expect(calls).toEqual([]);
+      expect(scene.isCountdownActive()).toBe(false);
+
+      // After the dwell the bot chooses, starting the countdown; the choice
+      // is applied only when the countdown completes.
+      stepInto(400);
+      expect(calls).toEqual([]);
+      expect(scene.isCountdownActive()).toBe(true);
     });
   });
 });

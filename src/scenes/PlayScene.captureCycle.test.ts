@@ -228,6 +228,27 @@ describe('PlayScene — capture cycle wiring (AH-0MVUXCAW0001VUM6)', () => {
     // A partial ring is not yet secured.
     expect(capture!.ringSecured).toBe(false);
     expect(capture!.ringAdvanced).toBe(false);
+
+    // The capture cycle's **own** record is handed to the landing map as the
+    // sortie result (AH-0MWMGPS9R008SMEG): the target hex, the win and the
+    // capture fields survive without being re-derived on either side.
+    await advanceGame(scene.game, VICTORY_TRANSITION_HOLD_MS + 500);
+    const map = scene.game.scene.getScene(
+      HEX_MAP_SCENE_KEY,
+    ) as HexMapScene | null;
+    expect(map, 'the winning deployment must land on the hex map').not.toBeNull();
+    const sortie = map!.getSortieResult();
+    expect(sortie).not.toBeNull();
+    expect(sortie!.hexId).toBe('hex-r1-3');
+    expect(sortie!.won).toBe(true);
+    expect(sortie!.score).toBe(scene.getGameState().score);
+    expect(sortie!.forfeited).toBeNull();
+    expect(sortie!.capture).toMatchObject({
+      bankedDelta: capture!.bankedDelta,
+      grant: capture!.grant,
+      ringSecured: capture!.ringSecured,
+      ringAdvanced: capture!.ringAdvanced,
+    });
   });
 
   it('wins the ring through the assault gate and persists the opened next ring (AC7)', async () => {

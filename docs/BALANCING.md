@@ -58,6 +58,7 @@ batch-relevant flags are:
 | `--level <n>` | Play the **real campaign waves** of level `n` (1–10) with the real per-kill drop rule (per-level campaign mode) instead of the seeded skirmish. | off |
 | `--scale-levels <on\|off>` | Level-scaling curves in per-level mode: `on` resolves the enemy-count multiplier and per-kill drop chance at the selected level; `off` resolves **both to level 1** so a pre-change baseline is captured with identical harness code and seeds. | `on` |
 | `--force-fields <on\|off>` | Enemy force fields (AH-0MVJ8W4GE007OMNT): `on` (default) resolves each hostile's field at the run level from the shared `enemyForceFieldHits` curve; `off` resolves every field at level 1 — 0 hits for every shipped archetype — so a pre-change (hull-only) baseline is captured with identical harness code and seeds. | `on` |
+| `--elite-chance <0..1>` | Seeded elite (anomaly) budget for full-campaign mode (AH-0MWU667OG00287SY): forwarded to `WaveManager.setEliteWaveChance`, so a batch can measure the mechanic with elites on (`0.15`, the shipped budget) or capture the elite-free baseline (`0`). Omitted → the shipped `ELITE_WAVE_CHANCE`. | shipped budget (`0.15`) |
 
 The number of games in a batch is `policies × seeds`. For example,
 `--policies competent,legacy --games 100` runs **200** games (two policies
@@ -245,6 +246,116 @@ campaign-level input**, so they keep their scene-specific flat
 `powerUpSpawnInterval` supply source. Only the level-based gyms (`GymLevel`,
 `GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
 scene header and in the parent work item.
+
+## Elite (anomaly) wave budget — measured before/after evidence (AH-0MWU667OG00287SY)
+
+The elite (anomaly) axis (GDD §4.1/§4.6/§8.3, parent AH-0MWL7P1AO003LKXT)
+fields **one elevated counted spawn** on a share of eligible waves. Its
+shipped budget, `ELITE_WAVE_CHANCE` in
+[`src/waves/eliteSpawn.ts`](../src/waves/eliteSpawn.ts), was gated at **0**
+until a same-seed bot batch cleared the intended-experience bands. This
+section records that batch and the resulting **enable decision**.
+
+### The measured batch (elites off vs on)
+
+The two batches use the **same seed set (1–100)**, the **competent** policy,
+18 000 ticks (`dt` 1/60), the full shipped campaign, `--sample-every 5` and
+identical harness code; the only difference is the elite budget. Recorded on
+this item's branch (dev base `9475b2fd0`).
+
+```bash
+# pre-change baseline: the elite-free harness path
+node scripts/evaluate.mjs --batch --games 100 --sample-every 5 \
+  --elite-chance 0 --out /tmp/evidence/elite-off
+
+# post-change: the proposed shipped budget (15 % of eligible waves)
+node scripts/evaluate.mjs --batch --games 100 --sample-every 5 \
+  --elite-chance 0.15 --out /tmp/evidence/elite-on
+```
+
+Aggregate means per 100-game batch (`n = 100`):
+
+| Metric | Elites off (`--elite-chance 0`) | Elites on (`--elite-chance 0.15`) | Experience-target band | Verdict |
+|---|---|---|---|---|
+| `survivalSeconds` | 300.00 | 300.00 | 270.00 – 330.00 | in band |
+| `mineralsCollected` | 18.00 | 18.00 | 16.20 – 19.80 | in band |
+| `avoidableHits` | 0.00 | 0.14 | −0.50 – 0.50 | in band |
+| `upgradesSelected` (per run) | 2.00 | 2.00 | 1.50 – 2.50 | in band |
+| `waveReached` | 10.00 | 10.00 | 1.91 – 13.75 | in band |
+| `levelReached` | 2.88 | 2.89 | 0.12 – 3.50 | in band |
+| Power-ups collected | 25.38 | 26.80 | — (not a banded metric) | — |
+| Enemies destroyed — `scout` | 135.88 | 135.74 | — | — |
+| Enemies destroyed — `diver` | 70.18 | 69.26 | — | — |
+| Enemies destroyed — `swarm` | 68.67 | 68.95 | — | — |
+| Enemies destroyed — `tank` | 20.25 | 19.22 | — | — |
+
+The recorded run produced **182 elite kills across the 100 games** (≈ 1.82 per
+run), all on eligible counted archetypes:
+
+| Elite archetype | Behaviour | Kills | Death effect recorded |
+|---|---|---|---|
+| `swarm` | `splitter` | 78 | 2 ordinary children each |
+| `diver` | `volatile` | 63 | 8-shot radial burst each |
+| `scout` | `splitter` | 22 | 2 ordinary children each |
+| `tank` | `reinforced` | 19 | +1 force-field hit, no death spawn |
+
+The committed validator was run over the elites-on report and exited **0**:
+
+```bash
+npm run validate-experience -- /tmp/evidence/elite-on/balance-report.json --json
+# → passed: true; every tracked metric "in-band"; targetsVersion 2
+```
+
+**Reading the evidence.**
+
+1. **The three AC9 metrics do not drift.** Survival stays at the tick budget,
+   minerals stay at the seeded baseline, and avoidable hits rise by only
+   **0.14 per run** (well inside the ±0.5 band) — the volatile bursts and the
+   slower elite kills cost the bot a fraction of one hit per five runs.
+2. **The campaign remains playable.** Every run still reaches the tick budget
+   and level 3, so the elites add a priority decision without starving or
+   ending the run earlier.
+3. **The supply / kill profile is flat.** Per-archetype kill counts and
+   collected power-ups are within noise of the baseline; the guaranteed elite
+   drop is visible as a small power-up uplift (25.38 → 26.80), not a cascade.
+4. **No re-baseline of the intended-experience targets was needed.** The
+   committed `src/data/experience-targets.json` (targets v2) judged the
+   elites-on batch green, so the intended experience is unchanged.
+
+### The enable decision
+
+**Enabled at `ELITE_WAVE_CHANCE = 0.15`.** The evidence above clears the gate,
+so the shipped budget is no longer zero, and the shipped CSV authors the
+variant axis on its ordinary counted archetypes
+(`scout`, `diver`, `tank`, `phaser`, `swarm`, `march`, `capturer`, `grunt`,
+`raider`) with a bounded behaviour and 1–3 bonus hit points. Level 1 remains
+exempt, so onboarding is untouched. Re-measure with the two commands above
+after any elite tuning change (behaviour magnitudes, bonus HP, budget) and
+record the new verdict here.
+
+### Harness fidelity boundary — what the batch models
+
+The headless arena (`src/ai/eval/arena.ts`) models the elite through the
+**shared** seams the game and gyms run, never a divergent copy:
+
+- **Modelled:** the seeded plan and its `elite` flag on one counted spawn;
+  authored bonus HP (`eliteBonusHealth`); the `reinforced` extra field hit
+  (`eliteForceFieldHits`); `splitter` children as counted wave enemies
+  (`applyEliteDeathBehaviour` + `registerDynamicSpawn`); `volatile` shots as
+  live enemy bullets; the guaranteed power-up drop and the reward numbers
+  (`resolveEliteReward`); an `elite_killed` telemetry event carrying the
+  archetype, behaviour, children/bullet count, `guaranteedDrop` and
+  `mineralBump`.
+- **Not modelled (documented):** the arena's mineral supply is the seeded
+  harvest, and it does not model kill-time mineral payouts (the ordinary
+  per-kill re-drop or the elite's mineral bump). Modelling only the elite's
+  bump would overstate its share of an economy the harness does not otherwise
+  simulate and would push `mineralsCollected` outside the comparable baseline,
+  so `mineralsCollected` measures the *unchanged* supply instead. The elite's
+  aura/tag/announcement and its distinct death cue are presentation, covered by
+  their own unit/gym tests. The **per-level** harness mode stays elite-free: it
+  builds its own wave plan without the campaign's cumulative wave index, so it
+  has no elite stream (full-campaign mode is the shipped game's path).
 
 ### Mineral kill-drop rate doubled (AH-0MWB9LCED004K67Y)
 
@@ -1177,6 +1288,29 @@ balance report.
   mean deployment plus the 2-minute visit) rather than a flat window. The
   budgets measured under this model, and the budget verdicts that follow, are
   recorded on the parent item (AH-0MWCOWSVN003X81A) for re-rule.
+- **The matchup rule is in the measurement of record**
+  (AH-0MWL5376H001WJFZ). The authored hex `strengths`/`weaknesses` are now
+  **rules, not labels**: a weapon a boss is weak to lands **2 hit points per
+  connected shot**, a weapon it is strong to lands **1 hit point per two
+  connected shots** (resisted, never immune), neutral 1 — resolved once per
+  hex (`resolveHexMatchup`) and applied at the single shared player-damage
+  seam (`resolveHitCharge`), so every source shares it. The magnitudes are
+  **not** scene constants and no per-hex override exists; tuning them is a
+  follow-up. Ring timing re-measured through `npm run ring-timing` (seeds
+  1–3, grind line, five-wave one-level deployment) **with the rule live**:
+
+  | line | before (no matchup) | after (matchup live) | window | verdict |
+  |---|---|---|---|---|
+  | ring 1 grind | 16.2 min | **23.74 min** (23.52–23.92) | 30–90 | missed (below) |
+  | ring 2 grind | 48.7 min | **51.68 min** (50.84–52.49) | 60–180 | within tolerance |
+  | ring 1 rush | 10.2 min | 10.18 min (9.43–10.90) | 30–90 | not applicable (rush line) |
+  | ring 2 rush | 21.5 min | 21.54 min (19.81–24.90) | 60–180 | not applicable (rush line) |
+
+  The rule moved both grind lines **towards** their windows (ring 1 +7.5 min,
+  ring 2 +3.0 min) and neither left one; both were already below their lower
+  bound before this change and remain the scope of the in-flight grind-budget
+  rebalances (ring 1: AH-0MWFDQ9EY004NO4X; ring 2: AH-0MWFDQCFV007BZE5), which
+  this measurement is attached to. No tuned constant changed here.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 
@@ -1385,6 +1519,52 @@ npm run validate-experience -- eval-output/balance-report.json
 - Determinism of the mechanic itself is covered separately (AC7): a fixed seed
   and input trace produce the same graze count and score, and the rule consumes
   no RNG (`src/core/graze.test.ts`, `src/scenes/core/graze.parity.test.ts`).
+
+## Weapon evolutions — balance evidence (AH-0MWL7OWPF003E4TP AC10)
+
+An evolution changes **pattern, coverage and behaviour only** — never the
+number of damage instances per cadence tick (epic AC5) — so the expected
+outcome is **no change** to any experience metric, and the ring-timing harness
+should measure the same ring clear times. Both were re-measured against the
+real balance CSVs, competent policy, seeds 1–100, full-campaign batch
+(18000-tick budget):
+
+```bash
+npm run evaluate -- --batch --games 100 --sample-every 5 --out eval-output
+npm run validate-experience -- eval-output/balance-report.json
+npm run ring-timing -- --json --out /tmp/ring-timing-new.json
+```
+
+- `validate-experience`: **PASS, 6/6 metrics in band, no drifted metrics.**
+  `survival (s)` 300.00 (band 270–330), `minerals collected` 18.00
+  (16.20–19.80), `upgrades selected / run` 2.00 (1.50–2.50), `avoidable hits`
+  0.00 (−0.50–0.50), `wave reached` 10.00 (1.91–13.75) and `level reached`
+  2.88 (0.12–3.50) — identical to the numbers recorded by the immediately-prior
+  no-change item (Graze and danger multiplier, above). The arena reads the
+  same `resolveWeaponEvolution` resolver the game's `Player` reads
+  (`src/ai/eval/arena.ts`), so the batch genuinely exercises the fusions and
+  they moved no experience metric.
+- **Degenerate-baseline caveat.** Three of these bands are degenerate for a
+  green bot — `survivalSeconds` sits at the 300 s tick budget and
+  `avoidableHits` at 0 for all 100 games (`docs/EXPERIENCE_VALIDATION.md`), so
+  a green batch only proves the baseline has not moved, never that coverage
+  stayed flat. Coverage power creep is pinned elsewhere: epic AC5's
+  damage-instance comparison (an evolved weapon produces no more damage
+  instances per cadence tick than the two halves it replaces) and the level-0
+  output budget below.
+- **Ring timing**: the re-measured artifact is **byte-identical** to the
+  committed `docs/dev/ring-timing-baseline.json` (rings 1–2 × grind/rush ×
+  seeds 1–3), including ring 2's loadouts that carry both `ricochet` and
+  `arc` (a live pairing) — no ring clear time moved, so the "fusion shortens
+  ring 1 below its window" risk did not materialise and no tuning follow-up is
+  needed.
+- **Level-0 output budget (GDD §4.4.2)**: still holds — every non-cannon
+  weapon's resolved level-0 output stays at or below **60 %** of its pre-change
+  baseline and at most **1.5×** the cannon, pinned by
+  `src/utils/weaponStrength.test.ts` and `src/weaponBalanceDocs.test.ts`. The
+  evolved cadences are resolved output, not new catalogue rows, so the budget
+  is unchanged by construction as well as by measurement.
+- **Full suite** (`/skill:test`): green at the implementing commit.
 
 ## Weapon tuning CSV (AH-0MW0Q01VM004EPY7)
 

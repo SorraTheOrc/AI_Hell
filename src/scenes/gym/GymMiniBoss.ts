@@ -35,6 +35,10 @@
  *   wears the granted weapon's own red and phase 1 opens with that weapon's
  *   catalogue volley (Rule 2 — the encounter demonstrates the reward). OFF
  *   (the default) is the arcade per-level design path.
+ * - **MATCHUP: AUTO/▲/●/▼** — forces the effective / neutral / resisted
+ *   verdict for every weapon, or AUTO restores the encounter's authored
+ *   lookup (AH-0MWL8965R008K588), so the shared charge, cue and impact spec
+ *   are watchable on the same seam the game runs.
  * - **← INDEX** — returns to the gym index.
  */
 
@@ -57,6 +61,12 @@ import {
   buildHexBossProfile,
   type HexBossProfile,
 } from '../../core/hangarWar/hexBoss';
+import type { WeaponVerdictLookup } from '../../core/hangarWar/hexMatchup';
+import {
+  MATCHUP_GLYPHS,
+  type HexMatchupVerdict,
+} from '../../core/hangarWar/hexMatchup';
+import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { findHexRingDefinition } from '../../data/hexRingDefinitions';
 import type { BossBullet } from '../../entities/Boss';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
@@ -169,6 +179,91 @@ export function selectGymMiniBossHexProfile(enabled: boolean): boolean {
 /** Whether the gym will boot the hex-profile encounter next. */
 export function isGymMiniBossHexProfileEnabled(): boolean {
   return hexProfileEnabled;
+}
+
+/**
+ * The verdicts the gym's matchup toggle can force (AH-0MWL8965R008K588).
+ *
+ * A tester selects one and watches **any** weapon connect in that state, so the
+ * three-state presentation (charge, cue, impact spec) is observable on the
+ * shared seam without re-authoring a hex per state.
+ */
+export const GYM_MINI_BOSS_MATCHUP_STATES = [
+  'effective',
+  'neutral',
+  'resisted',
+] as const;
+
+/** One forced matchup verdict (or `null` for the authored behaviour). */
+export type GymMiniBossMatchupState =
+  (typeof GYM_MINI_BOSS_MATCHUP_STATES)[number];
+
+/**
+ * The forced verdict, or `null` when the encounter runs its authored lookup.
+ *
+ * Module-level (not per-instance) so the toggle survives the scene restart the
+ * button triggers — the same shape as {@link hexProfileEnabled}, and what the
+ * parity test drives without booting a UI.
+ */
+let forcedMatchupState: GymMiniBossMatchupState | null = null;
+
+/**
+ * Forcibly selects the matchup verdict every weapon resolves to in the gym, or
+ * `null` to restore the encounter's authored behaviour.
+ *
+ * The override reaches the shared seam **only** as the return value of
+ * {@link GymMiniBoss.getMatchupLookup} — the gym never re-derives a verdict or
+ * copies the charge/cue/spec code (AGENTS.md gym↔game parity).
+ *
+ * @param state — the verdict to force, or `null` to restore the authored one.
+ * @returns the state now in force (`null` for authored behaviour).
+ */
+export function selectGymMiniBossMatchupState(
+  state: GymMiniBossMatchupState | null,
+): GymMiniBossMatchupState | null {
+  forcedMatchupState =
+    state === 'effective' || state === 'neutral' || state === 'resisted'
+      ? state
+      : null;
+  return forcedMatchupState;
+}
+
+/** The forced verdict, or `null` when the encounter runs its authored lookup. */
+export function getGymMiniBossMatchupState(): GymMiniBossMatchupState | null {
+  return forcedMatchupState;
+}
+
+/**
+ * A verdict lookup that forces *every* catalogue weapon to one verdict.
+ *
+ * Built once per selection from the shipped catalogue, so the override is the
+ * same data shape the authored lookup is: the shared rule reads it unchanged.
+ */
+function forcedMatchupLookup(
+  state: GymMiniBossMatchupState,
+): WeaponVerdictLookup {
+  const lookup: Record<string, HexMatchupVerdict> = {};
+  for (const weaponId of Object.keys(WEAPON_CATALOGUE)) {
+    lookup[weaponId] = state;
+  }
+  return lookup;
+}
+
+/** The MATCHUP button's caption: `AUTO` or the forced state's glyph. */
+function matchupButtonLabel(
+  state: GymMiniBossMatchupState | null,
+): string {
+  return state === null ? 'AUTO' : MATCHUP_GLYPHS[state].glyph;
+}
+
+/** The MATCHUP button's cycle: AUTO → effective → neutral → resisted → AUTO. */
+function nextMatchupState(
+  state: GymMiniBossMatchupState | null,
+): GymMiniBossMatchupState | null {
+  if (state === null) return 'effective';
+  if (state === 'effective') return 'neutral';
+  if (state === 'neutral') return 'resisted';
+  return null;
 }
 
 /**
@@ -369,6 +464,21 @@ export class GymMiniBoss extends GymFormationScene<
       this.scene.restart();
     });
 
+    // MATCHUP cycles the forced verdict: AUTO (the encounter's authored
+    // lookup) → effective → neutral → resisted → AUTO. Any weapon fired in the
+    // selected state shows the shared charge, cue and impact spec, so the
+    // three-state presentation is watchable here exactly as in the game
+    // (AH-0MWL8965R008K588, gym↔game parity).
+    this._addButton(
+      explodeButton.x - 600,
+      explodeButton.y,
+      `MATCHUP: ${matchupButtonLabel(forcedMatchupState)}`,
+      LABEL_STYLE,
+    ).on('pointerdown', () => {
+      selectGymMiniBossMatchupState(nextMatchupState(forcedMatchupState));
+      this.scene.restart();
+    });
+
     this._refreshStatus();
   }
 
@@ -377,6 +487,23 @@ export class GymMiniBoss extends GymFormationScene<
   /** The single mini-boss entity for the shared `_advanceBoss` tick. */
   protected override getBoss(): MiniBoss | null {
     return (this.entities[0] as MiniBoss | undefined) ?? null;
+  }
+
+  /**
+   * The matchup verdict lookup the gym's encounters fight under. With HEX mode
+   * on the gym runs the same authored profile `PlayScene` builds for a
+   * deployment, so the charge it applies is the game's — one value, never
+   * re-derived (AH-0MWL88REU009MO5G, gym↔game parity). With it off (the arcade
+   * design row) there is no fought hex, so the shared core resolves neutral.
+   */
+  protected override getMatchupLookup(): WeaponVerdictLookup | null {
+    // A forced verdict overrides the authored lookup for every weapon, so a
+    // tester can watch any shot in any state; `null` restores the authored
+    // behaviour (AH-0MWL8965R008K588).
+    if (forcedMatchupState !== null) {
+      return forcedMatchupLookup(forcedMatchupState);
+    }
+    return hexProfileEnabled ? MINI_BOSS_GYM_HEX_PROFILE.matchup : null;
   }
 
   /**

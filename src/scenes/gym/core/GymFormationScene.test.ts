@@ -2084,13 +2084,14 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.isThornsAuraVisible()).toBe(false);
   });
 
-  it('AC4 — P5 applies movement AND fire-rate multipliers (gym parity)', async () => {
+  it('AC4 — P5 applies a fire-rate boost only, leaving movement unchanged (gym parity)', async () => {
     const scene = await boot(layer('speed_boost', CLEAR));
     const player = scene.getPlayer()!;
 
-    // Baseline: no Speed Boost, both multipliers normal.
+    // Baseline: no Speed Boost, normal fire rate and movement.
     scene.tick(0.1);
     const baseThrust = player.getMovementConfig().thrust;
+    const baseMaxSpeed = player.getMovementConfig().maxSpeed;
     expect(player.getFireRateMultiplier()).toBe(1);
 
     // Collect Speed Boost on the ship.
@@ -2099,17 +2100,20 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.getEffectsRegistry().fireRateMultiplier()).toBe(1.5);
 
     // The player section runs before drop collection each tick, so the
-    // boost lands on the following tick.
+    // fire-rate boost lands on the following tick. Movement never budges.
     scene.tick(0.1);
     expect(player.getFireRateMultiplier()).toBe(1.5);
-    expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust * 1.5);
+    expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust);
+    expect(player.getMovementConfig().maxSpeed).toBeCloseTo(baseMaxSpeed);
 
-    // Expires after 10 s → both speeds return to normal.
+    // Expires after 10 s → fire rate returns to normal; movement was never
+    // touched.
     for (let i = 0; i < 110; i++) scene.tick(0.1); // ~11 s
     expect(scene.getEffectsRegistry().isActive('speed_boost')).toBe(false);
     scene.tick(0.1);
     expect(player.getFireRateMultiplier()).toBe(1);
     expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust);
+    expect(player.getMovementConfig().maxSpeed).toBeCloseTo(baseMaxSpeed);
   });
 
   it('AC3 — renders the standalone HUD with lives counter and active-effect rows', async () => {

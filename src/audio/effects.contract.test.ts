@@ -86,6 +86,11 @@ KNOWN_CUE_SET.add('playWeaponImpactCue');
 // recipe, so it is known to the coverage check without a manifest entry of its
 // own — the underlying cue it plays is mapped and verified like every other.
 KNOWN_CUE_SET.add('playEnemyForceFieldBreakSound');
+// `playEliteDeathSound` is a semantic **alias** of the existing baked
+// boss-destruction cue for the elite's distinct death cue (AH-0MWU666IS008JOR3
+// AC3). Like the force-field alias it ships no new ToneForge recipe, so it is
+// known to the coverage check without a manifest entry of its own.
+KNOWN_CUE_SET.add('playEliteDeathSound');
 // `playMiniBossSweepSound` is the mini-boss death sweep's **dispatcher** over
 // the reuse-only palette (AH-0MVVEI7FD004TR2M): it routes a sweep cue name
 // (`playDestructionSound` / `playVictoryExplosionSound` / `playBossDestructionSound`)
@@ -98,6 +103,19 @@ KNOWN_CUE_SET.add('playMiniBossSweepSound');
 // without a manifest entry — the underlying cue is mapped and verified like
 // every other, exactly like `playEnemyForceFieldBreakSound` above.
 KNOWN_CUE_SET.add('playGrazeSound');
+// `playMatchupImpactStateCue` is the hex-matchup state **dispatcher**
+// (AH-0MWL88YYO0053DWH): it routes an `effective`/`resisted` verdict to the
+// state's baked cue (`playMatchupEffectiveImpactSound` /
+// `playMatchupResistedImpactSound`), so like the other dispatchers it ships no
+// recipe of its own and is known to the coverage check.
+KNOWN_CUE_SET.add('playMatchupImpactStateCue');
+// `playEvolutionFusionCue` / `playEvolutionExpiryCue` are the weapon-evolution
+// legibility **dispatchers** (epic AH-0MWL7OWPF003E4TP AC7): they route the
+// fusion/expiry moment to the existing baked collect/despawn cues, so they
+// ship no recipe of their own and are known to the coverage check exactly like
+// the other reuse-only dispatchers above.
+KNOWN_CUE_SET.add('playEvolutionFusionCue');
+KNOWN_CUE_SET.add('playEvolutionExpiryCue');
 
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];

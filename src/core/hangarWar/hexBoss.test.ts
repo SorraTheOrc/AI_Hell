@@ -170,7 +170,7 @@ describe('buildHexBossProfile', () => {
           [...getWeaponById(profile.grant.weaponId).offsets],
         );
       } else {
-        // Hull, Extra Life and core-bank hexes grant no weapon: nothing to wield.
+        // Hull, Extra Life and modifier hexes grant no weapon: nothing to wield.
         expect(profile.grant?.weaponId ?? null).toBeNull();
         expect(profile.demonstration).toBeNull();
       }

@@ -63,6 +63,24 @@
  * perturbed, so lowering skill degrades aim without degrading collision
  * avoidance.
  *
+ * ## Adaptive aim error (AH-0MWR057Q8004PBOD · AC4)
+ *
+ * `skill` models a fixed fallibility. The adaptive `aimErrorRad` models a
+ * *learning* pilot instead: an aim intent carries the bot-side id of the
+ * target it is engaged on (`SteeredIntent.targetId`), and the governor keeps a
+ * live error magnitude for it. Every confirmed hit on that engaged target
+ * (delivered through the shared `notifyAimHit` seam) multiplies the magnitude
+ * by `aimErrorDecay`, floored at 0, so a bot that keeps hitting zeroes in. The
+ * full `aimErrorRad` is restored only when the ship **repositions** — it has
+ * moved `aimErrorResetDistance` px on the torus from its position at the last
+ * hit, or it changes engagement target. The error is drawn from its own seeded
+ * stream (`seed + 5`) derived from the run seed, so it is deterministic and
+ * leaves the `skill` stream's draw sequence untouched. Both errors compose;
+ * at `aimErrorRad = 0` no draw is consumed and the committed decision is
+ * byte-for-byte the pre-adaptive behaviour. An aim intent with no
+ * `targetId` (no identity to compare a hit against) is left unperturbed by
+ * the adaptive error: there is no engaged target to learn about.
+ *
  * ## Smooth turning — a deadband, not a precision controller
  * (AH-0MWJ1680Z001QYV2 audit rejection)
  *
@@ -125,6 +143,7 @@ import {
   DEFAULT_ROTATION_DECELERATION,
   angularStopDisplacement,
 } from '../utils/movementModel';
+import { wrappedAxisDelta } from '../utils/wrapGeometry';
 
 /** All-false four-directional intent (the bot holds station). */
 const IDLE_INPUT: FourDirectionalInput = Object.freeze({
@@ -195,6 +214,36 @@ export interface BotHumanInputTunables {
    */
   turnHysteresisRad: number;
   /**
+   * Whether the aim actuator is **damped** (AH-0MWT4BBYO0085CN8 · RAC1).
+   *
+   * Off in the compiled factory defaults so every pre-existing harness that
+   * flies them stays byte-identical; the shipped `Default` bot-tuning preset
+   * turns it on, which is the configuration the game plays. When on:
+   *
+   * - an established **aim** turn direction cannot flip for
+   *   {@link aimTurnHoldMs} — the reversal is released (the ship coasts) instead
+   *   of pressing the opposite key, so the closed-loop aim turn cannot dither;
+   * - the adaptive aim-error angle is held between confirmed hits / target
+   *   changes instead of being redrawn every reaction, so the fallibility
+   *   biases the aim rather than jittering the bearing.
+   *
+   * `false` reduces the governor exactly to the pre-change behaviour.
+   */
+  aimDampingEnabled: boolean;
+  /**
+   * Minimum time (ms) an established **aim** turn direction is held before it
+   * may flip to the opposite key (AH-0MWT4BBYO0085CN8 · RAC1). Used only when
+   * {@link aimDampingEnabled} is on.
+   *
+   * Aim intents keep their precise per-tick release (aiming is a precision
+   * task), but a direction flip is the one move that reads as left/right
+   * thrash: the closed-loop turn brakes an overshoot by reversing, and near the
+   * bearing it reverses again a few ticks later. Inside this window a flip
+   * request is released (the ship coasts) instead of pressing the opposite key,
+   * so the aim actuator cannot dither. `0` disables only the flip hold.
+   */
+  aimTurnHoldMs: number;
+  /**
    * Minimum duration (ms) of a turn-key press (AH-0MWJ1680Z001QYV2 audit
    * rejection). Mirroring the forward/reverse press cadence, an established
    * turn is held for at least this long instead of toggling on and off within
@@ -264,6 +313,29 @@ export interface BotHumanInputTunables {
    * +maxAimErrorRad·(1-skill)]`. Default 0.35 rad (≈ 20°).
    */
   maxAimErrorRad: number;
+  /**
+   * Adaptive aim error (radians) at full magnitude (AH-0MWR057Q8004PBOD ·
+   * AC4). Unlike `skill` this is *live*: it shrinks on confirmed hits and is
+   * re-armed by a reposition. It perturbs only **aim** intents that carry a
+   * `targetId`, independently of the `skill` error, and is drawn from its own
+   * seeded stream. Default 0.02 rad (≈ 1.1°); at `0` it is disabled — no draw
+   * is consumed and the committed decision is unchanged.
+   */
+  aimErrorRad: number;
+  /**
+   * Multiplier applied to the current adaptive aim error on every confirmed
+   * hit on the engaged target (AH-0MWR057Q8004PBOD · AC4). The product is
+   * floored at 0, so a bot that keeps hitting zeroes in. Default 0.5.
+   */
+  aimErrorDecay: number;
+  /**
+   * Repositioning distance (px, torus-aware) that re-arms the adaptive aim
+   * error to `aimErrorRad` (AH-0MWR057Q8004PBOD · AC4). It is measured from
+   * the ship's position at the last confirmed hit (or at the engagement that
+   * armed the error). Default 60 px; `0` re-arms every tick, which disables
+   * the decay.
+   */
+  aimErrorResetDistance: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
@@ -276,6 +348,11 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   alignmentToleranceRad: 0.16,
   aimAlignmentToleranceRad: 0.05,
   turnHysteresisRad: 0.25,
+  // Factory default off; the shipped `Default` bot-tuning preset enables it
+  // (AH-0MWT4BBYO0085CN8), so pre-existing arena/harness baselines that fly the
+  // compiled defaults stay byte-identical while the game gets the damping.
+  aimDampingEnabled: false,
+  aimTurnHoldMs: 300,
   turnPressMinMs: 30,
   thrustPressMinMs: 200,
   thrustPressMaxMs: 225,
@@ -288,6 +365,9 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   reversePressGentleMaxPct: 0.06,
   skill: 1,
   maxAimErrorRad: 0.35,
+  aimErrorRad: 0.02,
+  aimErrorDecay: 0.5,
+  aimErrorResetDistance: 60,
 };
 
 /** Default seed for the governor's press-duration RNG (deterministic). */
@@ -307,10 +387,26 @@ function mulberry32(seed: number): () => number {
 
 /**
  * Delay (ms) before the demo bot picks an upgrade on the hold-full overlay
- * (AC4) — long enough for the choice to be visible, short enough that the
- * demo keeps moving.
+ * (AC4). Raised from 900 ms to 2500 ms so an attract/demo viewer has time to
+ * read the three offers before the bot chooses (AH-0MWL7SU2Q009GEJ2 · AC1).
+ * Once chosen, the option's title is shown beneath the 3-2-1 countdown so the
+ * pick is legible through the countdown. This dwell applies to the upgrade
+ * selection overlay only (hold-full choice and the hold-full-style mini-boss
+ * fallback); the mini-boss reward wheel keeps its own faster spin pace via
+ * {@link BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS}.
  */
-export const BOT_MINERAL_CHOICE_DELAY_MS = 900;
+export const BOT_MINERAL_CHOICE_DELAY_MS = 2500;
+
+/**
+ * Delay (ms) before the demo bot spins the mini-boss reward wheel.
+ *
+ * Deliberately kept at the previous demo pace (900 ms): the wheel has no
+ * titled options to read and no selection, so it is out of scope for the
+ * “slower upgrade selection” change (AH-0MWL7SU2Q009GEJ2 · AC4). Splitting it
+ * from {@link BOT_MINERAL_CHOICE_DELAY_MS} keeps only the upgrade-selection
+ * pause slower while every other demo surface keeps its timing.
+ */
+export const BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS = 900;
 
 // ── Asteroids scheme adapter ─────────────────────────────────────────
 
@@ -345,6 +441,15 @@ export interface SteeredIntent extends FourDirectionalInput {
    * exact so lowering `skill` never degrades collision avoidance.
    */
   readonly aim?: boolean;
+  /**
+   * The bot-side id of the target a committed **aim** intent is engaging
+   * (AH-0MWR057Q8004PBOD · AC4). The governor compares a confirmed
+   * `noteAimHit` id against it to decay the adaptive aim error, and re-arms
+   * the error when the id changes. Absent on non-aim intents and on aim
+   * intents with no identity (for example a boss, which the shared hit seam
+   * does not report), which therefore keep no adaptive error.
+   */
+  readonly targetId?: number;
 }
 
 /** The ship context the governor needs to execute a steering intent. */
@@ -387,6 +492,20 @@ export interface BotControlContext {
    * `DEFAULT_ROTATION_DECELERATION` when omitted.
    */
   rotationDeceleration?: number;
+  /**
+   * The ship's current position (AH-0MWR057Q8004PBOD · AC4), used by the
+   * adaptive aim error to detect a repositioning move. When omitted the
+   * reposition rule cannot fire; the decay and target-change re-arm still
+   * work.
+   */
+  position?: { readonly x: number; readonly y: number };
+  /**
+   * The torus the ship moves on (AH-0MWR057Q8004PBOD · AC4). The reposition
+   * distance is measured with the shared wrapped-axis helper, so a move
+   * across a seam counts as the short way round. When omitted (or a
+   * non-positive size) the raw Euclidean delta is used.
+   */
+  world?: { readonly width: number; readonly height: number };
 }
 
 /**
@@ -656,6 +775,29 @@ export class BotInputGovernor {
    * sequences unchanged by the extra skill draw.
    */
   private aimRandom: () => number;
+  /**
+   * Separate RNG stream for the adaptive aim error (AH-0MWR057Q8004PBOD ·
+   * AC4). A sibling of the run seed so the `skill` draw sequence is unchanged
+   * by the adaptive draw.
+   */
+  private adaptiveAimRandom: () => number;
+
+  /**
+   * The live adaptive aim-error magnitude (radians). Starts at `aimErrorRad`,
+   * decays on confirmed hits and is restored by a reposition or target change
+   * (AH-0MWR057Q8004PBOD · AC4).
+   */
+  private adaptiveAimErrorRad: number;
+
+  /**
+   * The ship position the reposition distance is measured from: its position
+   * at the last confirmed hit, or at the engagement that armed the error
+   * (AH-0MWR057Q8004PBOD · AC4).
+   */
+  private aimErrorOrigin: { x: number; y: number } | null = null;
+
+  /** The ship position observed on the latest update, if any. */
+  private lastShipPosition: { x: number; y: number } | null = null;
 
   /** Milliseconds left in the current forward-thrust press (0 = none). */
   private thrustPressRemainingMs = 0;
@@ -673,6 +815,24 @@ export class BotInputGovernor {
   /** Milliseconds left in the current turn-key press hold (0 = none). */
   private turnPressRemainingMs = 0;
 
+  /**
+   * Milliseconds left before an established **aim** turn may flip to the
+   * opposite key (AH-0MWT4BBYO0085CN8 · RAC1). Aim intents keep their precise
+   * per-tick release, but a reversal inside this window is released instead of
+   * pressed, so the closed-loop aim turn cannot dither left/right.
+   */
+  private aimTurnHoldRemainingMs = 0;
+
+  /**
+   * The held adaptive aim-error angle (radians), and the magnitude it was
+   * drawn at (AH-0MWT4BBYO0085CN8 · RAC1). The angle is held constant between
+   * confirmed hits / target changes instead of being redrawn every reaction,
+   * so the error biases the aim rather than jittering the bearing and driving
+   * the turn actuator. `-1` forces a fresh draw on the next commit.
+   */
+  private adaptiveAimErrorAngle = 0;
+  private adaptiveAimErrorAngleForRad = -1;
+
   private readonly tunables: BotHumanInputTunables;
 
   constructor(
@@ -687,6 +847,8 @@ export class BotInputGovernor {
     this.reverseRandom = mulberry32(seed + 2);
     this.reverseGentleRandom = mulberry32(seed + 3);
     this.aimRandom = mulberry32(seed + 4);
+    this.adaptiveAimRandom = mulberry32(seed + 5);
+    this.adaptiveAimErrorRad = this.tunables.aimErrorRad;
   }
 
   /**
@@ -701,6 +863,7 @@ export class BotInputGovernor {
     this.reverseRandom = mulberry32(value + 2);
     this.reverseGentleRandom = mulberry32(value + 3);
     this.aimRandom = mulberry32(value + 4);
+    this.adaptiveAimRandom = mulberry32(value + 5);
   }
 
   /**
@@ -715,6 +878,56 @@ export class BotInputGovernor {
     this.reversePressRemainingMs = 0;
     this.turnDirection = 0;
     this.turnPressRemainingMs = 0;
+    this.aimTurnHoldRemainingMs = 0;
+    // A new run re-arms the adaptive aim error and forgets the previous run's
+    // positions (AH-0MWR057Q8004PBOD · AC4).
+    this.adaptiveAimErrorRad = this.tunables.aimErrorRad;
+    this.adaptiveAimErrorAngleForRad = -1;
+    this.aimErrorOrigin = null;
+    this.lastShipPosition = null;
+  }
+
+  /**
+   * Records one confirmed player-bullet hit on an enemy, keyed by the
+   * bot-side id the snapshot assigned it (AH-0MWR054VE006YSLN).
+   *
+   * The shared combat core publishes the hit once per applied damage point
+   * through `CombatScene.onPlayerBulletHitEnemy`; the scene forwards the
+   * struck enemy's resolved id here via `notifyAimHit`. The adaptive
+   * aim-error state that consumes this lives in a later feature
+   * (AH-0MWR057Q8004PBOD), which compares `id` against the committed aim
+   * intent's target; this entry point is the stable seam so the shared hit
+   * path and the governor never disagree on identity.
+   *
+   * The adaptive aim error consumes it here (AH-0MWR057Q8004PBOD · AC4): a
+   * hit whose id matches the committed aim intent's `targetId` multiplies the
+   * live error by `aimErrorDecay` (floored at 0) and re-bases the reposition
+   * origin on the ship's latest position. A hit on any other enemy is inert,
+   * so a lying signal cannot sharpen the aim for the wrong reason.
+   */
+  noteAimHit(id: number): void {
+    if (!Number.isFinite(id)) return;
+    const current = this.adaptiveAimErrorRad;
+    if (!(current > 0)) return;
+    if (this.committed.aim !== true) return;
+    if (this.committed.targetId === undefined || this.committed.targetId !== id) {
+      return;
+    }
+    this.adaptiveAimErrorRad = Math.max(
+      0,
+      current * this.tunables.aimErrorDecay,
+    );
+    if (this.lastShipPosition) {
+      this.aimErrorOrigin = { ...this.lastShipPosition };
+    }
+  }
+
+  /**
+   * The live adaptive aim-error magnitude (radians) currently applied to aim
+   * intents — a telemetry and test seam (AH-0MWR057Q8004PBOD · AC4).
+   */
+  currentAimErrorRad(): number {
+    return this.adaptiveAimErrorRad;
   }
 
   /**
@@ -740,9 +953,13 @@ export class BotInputGovernor {
     context: BotControlContext = { scheme: 'fourDirectional', facing: 0 },
   ): ControlInput {
     const dtMs = Math.max(0, dtSeconds) * 1000;
+    // Track the ship position and re-arm the adaptive aim error once the ship
+    // has repositioned far enough from its last-hit position (AH-0MWR057Q8004PBOD · AC4).
+    this.observeShipPosition(context);
     this.sinceCommitMs += dtMs;
     if (this.sinceCommitMs >= this.tunables.reactionTimeMs) {
-      this.committed = this.applySkillError(decision);
+      this.rearmAimErrorOnTargetChange(decision);
+      this.committed = this.applyAimError(decision);
       this.sinceCommitMs = 0;
     } else if (typeof decision.thrust === 'boolean') {
       // Throttle/braking is a fast reflex: re-evaluate the thrust flag every
@@ -813,6 +1030,38 @@ export class BotInputGovernor {
     const direction: -1 | 0 | 1 =
       input.turnLeft === true ? -1 : input.turnRight === true ? 1 : 0;
     if (aim) {
+      // Aim intents keep the precise per-tick release, but when aim damping is
+      // on an established direction cannot flip inside `aimTurnHoldMs`
+      // (AH-0MWT4BBYO0085CN8 · RAC1): the flip is released so the closed loop
+      // coasts rather than braking with the opposite key every few ticks. A
+      // release (direction 0) is honoured immediately, so aim precision is
+      // unchanged.
+      if (this.tunables.aimDampingEnabled !== true) {
+        this.turnDirection = direction;
+        this.turnPressRemainingMs = 0;
+        return input;
+      }
+      if (this.aimTurnHoldRemainingMs > 0) {
+        this.aimTurnHoldRemainingMs = Math.max(
+          0,
+          this.aimTurnHoldRemainingMs - dtMs,
+        );
+        if (
+          direction !== 0 &&
+          this.turnDirection !== 0 &&
+          direction !== this.turnDirection
+        ) {
+          return {
+            forward: false,
+            reverse: false,
+            turnLeft: false,
+            turnRight: false,
+          };
+        }
+      }
+      if (direction !== 0 && direction !== this.turnDirection) {
+        this.aimTurnHoldRemainingMs = Math.max(0, this.tunables.aimTurnHoldMs);
+      }
       this.turnDirection = direction;
       this.turnPressRemainingMs = 0;
       return input;
@@ -940,6 +1189,110 @@ export class BotInputGovernor {
   }
 
   /**
+   * Records the ship position each tick and restores the adaptive aim error
+   * when the ship has moved `aimErrorResetDistance` px (torus-aware) from its
+   * last-hit position (AH-0MWR057Q8004PBOD · AC4).
+   */
+  private observeShipPosition(context: BotControlContext): void {
+    const position = context.position;
+    if (
+      !position ||
+      !Number.isFinite(position.x) ||
+      !Number.isFinite(position.y)
+    ) {
+      return;
+    }
+    const next = { x: position.x, y: position.y };
+    this.lastShipPosition = next;
+    const origin = this.aimErrorOrigin;
+    if (!origin) {
+      this.aimErrorOrigin = { ...next };
+      return;
+    }
+    const dx = wrappedAxisDelta(origin.x, next.x, context.world?.width ?? 0);
+    const dy = wrappedAxisDelta(origin.y, next.y, context.world?.height ?? 0);
+    if (Math.hypot(dx, dy) >= this.tunables.aimErrorResetDistance) {
+      this.adaptiveAimErrorRad = this.tunables.aimErrorRad;
+      this.aimErrorOrigin = { ...next };
+    }
+  }
+
+  /**
+   * Restores the adaptive aim error to full magnitude when the engagement
+   * target changes (AH-0MWR057Q8004PBOD · AC4): a new target is a fresh
+   * aiming problem, so the error comes back rather than staying zeroed in.
+   */
+  private rearmAimErrorOnTargetChange(decision: SteeredIntent): void {
+    const nextTarget = decision.aim === true ? decision.targetId : undefined;
+    const previousTarget =
+      this.committed.aim === true ? this.committed.targetId : undefined;
+    if (nextTarget === previousTarget) return;
+    this.adaptiveAimErrorRad = this.tunables.aimErrorRad;
+    // A new target draws a fresh bias angle rather than reusing the previous
+    // engagement's (AH-0MWT4BBYO0085CN8 · RAC1).
+    this.adaptiveAimErrorAngleForRad = -1;
+    this.aimErrorOrigin = this.lastShipPosition
+      ? { ...this.lastShipPosition }
+      : this.aimErrorOrigin;
+  }
+
+  /**
+   * Applies both seeded aim errors to a freshly committed decision: the fixed
+   * `skill` error (AH-0MV1DUSM2005HL98 · AC3) and then the live adaptive
+   * error (AH-0MWR057Q8004PBOD · AC4), in that order. They are independent and
+   * compose additively on the bearing.
+   */
+  private applyAimError(decision: SteeredIntent): SteeredIntent {
+    return this.applyAdaptiveAimError(this.applySkillError(decision));
+  }
+
+  /**
+   * Applies the live adaptive aim error to an aim intent that carries a target
+   * identity (AH-0MWR057Q8004PBOD · AC4).
+   *
+   * The error is held at the **current** (decayed/re-armed) magnitude and is
+   * drawn once for that magnitude from its own seeded stream
+   * (AH-0MWT4BBYO0085CN8 · RAC1). Holding the angle between hits keeps the
+   * fallibility as a bias rather than a per-reaction jitter that drives the
+   * turn actuator; a decay, a reposition re-arm or a target change draws a
+   * fresh angle. At a zero magnitude — including every intent with no target
+   * id, no usable bearing or `aim !== true` — no draw is consumed and the
+   * decision is returned unchanged.
+   */
+  private applyAdaptiveAimError(decision: SteeredIntent): SteeredIntent {
+    if (decision.aim !== true) return decision;
+    if (decision.targetId === undefined) return decision;
+    const errorMag = this.adaptiveAimErrorRad;
+    if (!(errorMag > 0)) return decision;
+    const rawX = decision.dirX;
+    const rawY = decision.dirY;
+    if (typeof rawX !== 'number' || typeof rawY !== 'number') {
+      return decision;
+    }
+    const len = Math.hypot(rawX, rawY);
+    if (!Number.isFinite(len) || len < 1e-9) return decision;
+    const unitX = rawX / len;
+    const unitY = rawY / len;
+    if (
+      this.tunables.aimDampingEnabled !== true ||
+      this.adaptiveAimErrorAngleForRad !== errorMag
+    ) {
+      // Damping on: draw once per magnitude (arm/decay/re-arm). Damping off:
+      // the pre-change behaviour, a fresh draw every reaction, which moves the
+      // bearing between commits and drives the turn actuator.
+      this.adaptiveAimErrorAngle =
+        (this.adaptiveAimRandom() * 2 - 1) * errorMag;
+      this.adaptiveAimErrorAngleForRad = errorMag;
+    }
+    const error = this.adaptiveAimErrorAngle;
+    const cos = Math.cos(error);
+    const sin = Math.sin(error);
+    const dx = unitX * cos - unitY * sin;
+    const dy = unitX * sin + unitY * cos;
+    return { ...decision, ...cardinalOf(dx, dy), dirX: dx, dirY: dy };
+  }
+
+  /**
    * Applies the seeded `skill` aim error to a freshly committed decision
    * (AH-0MV1DUSM2005HL98 · AC3).
    *
@@ -1000,7 +1353,9 @@ export class BotInputGovernor {
           turnDirection: this.turnDirection,
           // Aiming keeps the legacy always-brake release: a hysteresis release
           // would let the weapon axis settle up to the whole margin off target
-          // (AH-0MWJ1680Z001QYV2 audit rejection).
+          // (AH-0MWJ1680Z001QYV2 audit rejection). The anti-dither damping for
+          // aim intents is the flip hold in `applyTurnHold`
+          // (AH-0MWT4BBYO0085CN8 · RAC1).
           hysteresisRad: decision.aim === true ? 0 : this.tunables.turnHysteresisRad,
         },
       );

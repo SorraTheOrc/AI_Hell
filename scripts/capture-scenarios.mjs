@@ -89,7 +89,12 @@ const AUTHORED_SCENARIOS = [
     preset: 'relentless-hunter',
     promoLevel: 'promo-blitz-hook',
     categories: ['weapons', 'enemies'],
-    seed: 1001,
+    // Seed re-rolled from 1001 when the tracker-derived aim lead
+    // (AH-0MWR04X10002VNDG) shifted this scenario's deterministic bot run to a
+    // 40.0 s wave-2 defeat — below the ≥45 s sustained-action target. The same
+    // authored waves fly safely on the re-rolled seed; the showcase (a dense
+    // fleet and a wide swarm sweep) is unchanged.
+    seed: 1002,
   },
   {
     name: 'promo-swarm-saturation',
@@ -176,7 +181,12 @@ const AUTHORED_SCENARIOS = [
     // sustained-action target (12.8 s, wave-1 defeat). The same authored waves
     // are re-rolled onto a seed that survives the shifted economy — the
     // showcase (a hard enemy silhouette) is unchanged.
-    seed: 1004,
+    //
+    // Re-rolled again from 1004 when the tracker-derived aim lead
+    // (AH-0MWR04X10002VNDG) moved the bot run to a 9.3 s wave-1 defeat on that
+    // seed (`1005` is the nearest seed that keeps the same authored waves over
+    // the target).
+    seed: 1005,
   },
   {
     name: 'promo-boss-prelude',

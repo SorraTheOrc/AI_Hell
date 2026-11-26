@@ -50,6 +50,7 @@ import {
   escapeClearsContact,
   hostileAimVelocity,
   hostileMotionVelocity,
+  resolveArenaEvolution,
   resolveStartingLives,
   resolveWeaponLoadout,
   runArena,
@@ -420,6 +421,58 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
       const roster = levelRoster(level);
       for (const key of seen) expect(roster.has(key)).toBe(true);
     }
+  });
+
+  /** The most enemy bullets ever in flight during a run (state samples). */
+  function peakEnemyBullets(result: ArenaRunResult): number {
+    let peak = 0;
+    for (const record of result.records) {
+      if (record.kind === 'tick') {
+        peak = Math.max(peak, record.state.enemyBullets.length);
+      }
+    }
+    return peak;
+  }
+
+  // GREEN since AH-0MWFDQ9EY004NO4X (the per-level fire gate).
+  it('honours the wave shootEnabled gate: the levels-1-3 opening never fires', () => {
+    // GDD §2.4: levels 1–3 are "enemies are the bullets" — no enemy fires a
+    // projectile. The per-level campaign path must read each wave's gate, or a
+    // no-fire sortie faces fire it never faces in the game (the fidelity gap
+    // that cost the ring-timing harness every first-attempt capture).
+    for (const level of [1, 2, 3]) {
+      const result = runArena(
+        createLegacyBotPolicy(),
+        perLevel(level, { sampleEveryTicks: 10 }),
+      );
+      expect(peakEnemyBullets(result), `level ${level}`).toBe(0);
+    }
+    // The gate is a gate, not a muzzle: a firing level still fires.
+    const firing = runArena(
+      createLegacyBotPolicy(),
+      perLevel(10, { sampleEveryTicks: 10 }),
+    );
+    expect(peakEnemyBullets(firing)).toBeGreaterThan(0);
+  });
+
+  // GREEN since AH-0MWFDQ9EY004NO4X (the per-level fire gate).
+  it('honours the fire gate of the truncated deployment sortie', () => {
+    // A hex deployment plays the level's first five waves through the
+    // `levelDefinition` seam. The gate travels with those waves, so a low
+    // aggression deployment (levels 1–3) is a no-fire sortie exactly as it is
+    // in the game, and a mid-ring deployment (level 5+) is not.
+    const sortie = (level: number): LevelDefinition =>
+      truncateCampaignForDeployment([getLevelDefinition(level)!])[0];
+    const quiet = runArena(createLegacyBotPolicy(), {
+      ...perLevel(2, { sampleEveryTicks: 10 }),
+      levelDefinition: sortie(2),
+    });
+    expect(peakEnemyBullets(quiet)).toBe(0);
+    const loud = runArena(createLegacyBotPolicy(), {
+      ...perLevel(5, { sampleEveryTicks: 10 }),
+      levelDefinition: sortie(5),
+    });
+    expect(peakEnemyBullets(loud)).toBeGreaterThan(0);
   });
 
   // GREEN since AH-0MVLJFB1I0099X4Z (level selection).
@@ -1389,6 +1442,11 @@ describe('shared weapon seam guard (AH-0MW5DV9I6001D4HN AC4)', () => {
     expect(bindings('../../utils/weapons')).toContain('createBulletsFromHeading');
     expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponAtLevel');
     expect(bindings('../../utils/weaponLevels')).toContain('resolveWeaponDefinition');
+    // The arena reads the one weapon-evolution resolver the game's Player also
+    // reads, never a second pairing answer (epic AH-0MWL7OWPF003E4TP AC1).
+    expect(bindings('../../utils/weaponEvolutions')).toContain(
+      'resolveWeaponEvolution',
+    );
   });
 });
 
@@ -1959,5 +2017,67 @@ describe('per-class motion profiles are the predictor’s class models (AH-0MWOK
     expect(movedShip).toEqual(early);
     expect(early.vx).toBeCloseTo(Math.cos(1) * 100, 6);
     expect(early.vy).toBeCloseTo(Math.sin(1) * 100, 6);
+  });
+});
+
+// ── Arena weapon evolution (AH-0MWU7BAXI003HBP3) ────────────────────
+
+describe('arena weapon evolution (AH-0MWU7BAXI003HBP3)', () => {
+  it('resolves no evolution for a lone half or an unpaired loadout', () => {
+    expect(
+      resolveArenaEvolution(resolveWeaponLoadout([{ id: 'ricochet', level: 2 }])),
+    ).toBeNull();
+    expect(
+      resolveArenaEvolution(
+        resolveWeaponLoadout([
+          { id: 'ricochet', level: 2 },
+          { id: 'rapid', level: 2 },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  it('does not model the timed field tier — a level-1 pair is not fused (fidelity boundary)', () => {
+    // The arena models the owned tier only: a permanent grant never opens a
+    // *timed* window, and the arena has no field-pickup windows at all, so a
+    // level-1 pair (which the game reports as a field overlap) is left unfused
+    // here. The owned tier (level ≥ 2) is the fusion this harness represents.
+    expect(
+      resolveArenaEvolution(
+        resolveWeaponLoadout([
+          { id: 'ricochet', level: 1 },
+          { id: 'arc', level: 1 },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  it('resolves the evolved weapon once both halves are permanently owned at level ≥ 2', () => {
+    const evolution = resolveArenaEvolution(
+      resolveWeaponLoadout([
+        { id: 'ricochet', level: 2 },
+        { id: 'arc', level: 2 },
+      ]),
+    );
+
+    expect(evolution).not.toBeNull();
+    expect(evolution!.evolvedId).toBe('chain_ricochet');
+    expect(evolution!.baseIds).toEqual(['ricochet', 'arc']);
+    // Owned level 2 = upgrade index 1; the weaker half sets the fusion level.
+    expect(evolution!.level).toBe(1);
+    // The fused definition fires one forward shot and keeps the base identity.
+    expect(evolution!.definition.offsets).toEqual([0]);
+    expect(evolution!.definition.id).toBe('ricochet');
+    expect(evolution!.stats).toEqual(resolveWeaponAtLevel('ricochet', 1));
+  });
+
+  it('reads the shared resolver, so the arena and the game cannot disagree', () => {
+    // Two halves at level 2 is the owned tier; the resolver the Player reads
+    // reports the same pairing (no second pairing answer in the arena).
+    const loadout = resolveWeaponLoadout([
+      { id: 'cluster', level: 2 },
+      { id: 'mortar', level: 2 },
+    ]);
+    expect(resolveArenaEvolution(loadout)?.evolvedId).toBe('cluster_barrage');
   });
 });

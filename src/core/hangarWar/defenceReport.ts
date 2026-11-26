@@ -298,6 +298,15 @@ export interface DefenceReportModel {
    * (producer Q3 = (b)), so a win reads as real progress on the map.
    */
   readonly winBonusLine: string | null;
+  /**
+   * The banked held-hex income announcement
+   * (`HEX INCOME BANKED: +N MINERALS`), or `null` when the tick banked nothing
+   * (no hex held). Derived from the tick record's own
+   * {@link FrontierTickRecord.hexIncome} (AH-0MWL8CDGN005878A), so the line is
+   * the third persistent-mineral source's announcement, sibling to
+   * {@link winBonusLine} — never re-derived here.
+   */
+  readonly hexIncomeLine: string | null;
   /** The continue action's row key. */
   readonly continueKey: string;
   /** The continue action's rendered label. */
@@ -539,6 +548,15 @@ export function buildDefenceReport(
   const winBonus = toCount(options.winBonusMinerals ?? 0);
   const winBonusLine =
     winBonus > 0 ? `WIN BONUS BANKED: +${winBonus} MINERALS` : null;
+  // The held-hex income the tick banked (AH-0MWL8CDGN005878A): read straight
+  // from the record's own `hexIncome`, so the map and the report cannot drift
+  // and no surface re-derives the amount. A zero amount (no hex held) carries
+  // no line, mirroring the win bonus.
+  const hexIncomeBanked = toCount(record?.hexIncome);
+  const hexIncomeLine =
+    hexIncomeBanked > 0
+      ? `HEX INCOME BANKED: +${hexIncomeBanked} MINERALS`
+      : null;
 
   const rows: DefenceReportRow[] = attacks.map((attack) => {
     const hex = findHex(payload, attack.hexId);
@@ -633,6 +651,7 @@ export function buildDefenceReport(
     campaignReset: assault?.campaignReset ?? false,
     noBattleLine: DEFENCE_REPORT_NO_BATTLE_LINE,
     winBonusLine,
+    hexIncomeLine,
     continueKey: DEFENCE_REPORT_CONTINUE_KEY,
     continueLabel: options.continueLabel ?? DEFENCE_REPORT_CONTINUE_LABEL,
     focusOrder: [DEFENCE_REPORT_CONTINUE_KEY],

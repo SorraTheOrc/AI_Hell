@@ -88,7 +88,7 @@ import {
   MiniBossWheelScene,
 } from './MiniBossWheelScene';
 import { RunTelemetry } from './core/runTelemetry';
-import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
+import { BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS } from '../ai/botHumanLike';
 import {
   BANNER_BACKGROUND_ALPHA,
   BANNER_DURATION_SECONDS,
@@ -3242,14 +3242,14 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
   // ── Speed Boost (AH-0MU8QURXB008DWM7) ────────────────────────
 
-  it('P5 active → speed multiplier applied to player movement config', async () => {
+  it('P5 active → fire rate boosted while movement is untouched (weapons-only)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Default: no Speed Boost active, multiplier = 1.
+    // Baseline movement config and fire rate with no Speed Boost.
     const configDefault = player.getMovementConfig();
-    expect(registry.speedMultiplier()).toBe(1);
+    expect(registry.fireRateMultiplier()).toBe(1);
 
     // Activate Speed Boost via direct collection (drop under ship at full size).
     const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
@@ -3260,55 +3260,22 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
     expect(registry.isActive('speed_boost')).toBe(true);
-    expect(registry.speedMultiplier()).toBe(1.5);
+    expect(registry.fireRateMultiplier()).toBe(1.5);
 
-    // The multiplier is applied at the TOP of tick(), before _updateDrops.
-    // So the boosted config takes effect on the NEXT tick call.
+    // The fire-rate boost is applied at the TOP of tick(), so it lands on the
+    // next tick. The movement config must stay exactly at the base tuning
+    // (AC1, AH-0MWLU8A7P001O391).
     scene.tick(0.016);
+    expect(player.getFireRateMultiplier()).toBe(1.5);
     const configP5 = player.getMovementConfig();
-    expect(configP5.thrust).toBeCloseTo(configDefault.thrust * 1.5);
-    expect(configP5.maxSpeed).toBeCloseTo(configDefault.maxSpeed * 1.5);
-  });
+    expect(configP5.thrust).toBeCloseTo(configDefault.thrust);
+    expect(configP5.maxSpeed).toBeCloseTo(configDefault.maxSpeed);
 
-  it('P5 expired → multiplier back to 1', async () => {
-    const scene = await bootPlay();
-    const player = scene.getPlayer()!;
-    const registry = scene.getEffectsRegistry();
-
-    // Base (un-boosted) movement config, captured before activation.
-    const baseConfig = player.getMovementConfig();
-
-    // Activate Speed Boost.
-    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
-
-    expect(registry.isActive('speed_boost')).toBe(true);
-    expect(registry.speedMultiplier()).toBe(1.5);
-
-    // Advance to just inside the resolved window, then comfortably past it
-    // (AH-0MV6T0HU0001IS71). The level-0 Speed Boost window resolves to
-    // exactly 10 s, so the old fixed 10.1 s advance (600 × 0.016 + 0.5)
-    // left only ~0.1 s of margin and flaked under full-suite load; deriving
-    // the advance from the registry's actual remaining window keeps the
-    // expiry assertion deterministic regardless of tuning.
-    const remaining = registry.remaining('speed_boost')!;
-    expect(remaining).toBeGreaterThan(0);
-    const insideWindow = Math.max(1, Math.floor(remaining / 0.016) - 10);
-    for (let i = 0; i < insideWindow; i++) scene.tick(0.016);
-    expect(registry.isActive('speed_boost')).toBe(true);
-    expect(registry.speedMultiplier()).toBe(1.5);
-
-    // 2 s past the window — the effect has expired and the movement config
-    // is back to the un-boosted base.
-    for (let i = 0; i < Math.ceil(2 / 0.016); i++) scene.tick(0.016);
-
-    expect(registry.isActive('speed_boost')).toBe(false);
-    expect(registry.speedMultiplier()).toBe(1);
-    const after = player.getMovementConfig();
-    expect(after.thrust).toBeCloseTo(baseConfig.thrust);
-    expect(after.maxSpeed).toBeCloseTo(baseConfig.maxSpeed);
+    // Still untouched deeper into the window.
+    for (let i = 0; i < 100; i++) scene.tick(0.016);
+    const configMid = player.getMovementConfig();
+    expect(configMid.thrust).toBeCloseTo(configDefault.thrust);
+    expect(configMid.maxSpeed).toBeCloseTo(configDefault.maxSpeed);
   });
 
   it('re-collecting P5 refreshes the duration', async () => {
@@ -3962,7 +3929,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(restartedRegistry.isShielded).toBe(false);
     expect(restartedRegistry.isPhased).toBe(false);
     expect(restartedRegistry.phaseCharges()).toBe(0);
-    expect(restartedRegistry.speedMultiplier()).toBe(1);
+    expect(restartedRegistry.fireRateMultiplier()).toBe(1);
     expect(restartedRegistry.isMagnetActive()).toBe(false);
     expect(restartedRegistry.magnetStacks()).toBe(0);
     expect(restartedRegistry.magnetEffectStacks()).toBe(0);
@@ -9230,7 +9197,7 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     // landed wedge — the attract run never stalls behind the new sweep.
     await advanceGame(
       scene.game,
-      BOT_MINERAL_CHOICE_DELAY_MS +
+      BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS +
         MINI_BOSS_WHEEL_SPIN_DURATION_MS +
         MINI_BOSS_WHEEL_REVEAL_HOLD_MS +
         400,
@@ -9745,7 +9712,7 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
     expect(registry.isActive('speed_boost')).toBe(true);
-    expect(registry.speedMultiplier()).toBe(1.5);
+    expect(registry.fireRateMultiplier()).toBe(1.5);
   });
 });
 

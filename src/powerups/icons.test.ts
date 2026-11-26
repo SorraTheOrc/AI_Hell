@@ -19,12 +19,15 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import {
   drawCountdownRing,
   drawDropBubble,
+  drawEvolutionBadgeGlyph,
+  drawEvolvedWeaponIcon,
   drawPowerUpDrop,
   drawPowerUpIcon,
   drawWeaponDrop,
   drawWeaponIcon,
   dropBubbleRadius,
   dropCollectRadius,
+  evolvedWeaponIconColour,
   ICON_COLORS,
   MIN_RING_SWEEP,
   RING_RADIUS,
@@ -33,6 +36,7 @@ import {
   WeaponDropIconId,
 } from './icons';
 import { POWER_UP_DROP_SIZE, WEAPON_DROP_SIZE } from '../core/constants';
+import { getEvolvedWeaponDefinition } from '../utils/weaponEvolutions';
 
 /** Minimal scene used only to allocate Graphics objects. */
 class BareScene extends Phaser.Scene {
@@ -208,6 +212,113 @@ describe('weapon icon geometry (AH-0MUAYB5UK0052P1D)', () => {
       expect(seen.has(key)).toBe(false);
       seen.add(key);
     }
+  });
+});
+
+// ── Evolved weapon icons + fusion/expiry badge glyph (AH-0MWU7BC8E007SOI2) ─
+
+describe('evolved weapon icon + evolution badge glyph geometry', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootBare(): Promise<Phaser.Scene> {
+    booted = await bootScene([BareScene]);
+    return booted!.scene as Phaser.Scene;
+  }
+
+  /** Count ARC draw commands in the command buffer. */
+  function countArcs(buf: number[]): number {
+    let count = 0;
+    for (let i = 0; i < buf.length; ) {
+      if (buf[i] === Cmd.ARC) {
+        count++;
+        i += 1 + 7;
+      } else if (buf[i] === Cmd.LINE_STYLE) {
+        i += 1 + 3;
+      } else if (buf[i] === Cmd.FILL_STYLE) {
+        i += 1 + 2;
+      } else if (buf[i] === Cmd.FILL_RECT) {
+        i += 1 + 4;
+      } else {
+        i++;
+      }
+    }
+    return count;
+  }
+
+  /** Count MOVE_TO / LINE_TO commands in the command buffer. */
+  function countLineSegments(buf: number[]): number {
+    let count = 0;
+    for (let i = 0; i < buf.length; ) {
+      const op = buf[i];
+      if (op === Cmd.LINE_TO || op === Cmd.MOVE_TO) {
+        count++;
+        i += 1 + 2;
+      } else if (op === Cmd.LINE_STYLE) {
+        i += 1 + 3;
+      } else if (op === Cmd.FILL_STYLE) {
+        i += 1 + 2;
+      } else if (op === Cmd.FILL_RECT) {
+        i += 1 + 4;
+      } else {
+        i++;
+      }
+    }
+    return count;
+  }
+
+  it('draws a distinct glyph for each evolved weapon', async () => {
+    const scene = await bootBare();
+    const profiles: Array<{ id: string; arcs: number; lines: number }> = [];
+    for (const evolvedId of [
+      'chain_ricochet',
+      'cluster_barrage',
+      'fan_escort',
+    ] as const) {
+      const g = scene.add.graphics();
+      drawEvolvedWeaponIcon(g, evolvedId, 0, 0, 32);
+      profiles.push({
+        id: evolvedId,
+        arcs: countArcs(g.commandBuffer as number[]),
+        lines: countLineSegments(g.commandBuffer as number[]),
+      });
+    }
+    const seen = new Set<string>();
+    for (const profile of profiles) {
+      const key = `${profile.arcs}-${profile.lines}`;
+      expect(seen.has(key), `${profile.id} shares a geometry profile`).toBe(false);
+      seen.add(key);
+    }
+  });
+
+  it('colours each evolved icon from its own definition colour', () => {
+    for (const evolvedId of [
+      'chain_ricochet',
+      'cluster_barrage',
+      'fan_escort',
+    ] as const) {
+      expect(evolvedWeaponIconColour(evolvedId)).toBe(
+        getEvolvedWeaponDefinition(evolvedId).colour,
+      );
+    }
+  });
+
+  it('fusion and expiry badge glyphs draw different geometry (shape, not colour)', async () => {
+    const scene = await bootBare();
+    const fusion = scene.add.graphics();
+    drawEvolutionBadgeGlyph(fusion, 'fusion', 0, 0, 10, 0xffffff);
+    const expiry = scene.add.graphics();
+    drawEvolutionBadgeGlyph(expiry, 'expiry', 0, 0, 10, 0xffffff);
+
+    // Same stroke count (a merge vs a split are both two-segment chevrons) but
+    // opposite geometry: the two command buffers must never be identical.
+    expect(fusion.commandBuffer).not.toEqual(expiry.commandBuffer);
+    expect(countLineSegments(fusion.commandBuffer as number[])).toBeGreaterThan(0);
+    expect(countLineSegments(expiry.commandBuffer as number[])).toBeGreaterThan(0);
   });
 });
 

@@ -222,9 +222,27 @@ export function resetBotTuningStore(): void {
  * game boots so the demo plays the saved tuning. The committed baseline file
  * carries the same bytes plus a trailing newline
  * (`serialiseBotTuningFile`, see `botTuningSchema`).
+ *
+ * Every configuration is re-coerced on the way out
+ * (AH-0MWW4UK5M009Q36R). The loaded state is normally already complete, but
+ * the Export is the artefact a designer commits back as the bundled baseline,
+ * so it must carry the **whole** gym surface — every registered numeric field
+ * and toggle — no matter where the in-memory state came from. Re-coercing
+ * guarantees that a state cached by an older module instance (a dev-server
+ * reload after a new knob is registered) or persisted by an older build can
+ * never silently drop a newly added knob such as `holdFire*` from the
+ * exported file.
  */
 export function serialiseBotTuningState(): string {
-  return serialiseBotTuningStateBlob(loadBotTuningState());
+  const state = loadBotTuningState();
+  return serialiseBotTuningStateBlob({
+    version: state.version,
+    current: state.current,
+    configs: state.configs.map((config) => ({
+      name: config.name,
+      values: coerceTuningValues(config.values),
+    })),
+  });
 }
 
 // ── Dev write-back ──────────────────────────────────────────────────

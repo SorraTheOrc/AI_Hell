@@ -132,6 +132,7 @@ function makeRecord(
     deltas: [],
     rose: 0,
     fell: 0,
+    hexIncome: 0,
     attacks,
     ...overrides,
   };
@@ -460,6 +461,7 @@ describe('buildDefenceReport — summary, quiet ticks and totals', () => {
       deltas: [],
       rose: -1,
       fell: Number.NaN,
+      hexIncome: Number.NaN,
       attacks: undefined as unknown as readonly HexDefenceRecord[],
     });
     expect(model.quiet).toBe(true);
@@ -792,5 +794,58 @@ describe('buildDefenceReport — the banked win bonus (AH-0MWF2PA5H008XCXW)', ()
         ),
       ),
     ).toBeNull();
+  });
+});
+
+/**
+ * The banked held-hex income on the between-sortie report
+ * (AH-0MWL8CDGN005878A).
+ *
+ * The income is banked **inside** the frontier tick, so it already travels on
+ * the tick record (`FrontierTickRecord.hexIncome`) — the report derives
+ * `hexIncomeLine` from it directly and adds **no** new build option (unlike the
+ * win bonus's `winBonusMinerals`, which is banked by the capture path outside
+ * the tick). A zero amount carries no line, mirroring `winBonusLine`.
+ */
+describe('buildDefenceReport — the banked held-hex income (AH-0MWL8CDGN005878A)', () => {
+  it('announces the tick-banked income as minerals', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([], { hexIncome: 180 }),
+    );
+
+    expect(model.hexIncomeLine).toBe('HEX INCOME BANKED: +180 MINERALS');
+  });
+
+  it('carries no income line when the tick banked nothing (empty ring)', () => {
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([], { hexIncome: 0 }),
+    );
+
+    expect(model.hexIncomeLine).toBeNull();
+  });
+
+  it('derives the line from the record, not a build option (no double-source)', () => {
+    // The amount is the record's own number; the report never re-reads the ring.
+    const model = buildDefenceReport(
+      makePayload(),
+      makeRecord([], { hexIncome: 40 }),
+      // A win bonus is independent and must not change the income amount.
+      winBonusReportOptions(250),
+    );
+
+    expect(model.hexIncomeLine).toBe('HEX INCOME BANKED: +40 MINERALS');
+  });
+
+  it('normalises a hostile record amount to a non-negative integer', () => {
+    expect(
+      buildDefenceReport(makePayload(), makeRecord([], { hexIncome: -20 }))
+        .hexIncomeLine,
+    ).toBeNull();
+    expect(
+      buildDefenceReport(makePayload(), makeRecord([], { hexIncome: 12.9 }))
+        .hexIncomeLine,
+    ).toBe('HEX INCOME BANKED: +12 MINERALS');
   });
 });

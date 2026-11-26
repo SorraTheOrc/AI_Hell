@@ -61,6 +61,17 @@ export const WATCHABLE_GYM_SCENE_KEYS: readonly string[];
 export const HANGAR_WAR_SCENE_KEYS: readonly string[];
 
 /**
+ * Boot-registered shipped scenes a capture config may **not** target, sorted
+ * and frozen: launch-data overlays (`MineralChoiceScene`,
+ * `MiniBossWheelScene`, `HexCombatResultScene`), menu/navigation screens and
+ * run-lifecycle screens. `capture-scenes.test.ts` pins this list against the
+ * shipped boot list (`src/core/gameConfig.ts`), so every boot-registered scene
+ * is classified explicitly and the scene and capture registries cannot drift
+ * (AH-0MWMGPTNF004EX3T).
+ */
+export const NON_CAPTURABLE_SCENE_KEYS: readonly string[];
+
+/**
  * Every scene key a capture config may target: the watchable gym scenes plus
  * the shipped Hangar War screens, sorted and frozen.
  */

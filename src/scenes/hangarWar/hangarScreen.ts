@@ -55,6 +55,17 @@
  *   part of that model, so the gym renders the identical `TARGET INTEL` block
  *   and `▲ EFFECTIVE` / `▼ RESISTED` marks read-only
  *   (AH-0MWMT4STK001PSK4).
+ * - **An empty loadout is auto-fitted on open; the button is the explicit
+ *   path** (AH-0MWOWEPO2004B0MR, documented by AH-0MWOWEYZQ006IR9T). The
+ *   shared boss-aware selector (`selectAutoLoadout` via `applyAutoLoadout`)
+ *   is the one selection rule, consumed here and by `GymHangar`. The
+ *   `HangarScene` auto-fits it when the loadout is at its shipped default —
+ *   exactly an empty `activeLoadout.startingWeapons`
+ *   (`isDefaultHangarLoadout`), never "the selector found no strong weapon" —
+ *   so a hand-picked loadout is never silently rewritten; the
+ *   `⚡ APPLY SUGGESTED BUILDOUT` row (`buildHangarBuildoutRow`) is the one
+ *   control that replaces it, on demand. The gym renders that same row
+ *   read-only from the same model.
  *
  * The screen's two navigation/state rows — `⌗ HEX MAP` and the destructive
  * `⟲ RESTART WAR` reset — are built here too. The restart row is a two-step
@@ -82,6 +93,10 @@ import {
   type HangarPrice,
 } from '../../data/hangarCatalogue';
 import {
+  selectAutoLoadout,
+  type AutoLoadoutSuggestion,
+} from '../../core/hangarWar/hangarAutoLoadout';
+import {
   applySavedBuild,
   buy,
   canBuy,
@@ -95,6 +110,7 @@ import {
   hangarPermanentLevels,
   MAX_PERMANENT_LEVEL,
   MAX_SAVED_BUILD_NAME_LENGTH,
+  ownedLevelBearingPowerUpLevels,
   ownsEntry,
   resolveActiveHull,
   resolveActiveLoadout,
@@ -112,6 +128,7 @@ import type {
   HexRingState,
 } from '../../core/hangarWar/types';
 import {
+  admittedDeploymentDropIds,
   buildHangarDeployment,
   type HangarWarDeployment,
 } from './hangarDeployment';
@@ -123,6 +140,15 @@ import {
   type BossMatchup,
   type MatchupDefinition,
 } from '../../core/hangarWar/weaponMatchup';
+import {
+  MATCHUP_GLYPHS,
+  buildAuthoredVerdictLookup,
+  matchupGlyphFor,
+  resolveHexMatchup,
+  type MatchupGlyph,
+} from '../../core/hangarWar/hexMatchup';
+import { capDropIdsToSlotPool } from '../../powerups/slots';
+import { POWER_UP_CATALOGUE } from '../../powerups/types';
 
 /** Title rendered by the hangar screen (asserted by tests). */
 export const HANGAR_SCREEN_TITLE = 'HANGAR WAR';
@@ -258,6 +284,13 @@ export interface HangarWeaponOption {
    * `strengths` do, otherwise `neutral`.
    */
   matchup: BossMatchup;
+  /**
+   * The shared matchup glyph for this weapon against the selected hex
+   * (AH-0MWL8965R008K588): the **same** vocabulary entry the fight draws, so
+   * the selector and combat cannot drift. Resolved by the one matchup rule
+   * (`resolveHexMatchup` over the hex's authored lookup), never re-derived.
+   */
+  matchupGlyph: MatchupGlyph;
 }
 
 /** One permanent-modifier option in the deployment selector. */
@@ -273,6 +306,42 @@ export interface HangarModifierOption {
   /** Full row text as rendered. */
   label: string;
   /** True when toggling this modifier would change the deployment. */
+  actionable: boolean;
+}
+
+/**
+ * One installed power-up option in the deployment selector.
+ *
+ * A power-up is a permanent passive kind, not a flown slot, so its row reports
+ * three facts rather than a boolean `equipped`:
+ *
+ * - `selected` — the kind is in the player's selection
+ *   (`activeLoadout.powerUps`, or the all-owned default when absent);
+ * - `equipped` — the kind is **actually installed**: it is selected *and* it
+ *   survives the shared six-slot trim, which is exactly the set the run
+ *   grants;
+ * - `blocked` — selected but trimmed away by the cap, rendered as a
+ *   non-actionable row so the display never silently differs from the grant
+ *   (assumption A3).
+ */
+export interface HangarPowerUpOption {
+  /** Row key (`power-up:<powerUpId>`). */
+  key: string;
+  /** Power-up id (the catalogue entry id). */
+  id: string;
+  /** Display name from the catalogue. */
+  name: string;
+  /** The permanent level the deployment grants (base `1` when unupgraded). */
+  level: number;
+  /** Whether the kind is in the player's selection. */
+  selected: boolean;
+  /** Whether the deployment actually installs the kind (selected and admitted). */
+  equipped: boolean;
+  /** Selected but trimmed away by the shared six-slot cap (non-actionable). */
+  blocked: boolean;
+  /** Full row text as rendered. */
+  label: string;
+  /** True when toggling this power-up would change the deployed build. */
   actionable: boolean;
 }
 
@@ -352,6 +421,73 @@ export function buildHangarRestartRow(armed = false): HangarRestartRow {
       : '⟲ RESTART WAR — start a fresh war',
     actionable: true,
   };
+}
+
+/**
+ * Row key of the `⚡ APPLY SUGGESTED BUILDOUT` row — the one explicit action
+ * that equips the boss-aware suggestion (parent AH-0MWOROJYT004WPSD).
+ *
+ * Exported as a stable key so the game, the gym and the tests can address the
+ * row without spelling a string literal, exactly as the map/restart rows do.
+ */
+export const BUILDOUT_ROW_KEY = 'buildout';
+
+/**
+ * The `⚡ APPLY SUGGESTED BUILDOUT` row: the player-facing action that equips
+ * the selector's suggestion (`suggestedLoadout`) on demand.
+ *
+ * The row is actionable whenever a suggestion exists — which is always, since
+ * the selector is total — so a hand-picked loadout can be replaced only by a
+ * deliberate activation, never silently by opening the screen
+ * (producer Q1 = B). It sits in the fixed bottom-row block, directly above the
+ * deployment it feeds.
+ */
+export interface HangarBuildoutRow {
+  /** Stable row key ({@link BUILDOUT_ROW_KEY}). */
+  key: string;
+  /** Full row text as rendered (`⚡ APPLY SUGGESTED BUILDOUT — 3 weapons`). */
+  label: string;
+  /** True whenever a suggestion exists (always, for a total selector). */
+  actionable: boolean;
+}
+
+/**
+ * Builds the apply-suggested-buildout row (pure).
+ *
+ * The label states **what** it will equip (the suggested weapon count) and is
+ * paired with a non-colour glyph (`⚡`), so the affordance is readable without
+ * colour (repo CVD policy). The count comes from the one selector result the
+ * model publishes, so the row and the applied buildout can never disagree.
+ *
+ * @param suggestion — the selector's published suggestion.
+ * @returns the row the screen renders and focuses.
+ */
+export function buildHangarBuildoutRow(
+  suggestion: AutoLoadoutSuggestion,
+): HangarBuildoutRow {
+  const count = suggestion.startingWeapons.length;
+  return {
+    key: BUILDOUT_ROW_KEY,
+    label: `⚡ APPLY SUGGESTED BUILDOUT — ${count} weapon${count === 1 ? '' : 's'}`,
+    actionable: true,
+  };
+}
+
+/**
+ * Whether the loadout is at its shipped default — an **empty** starting-weapon
+ * selection (AH-0MWOWEF3Q008BO5J, producer Q1 = B).
+ *
+ * The rule is deliberately the raw persisted list, not `resolveActiveLoadout`
+ * and not "the selector found no strong weapon": a hand-picked loadout whose
+ * weapons are all neutral (or even resisted) is still a deliberate choice and
+ * must never be auto-fitted. A modifier alone does not make a loadout
+ * non-default — only starting weapons count.
+ *
+ * @param payload — the payload whose active loadout is inspected.
+ * @returns true only when `activeLoadout.startingWeapons` is empty.
+ */
+export function isDefaultHangarLoadout(payload: HangarWarPayload): boolean {
+  return payload.hangar.activeLoadout.startingWeapons.length === 0;
 }
 
 /** Row key of the hangar's `SAVE CURRENT BUILD` row. */
@@ -472,15 +608,37 @@ export interface HangarBossIntel {
 }
 
 /** The non-colour tag a strong (countering) weapon row carries. */
-export const HANGAR_STRONG_MARKER = '▲ EFFECTIVE';
+export const HANGAR_STRONG_MARKER = MATCHUP_GLYPHS.effective.marker;
 
 /** The non-colour tag a weak (resisted) weapon row carries. */
-export const HANGAR_WEAK_MARKER = '▼ RESISTED';
+export const HANGAR_WEAK_MARKER = MATCHUP_GLYPHS.resisted.marker;
 
-/** The visible mutation on a matchup-tagged label: neutral is unchanged. */
-function withMatchupMarker(label: string, matchup: BossMatchup | null): string {
+/** The non-colour tag a neutral weapon row carries (never a blank mark). */
+export const HANGAR_NEUTRAL_MARKER = MATCHUP_GLYPHS.neutral.marker;
+
+/**
+ * The visible mutation on a matchup-tagged label.
+ *
+ * Every state is marked on the **loadout selector** — neutral included:
+ * "unmarked" would be indistinguishable from "no data" for a player reading
+ * without colour (AH-0MWL8965R008K588). The markers are the shared
+ * vocabulary's, so the selector cannot drift from the combat feedback.
+ *
+ * `markNeutral` is off for the unlock-tree rows, which keep their historical
+ * rendering for a neutral entry (their own byte-identical contract, AC3 of
+ * AH-0MWI5AK1E008HDHH) — the glyph vocabulary they draw is still the shared
+ * one.
+ */
+function withMatchupMarker(
+  label: string,
+  matchup: BossMatchup | null,
+  markNeutral = false,
+): string {
   if (matchup === 'strong') return `${label} — ${HANGAR_STRONG_MARKER}`;
   if (matchup === 'weak') return `${label} — ${HANGAR_WEAK_MARKER}`;
+  if (matchup === 'neutral' && markNeutral) {
+    return `${label} — ${HANGAR_NEUTRAL_MARKER}`;
+  }
   return label;
 }
 
@@ -523,8 +681,23 @@ export interface HangarScreenModel {
   weaponOptions: HangarWeaponOption[];
   /** Permanent-modifier selector rows, in owned order. */
   modifierOptions: HangarModifierOption[];
+  /**
+   * Installed level-bearing power-up selector rows, in owned order (the
+   * weapon/modifier-style toggle list for the permanent power-up kinds).
+   */
+  powerUpOptions: HangarPowerUpOption[];
   /** The ▶ DEPLOY row (the deployment this loadout launches). */
   deployRow: HangarDeployRow;
+  /**
+   * The boss-aware selector's suggestion for this payload and target
+   * (AH-0MWOWEF3Q008BO5J) — a full replacement derived from ownership, levels
+   * and the target, never from the current loadout. Published separately from
+   * the equipped rows, so a hand-picked loadout is shown unchanged beside the
+   * suggestion until the player explicitly applies it.
+   */
+  suggestedLoadout: AutoLoadoutSuggestion;
+  /** The `⚡ APPLY SUGGESTED BUILDOUT` row (the explicit apply action). */
+  buildoutRow: HangarBuildoutRow;
   /** The `⌗ HEX MAP` navigation row (one click to what the player holds). */
   mapRow: HangarMapRow;
   /** The `⟲ RESTART WAR` reset row (two-step confirm, `bestScore` kept). */
@@ -583,6 +756,11 @@ function clonePayload(payload: HangarWarPayload): HangarWarPayload {
       activeLoadout: {
         startingWeapons: [...payload.hangar.activeLoadout.startingWeapons],
         modifiers: [...payload.hangar.activeLoadout.modifiers],
+        // Preserve the tri-state so an update can never materialise an absent
+        // selection or discard an explicit one.
+        ...(payload.hangar.activeLoadout.powerUps !== undefined
+          ? { powerUps: [...payload.hangar.activeLoadout.powerUps] }
+          : {}),
       },
       ...(payload.hangar.savedBuilds !== undefined
         ? {
@@ -830,6 +1008,11 @@ export function buildHangarWeaponOptions(
 ): HangarWeaponOption[] {
   const loadout = resolveActiveLoadout(payload.hangar);
   const equippedIds = new Set(loadout.startingWeapons);
+  // The verdict comes from the **one** matchup rule over the hex's authored
+  // lookup — the selector never re-derives it (AH-0MWL8965R008K588).
+  const lookup = target
+    ? buildAuthoredVerdictLookup(target.strengths, target.weaknesses)
+    : null;
   const options: HangarWeaponOption[] = [];
   for (const id of payload.hangar.unlockedWeapons) {
     const entry = findHangarEntry(id, catalogue);
@@ -837,7 +1020,13 @@ export function buildHangarWeaponOptions(
     const equipped = equippedIds.has(id);
     // Resolved from the shipped weapon id through the F1 rule, so the
     // ring-data (`waveLaser`) and catalogue (`wave_laser`) spellings agree.
-    const matchup = resolveBossMatchup(entry.weaponId, target);
+    const verdict = resolveHexMatchup(entry.weaponId, lookup);
+    const matchup: BossMatchup =
+      verdict === 'effective'
+        ? 'strong'
+        : verdict === 'resisted'
+          ? 'weak'
+          : 'neutral';
     options.push({
       key: `weapon:${id}`,
       id,
@@ -846,6 +1035,7 @@ export function buildHangarWeaponOptions(
       label: withMatchupMarker(
         `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
         matchup,
+        true,
       ),
       // Every owned weapon is toggleable, including the last equipped one:
       // the player may deploy with no extra weapon at all, in which case the
@@ -853,6 +1043,7 @@ export function buildHangarWeaponOptions(
       // (AH-0MVZJ6V1J001DA9D).
       actionable: true,
       matchup,
+      matchupGlyph: matchupGlyphFor(verdict),
     });
   }
   return options;
@@ -883,7 +1074,82 @@ export function buildHangarModifierOptions(
   return options;
 }
 
-/** Optional target knobs for {@link buildHangarDeployRow}. */
+/**
+ * Builds the power-up rows for the deployment selector (owned, level-bearing
+ * kinds only), marking each as installed, off or blocked by the shared cap.
+ *
+ * The displayed loadout must equal the granted one (assumption A3), so the
+ * installed/blocked split is read from **the same** deployment the run builds:
+ * `deployment.powerUpLevels` is the resolved selection and
+ * {@link admittedDeploymentDropIds} is the one six-slot trim the grant applies.
+ * An unselected kind that would not be admitted anyway is rendered
+ * non-actionable, so the player is never offered a toggle that changes
+ * nothing in the run.
+ *
+ * @param payload — the payload to present (never mutated).
+ * @param catalogue — the tree to resolve against (injectable for tests).
+ * @param deployment — the resolved deployment (built once by the model);
+ *   defaults to building it from `payload` so the function is total.
+ * @returns the power-up selector rows, in install order.
+ */
+export function buildHangarPowerUpOptions(
+  payload: HangarWarPayload,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  deployment?: HangarWarDeployment,
+): HangarPowerUpOption[] {
+  const owned = ownedLevelBearingPowerUpLevels(payload.hangar);
+  const selected = new Set(
+    resolveActiveLoadout(payload.hangar, catalogue).powerUps ?? [],
+  );
+  const resolved = deployment
+    ?? buildHangarDeployment(payload, { catalogue });
+  const admitted = new Set(admittedDeploymentDropIds(resolved));
+  const currentIds = [
+    ...resolved.startingWeapons,
+    ...resolved.powerUpLevels.map((row) => row.id),
+  ];
+
+  return owned.map((row) => {
+    const entry = findHangarEntry(row.id, catalogue);
+    // The hangar catalogue supplies the nicer display name for a sold kind; a
+    // hex-granted power-up falls back to its shipped catalogue name.
+    const name =
+      entry?.name
+      ?? POWER_UP_CATALOGUE[row.id]?.name
+      ?? row.id;
+    const isSelected = selected.has(row.id);
+    const equipped = admitted.has(row.id);
+    const blocked = isSelected && !equipped;
+    // An unselected kind is selectable only when adding it would actually be
+    // admitted; otherwise the toggle would change nothing in the run.
+    const addable = blocked
+      ? false
+      : equipped || currentIds.includes(row.id)
+        || admittedSetWith(currentIds, row.id).has(row.id);
+    const actionable = blocked ? false : addable;
+    const marker = blocked
+      ? ' — BLOCKED (SLOTS FULL)'
+      : equipped
+        ? ' — EQUIPPED'
+        : ' — OFF';
+    return {
+      key: `power-up:${row.id}`,
+      id: row.id,
+      name,
+      level: row.level,
+      selected: isSelected,
+      equipped,
+      blocked,
+      label: `POWER-UP ${name}${marker}`,
+      actionable,
+    };
+  });
+}
+
+/** The admitted set when `id` is appended to `ids` (one shared cap rule). */
+function admittedSetWith(ids: readonly string[], id: string): Set<string> {
+  return new Set(capDropIdsToSlotPool([...ids, id]));
+}
 export interface BuildHangarDeployRowOptions {
   /**
    * The hex the player chose on the map. Omitted/`null` keeps the existing
@@ -967,8 +1233,12 @@ export function formatSalvageLine(payload: HangarWarPayload): string {
 /**
  * Builds the complete hangar-screen model (pure).
  *
- * Reading order is the focus order: the unlock tree first, then hulls, then
- * the starting-weapon loadout. Only actionable rows enter the focus order.
+ * Reading order is the focus order: the unlock tree first, then hulls, the
+ * starting-weapon loadout (weapons then the installable `POWER-UP` rows), the
+ * modifiers and the saved builds, then the
+ * `⚡ APPLY SUGGESTED BUILDOUT` row, the deployment, the map and the restart
+ * rows. Only actionable rows enter the focus order (the buildout row always
+ * is).
  *
  * @param payload — the payload to present (never mutated).
  * @param catalogue — the tree to present (injectable for tests/fixtures).
@@ -995,6 +1265,23 @@ export function buildHangarScreenModel(
   const unlockRows = buildHangarUnlockRows(payload, catalogue, target);
   const hullOptions = buildHangarHullOptions(payload, catalogue);
   const weaponOptions = buildHangarWeaponOptions(payload, catalogue, target);
+  // The deployment the ▶ DEPLOY row describes, resolved once so the power-up
+  // rows' installed/blocked split is read from exactly the launch the run
+  // builds (`buildHangarDeployRow` resolves the same pure payload).
+  const deployment = buildHangarDeployment(payload, {
+    catalogue,
+    hexId: options.targetHexId ?? null,
+  });
+  const powerUpOptions = buildHangarPowerUpOptions(
+    payload,
+    catalogue,
+    deployment,
+  );
+  // The suggestion is fitted against exactly the intel the screen publishes
+  // (`bossIntel`), never a second target resolution, so the row's count and
+  // the deployed loadout agree with the TARGET INTEL block above them.
+  const suggestedLoadout = selectAutoLoadout(payload, bossIntel, catalogue);
+  const buildoutRow = buildHangarBuildoutRow(suggestedLoadout);
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
   const mapRow = buildHangarMapRow();
   const restartRow = buildHangarRestartRow(options.restartArmed === true);
@@ -1006,8 +1293,13 @@ export function buildHangarScreenModel(
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
     ...weaponOptions.filter((row) => row.actionable),
+    ...powerUpOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
     ...savedBuildRows.filter((row) => row.actionable),
+    // The apply-suggested-buildout row sits with the loadout it replaces and
+    // immediately before the deployment it feeds, so keyboard reach matches
+    // the screen's reading order (AH-0MWOWEF3Q008BO5J).
+    buildoutRow,
     deployRow,
     // The navigation row follows the primary action, mirroring `HexMapScene`'s
     // convention of placing its own navigation row last in the focus order.
@@ -1023,8 +1315,11 @@ export function buildHangarScreenModel(
     unlockRows,
     hullOptions,
     weaponOptions,
+    powerUpOptions,
     modifierOptions,
     deployRow,
+    suggestedLoadout,
+    buildoutRow,
     mapRow,
     restartRow,
     savedBuildMessage: options.savedBuildMessage ?? null,
@@ -1163,6 +1458,74 @@ export function equipHangarHull(
   return { ok: next.hangar.activeHull === hullId, reason: null, payload: next };
 }
 
+/** The result of applying the boss-aware suggestion: a fresh payload.
+ *
+ * `changed` is what the scene branches on: an already-suggested loadout needs
+ * no further `saveHangarWarPayload` write, so re-applying cannot churn the
+ * persisted payload.
+ */
+export interface HangarBuildoutApplyResult {
+  /** Whether the loadout actually changed (false when it already matched). */
+  readonly changed: boolean;
+  /** The selector result that was applied (the model publishes the same one). */
+  readonly suggestion: AutoLoadoutSuggestion;
+  /** The payload after the update (always fresh; the input is untouched). */
+  readonly payload: HangarWarPayload;
+}
+
+/**
+ * Equips the boss-aware suggestion as a full replacement loadout (pure).
+ *
+ * The one updater behind the `⚡ APPLY SUGGESTED BUILDOUT` row: it asks the
+ * shared selector for its result, then writes it through the economy's
+ * `equipLoadout` path — no selection, matchup or ownership rule is re-derived
+ * here, and the equipped list is filtered to owned entries by the economy
+ * exactly as every manual toggle is. Modifiers are carried across untouched
+ * (the suggestion only ever selects starting weapons). The suggestion's
+ * **granted power-ups** become the explicit `activeLoadout.powerUps`
+ * selection, so the auto-loadout selector can install power-ups through the
+ * same tri-state field a manual toggle writes.
+ *
+ * The selector ignores the current loadout by design (it is a stable fixed
+ * point), so a second apply reports `changed: false` and re-applying cannot
+ * duplicate or oscillate entries. An explicit apply is the **only** path that
+ * replaces a hand-picked loadout; building the model never mutates payload
+ * (producer Q1 = B).
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param catalogue — the tree ownership is resolved against (defaults shipped).
+ * @param target — the target hex's authored lists (the model's `bossIntel`),
+ *   or `null` for an unauthored/unknown target (every weapon neutral).
+ * @returns whether anything changed, the applied suggestion and the fresh
+ *   payload to persist.
+ */
+export function applyAutoLoadout(
+  payload: HangarWarPayload,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+  target: MatchupDefinition | null = null,
+): HangarBuildoutApplyResult {
+  const suggestion = selectAutoLoadout(payload, target, catalogue);
+  const current = resolveActiveLoadout(payload.hangar, catalogue);
+  const next = clonePayload(payload);
+  next.hangar = equipLoadout(payload.hangar, {
+    startingWeapons: [...suggestion.startingWeapons],
+    modifiers: payload.hangar.activeLoadout.modifiers,
+    powerUps: suggestion.grantedPowerUps.map((pick) => pick.id),
+  });
+  const applied = resolveActiveLoadout(next.hangar, catalogue);
+  return {
+    changed: !sameIds(applied.startingWeapons, current.startingWeapons)
+      || !sameIds(applied.powerUps ?? [], current.powerUps ?? []),
+    suggestion,
+    payload: next,
+  };
+}
+
+/** Whether two id lists are equal in order and content. */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
 /**
  * Toggles one owned starting weapon in the active loadout (pure).
  *
@@ -1184,6 +1547,9 @@ export function toggleHangarWeapon(
   next.hangar = equipLoadout(payload.hangar, {
     startingWeapons: requested,
     modifiers: payload.hangar.activeLoadout.modifiers,
+    // Carry the raw tri-state through untouched so a weapon toggle never
+    // materialises an absent selection or drops an explicit one.
+    powerUps: payload.hangar.activeLoadout.powerUps,
   });
   const applied = resolveActiveLoadout(next.hangar).startingWeapons;
   return {
@@ -1214,10 +1580,65 @@ export function toggleHangarModifier(
   next.hangar = equipLoadout(payload.hangar, {
     startingWeapons: payload.hangar.activeLoadout.startingWeapons,
     modifiers: requested,
+    // Preserve the raw power-up tri-state across a modifier toggle.
+    powerUps: payload.hangar.activeLoadout.powerUps,
   });
   const applied = resolveActiveLoadout(next.hangar).modifiers;
   return {
     ok: equipped ? !applied.includes(modifierId) : applied.includes(modifierId),
+    reason: null,
+    payload: next,
+  };
+}
+
+/**
+ * Toggles one owned level-bearing power-up in the deployment selection (pure).
+ *
+ * The selection is read through `resolveActiveLoadout`, so the first toggle on
+ * a save without the field starts from **every owned power-up** (today's
+ * behaviour) and then writes an explicit list — deselecting one keeps the
+ * rest selected. The write routes through `equipLoadout`, which filters the
+ * list to owned, catalogue-known, level-bearing ids, so a corrupt or stale id
+ * can never be installed. An empty selection (`[]`) is legal: the player may
+ * deploy with no power-up installed.
+ *
+ * Toggling changes the **selection**, not the six-slot accounting; the
+ * deployment's shared cap still trims what the run actually grants, and the
+ * screen marks a selected-but-trimmed row `blocked` through the same rule.
+ *
+ * @param payload — the persistent war payload (never mutated).
+ * @param powerUpId — the owned power-up id to toggle.
+ * @returns the fresh payload and whether the requested change landed.
+ */
+export function toggleHangarPowerUp(
+  payload: HangarWarPayload,
+  powerUpId: string,
+): HangarUpdateResult {
+  const ownedPowerUps = ownedLevelBearingPowerUpLevels(payload.hangar).map(
+    (row) => row.id as string,
+  );
+  // An unowned/unknown/non-level-bearing id is a no-op that leaves the raw
+  // tri-state untouched (absent stays absent), so a stale UI can never
+  // materialise a selection from an id the economy would drop.
+  if (!ownedPowerUps.includes(powerUpId)) {
+    return { ok: false, reason: null, payload: clonePayload(payload) };
+  }
+  const current = resolveActiveLoadout(payload.hangar).powerUps ?? [];
+  const selected = current.includes(powerUpId);
+  const requested = selected
+    ? current.filter((id) => id !== powerUpId)
+    : [...current, powerUpId];
+  const next = clonePayload(payload);
+  next.hangar = equipLoadout(payload.hangar, {
+    startingWeapons: payload.hangar.activeLoadout.startingWeapons,
+    modifiers: payload.hangar.activeLoadout.modifiers,
+    powerUps: requested,
+  });
+  const applied = resolveActiveLoadout(next.hangar).powerUps ?? [];
+  return {
+    ok: selected
+      ? !applied.includes(powerUpId)
+      : applied.includes(powerUpId),
     reason: null,
     payload: next,
   };
@@ -1551,8 +1972,18 @@ export interface HangarScreenHandlers {
   onEquipHull(hullId: string): void;
   /** Toggle an owned starting weapon in the loadout. */
   onToggleWeapon(weaponId: string): void;
+  /** Toggle an owned level-bearing power-up in the deployment selection. */
+  onTogglePowerUp(powerUpId: string): void;
   /** Toggle an owned permanent modifier on the loadout. */
   onToggleModifier(modifierId: string): void;
+  /**
+   * Equip the suggested buildout (the `⚡ APPLY SUGGESTED BUILDOUT` row).
+   *
+   * Optional so a read-only render — the gym, a preview — can present the row
+   * with the identical label while activating nothing
+   * (AH-0MWOWEF3Q008BO5J). The screen wires it to `applyAutoLoadout`.
+   */
+  onApplyBuildout?(): void;
   /** Launch a deployment at `hexId` (the ▶ DEPLOY row). */
   onDeploy(hexId: string | null): void;
   /** Open the hex map (the `⌗ HEX MAP` row). */
@@ -1631,6 +2062,27 @@ export interface HangarScreenView {
   focusRow(key: string): boolean;
   /** Activates the focused row (what Enter/Space does). */
   activateFocused(): void;
+  /**
+   * The first unlock-tree row currently visible (the scroll offset, in rows).
+   * `0` when the whole tree fits or nothing has scrolled.
+   */
+  getUnlockScroll(): number;
+  /**
+   * Scrolls the unlock tree by `delta` rows (positive = down), clamped to the
+   * model. Returns the applied offset so a caller can assert the clamp.
+   */
+  scrollUnlockRows(delta: number): number;
+  /** Whether `key` is an unlock row inside the visible window (test seam). */
+  isUnlockRowVisible(key: string): boolean;
+  /**
+   * The pointer scroll affordances rendered beside the unlock tree. They are
+   * not model rows (so the keyboard focus order is unchanged), but a pointer
+   * user can click them to reveal the rows either side of the window.
+   */
+  readonly scrollControls: {
+    readonly up: Phaser.GameObjects.Text;
+    readonly down: Phaser.GameObjects.Text;
+  };
   /** Destroys the rendered objects and detaches the keyboard listener. */
   destroy(): void;
 }
@@ -1681,7 +2133,7 @@ const SECTION_Y = 118;
 const ROW_START_Y = 144;
 
 /** Vertical step between rows in either column. */
-export const HANGAR_ROW_STEP = 18;
+export const HANGAR_ROW_STEP = 16;
 
 /**
  * Y positions of the target-intel block (top-left, above the unlock tree).
@@ -1700,11 +2152,79 @@ export function hangarUnlockRowY(index: number): number {
   return HANGAR_UNLOCK_ROW_START_Y + index * HANGAR_ROW_STEP;
 }
 
+/**
+ * The unlock tree is taller than the space above the fixed bottom block at the
+ * full 23-row roster, so it renders through a fixed-height **viewport** and
+ * scrolls instead of colliding with the buildout/restart/map/deploy rows
+ * (AH-0MWWI3ONJ004QRR9).
+ *
+ * The window holds 12 rows (12 × 16 px = 192 px), ending one row step above the
+ * pointer scroll affordance and two steps above the top bottom-block slot
+ * (`HANGAR_BUILDOUT_ROW_Y`). Every constant is single-sourced with the renderer
+ * and the layout spec, so a future roster change cannot silently reintroduce
+ * the collision.
+ */
+export const HANGAR_UNLOCK_VISIBLE_ROWS = 12;
+
+/** The Y of the first row inside the unlock viewport (the top of the window). */
+export const HANGAR_UNLOCK_VIEWPORT_TOP_Y = HANGAR_UNLOCK_ROW_START_Y;
+
+/** The Y of the last row that fits inside the unlock viewport. */
+export const HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y =
+  HANGAR_UNLOCK_ROW_START_Y
+  + (HANGAR_UNLOCK_VISIBLE_ROWS - 1) * HANGAR_ROW_STEP;
+
+/**
+ * The Y of the pointer scroll affordance, directly beneath the viewport and
+ * above the fixed bottom block.
+ */
+export const HANGAR_UNLOCK_SCROLL_INDICATOR_Y =
+  HANGAR_UNLOCK_ROW_START_Y + HANGAR_UNLOCK_VISIBLE_ROWS * HANGAR_ROW_STEP;
+
+/**
+ * The largest scroll offset (in rows) the unlock viewport allows. `0` when the
+ * whole tree fits, so callers can treat a scrollable list and a short one alike.
+ */
+export function hangarUnlockMaxScroll(
+  model: Pick<HangarScreenModel, 'unlockRows'>,
+): number {
+  return Math.max(0, model.unlockRows.length - HANGAR_UNLOCK_VISIBLE_ROWS);
+}
+
+/**
+ * The scroll offset that keeps unlock row `index` inside the visible window.
+ *
+ * Pure and total: the renderer, the pointer affordances and the navigation
+ * spec share this one rule, so a focused row can never be scrolled out of view.
+ * The returned offset is not clamped to the model's maximum — the caller clamps
+ * it once against {@link hangarUnlockMaxScroll}.
+ */
+export function hangarUnlockScrollForFocus(
+  index: number,
+  scroll: number,
+): number {
+  if (index < scroll) return index;
+  if (index >= scroll + HANGAR_UNLOCK_VISIBLE_ROWS) {
+    return index - HANGAR_UNLOCK_VISIBLE_ROWS + 1;
+  }
+  return scroll;
+}
+
+/** Whether unlock row `index` is inside the window at scroll offset `scroll`. */
+export function hangarUnlockRowVisible(
+  index: number,
+  scroll: number,
+): boolean {
+  return index >= scroll && index < scroll + HANGAR_UNLOCK_VISIBLE_ROWS;
+}
+
 /** The right-hand column's section and row geometry (single-sourced). */
 export interface HangarRightColumnLayout {
   readonly hullRowY: readonly number[];
   readonly loadoutHeadingY: number;
   readonly weaponRowY: readonly number[];
+  /** Y of each installed power-up row (in the LOADOUT block, after weapons). */
+  readonly powerUpRowY: readonly number[];
   readonly modifierHeadingY: number;
   readonly modifierRowY: readonly number[];
   /** Y of the `SAVED BUILDS` heading (below the modifiers). */
@@ -1726,7 +2246,7 @@ export interface HangarRightColumnLayout {
 export function hangarRightColumnLayout(
   model: Pick<
     HangarScreenModel,
-    'hullOptions' | 'weaponOptions' | 'modifierOptions' | 'savedBuildRows'
+    'hullOptions' | 'weaponOptions' | 'powerUpOptions' | 'modifierOptions' | 'savedBuildRows'
   >,
 ): HangarRightColumnLayout {
   const hullRowY = model.hullOptions.map(
@@ -1737,8 +2257,17 @@ export function hangarRightColumnLayout(
   const weaponRowY = model.weaponOptions.map(
     (_, index) => loadoutHeadingY + 26 + index * HANGAR_ROW_STEP,
   );
+  // Power-ups share the LOADOUT block, listed after the weapons, so the extra
+  // section needs no second heading (the layout already holds a lot of rows).
+  const powerUpRowY = model.powerUpOptions.map(
+    (_, index) =>
+      loadoutHeadingY
+      + 26
+      + (model.weaponOptions.length + index) * HANGAR_ROW_STEP,
+  );
+  const loadoutRows = model.weaponOptions.length + model.powerUpOptions.length;
   const modifierHeadingY =
-    loadoutHeadingY + 26 + model.weaponOptions.length * HANGAR_ROW_STEP + 10;
+    loadoutHeadingY + 26 + loadoutRows * HANGAR_ROW_STEP + 10;
   const modifierRowY = model.modifierOptions.map(
     (_, index) => modifierHeadingY + 26 + index * HANGAR_ROW_STEP,
   );
@@ -1751,6 +2280,7 @@ export function hangarRightColumnLayout(
     hullRowY,
     loadoutHeadingY,
     weaponRowY,
+    powerUpRowY,
     modifierHeadingY,
     modifierRowY,
     savedBuildHeadingY,
@@ -1759,11 +2289,14 @@ export function hangarRightColumnLayout(
 }
 
 /**
- * The lowest row Y the model renders above the fixed bottom-row block.
+ * The lowest row Y the **unscrolled** model geometry reaches.
  *
- * A layout assertion pins it below {@link HANGAR_RESTART_ROW_Y} (the top
- * bottom-row slot), so the intel section and the marked rows can never collide
- * with the deploy/map/restart rows.
+ * This is the height the tree would occupy without a viewport: at the full
+ * 23-row roster it extends past the fixed bottom block, which is exactly why
+ * the renderer scrolls the unlock tree (AH-0MWWI3ONJ004QRR9). The layout spec
+ * therefore asserts overflow against this value and checks that the *visible
+ * window* ({@link HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y}) and the right column stay
+ * above {@link HANGAR_RESTART_ROW_Y}.
  */
 export function hangarLowestRowY(model: HangarScreenModel): number {
   const right = hangarRightColumnLayout(model);
@@ -1771,6 +2304,7 @@ export function hangarLowestRowY(model: HangarScreenModel): number {
     ...model.unlockRows.map((_, index) => hangarUnlockRowY(index)),
     ...right.hullRowY,
     ...right.weaponRowY,
+    ...right.powerUpRowY,
     ...right.modifierRowY,
     ...right.savedBuildRowY,
   ];
@@ -1778,17 +2312,26 @@ export function hangarLowestRowY(model: HangarScreenModel): number {
 }
 
 /**
- * Y positions of the three bottom rows (bottom of the screen, above the
+ * Y positions of the fixed bottom-row block (bottom of the screen, above the
  * hint line). Exported so a layout assertion can pin the spacing and so no
- * row silently collides when a fourth bottom row is ever added.
+ * row silently collides as the block grows.
  *
- * Reading order on screen is restart → map → deploy, each 22 px apart, with
- * the primary deployment action closest to the hint line
- * (AH-0MW8F7NH1002PQE3).
+ * Reading order on screen is buildout → restart → map → deploy, each 22 px
+ * apart, with the primary deployment action closest to the hint line
+ * (AH-0MW8F7NH1002PQE3; the buildout row joined the block in
+ * AH-0MWOWEF3Q008BO5J).
  */
 export const HANGAR_DEPLOY_ROW_Y = GAME_HEIGHT - 52;
 export const HANGAR_MAP_ROW_Y = GAME_HEIGHT - 74;
 export const HANGAR_RESTART_ROW_Y = GAME_HEIGHT - 96;
+/**
+ * Y of the `⚡ APPLY SUGGESTED BUILDOUT` row — the top slot of the fixed
+ * bottom-row block, above the destructive restart row (AH-0MWOWEF3Q008BO5J).
+ *
+ * Keeping it in the fixed block means the row can never collide with a growing
+ * unlock tree or loadout list; it sits directly above the deployment it feeds.
+ */
+export const HANGAR_BUILDOUT_ROW_Y = GAME_HEIGHT - 118;
 
 /** Scene-level objects created by the renderer (destroyed together). */
 interface RenderedRows {
@@ -1977,8 +2520,74 @@ export function renderHangarScreen(
     focusManager.register(text, action);
   };
 
-  // ── Unlock tree (left column) ──────────────────────────────────
+  // ── Unlock tree (left column, scrollable viewport) ──────────────
+  // The full roster (23 rows) is taller than the space above the fixed bottom
+  // block, so the tree renders through a fixed 12-row window and scrolls. The
+  // window, keyboard focus auto-scroll and pointer affordances below share the
+  // one geometry in `hangarScreen` (AH-0MWWI3ONJ004QRR9).
   heading(scene, objects, LEFT_X, HANGAR_UNLOCKS_HEADING_Y, 'UNLOCKS');
+
+  // Pointer scroll affordances. They are deliberately **not** model rows and
+  // not registered with the FocusManager, so the shipped keyboard focus order
+  // (and every test pinning it) is unchanged; a keyboard-only player reaches
+  // the same rows through focus auto-scroll below.
+  const scrollUp = scene.add
+    .text(LEFT_X + 130, HANGAR_UNLOCKS_HEADING_Y, '', {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: HEADING_COLOR,
+    })
+    .setInteractive({ useHandCursor: true });
+  const scrollDown = scene.add
+    .text(LEFT_X + 130, HANGAR_UNLOCK_SCROLL_INDICATOR_Y, '', {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: HEADING_COLOR,
+    })
+    .setInteractive({ useHandCursor: true });
+  objects.push(scrollUp, scrollDown);
+
+  const unlockRefs: Phaser.GameObjects.Text[] = [];
+  let unlockScroll = 0;
+  const maxUnlockScroll = (): number => hangarUnlockMaxScroll(model);
+  const clampUnlockScroll = (value: number): number =>
+    Math.min(Math.max(0, value), maxUnlockScroll());
+  const unlockIndexFor = (key: string): number =>
+    model.unlockRows.findIndex((row) => row.key === key);
+  const applyUnlockScroll = (): void => {
+    unlockScroll = clampUnlockScroll(unlockScroll);
+    unlockRefs.forEach((text, index) => {
+      text.setVisible(hangarUnlockRowVisible(index, unlockScroll));
+      text.y =
+        HANGAR_UNLOCK_VIEWPORT_TOP_Y
+        + (index - unlockScroll) * HANGAR_ROW_STEP;
+    });
+    const moreAbove = unlockScroll > 0;
+    const moreBelow = unlockScroll < maxUnlockScroll();
+    scrollUp.setText(moreAbove ? '▲ MORE' : '').setVisible(moreAbove);
+    scrollDown.setText(moreBelow ? '▼ MORE' : '').setVisible(moreBelow);
+  };
+  const scrollUnlockRows = (delta: number): number => {
+    unlockScroll = clampUnlockScroll(unlockScroll + delta);
+    applyUnlockScroll();
+    return unlockScroll;
+  };
+  const ensureUnlockVisible = (key: string | null): void => {
+    if (key === null) return;
+    const index = unlockIndexFor(key);
+    if (index < 0) return;
+    unlockScroll = clampUnlockScroll(
+      hangarUnlockScrollForFocus(index, unlockScroll),
+    );
+    applyUnlockScroll();
+  };
+  scrollUp.on('pointerdown', () => {
+    scrollUnlockRows(-HANGAR_UNLOCK_VISIBLE_ROWS);
+  });
+  scrollDown.on('pointerdown', () => {
+    scrollUnlockRows(HANGAR_UNLOCK_VISIBLE_ROWS);
+  });
+
   model.unlockRows.forEach((row, index) => {
     // An owned level-bearing row is an **upgrade** row: it activates the
     // next-level purchase, not the (already-owned) unlock. Every other
@@ -2002,7 +2611,10 @@ export function renderHangarScreen(
       row.matchup,
       action,
     );
+    unlockRefs.push(rendered.byKey.get(row.key)!.text);
   });
+  // Position the initial window (and hide the rows below the fold).
+  applyUnlockScroll();
 
   // ── Deployment selector (right column) ─────────────────────────
   const right = hangarRightColumnLayout(model);
@@ -2032,6 +2644,22 @@ export function renderHangarScreen(
       option.matchup,
       handlers?.onToggleWeapon
         ? () => handlers.onToggleWeapon!(option.id)
+        : undefined,
+    );
+  });
+  // Power-ups share the LOADOUT block (labelled `POWER-UP`), so a permanent
+  // passive kind is toggled with the same affordance as a weapon without a
+  // second heading (the right column is height-constrained).
+  model.powerUpOptions.forEach((option, index) => {
+    addRow(
+      RIGHT_X,
+      right.powerUpRowY[index],
+      option.key,
+      option.label,
+      option.actionable,
+      null,
+      handlers?.onTogglePowerUp
+        ? () => handlers.onTogglePowerUp!(option.id)
         : undefined,
     );
   });
@@ -2099,6 +2727,21 @@ export function renderHangarScreen(
     );
   });
 
+  // ── Apply suggested buildout (the loadout action, above DEPLOY) ──
+  // Rendered from the model's published row, so the game and the gym show the
+  // identical label; only the game supplies a handler (AH-0MWOWEF3Q008BO5J).
+  addRow(
+    LEFT_X,
+    HANGAR_BUILDOUT_ROW_Y,
+    model.buildoutRow.key,
+    model.buildoutRow.label,
+    model.buildoutRow.actionable,
+    null,
+    handlers?.onApplyBuildout
+      ? () => handlers.onApplyBuildout!()
+      : undefined,
+  );
+
   // ── Deploy (bottom, the screen's primary action) ─────────────
   addRow(
     LEFT_X,
@@ -2162,11 +2805,30 @@ export function renderHangarScreen(
     return focusable[index]?.key ?? null;
   };
 
+  // Pointer scroll: a wheel over the screen moves the unlock window by one row
+  // (only when the tree overflows, so a short list is never interceptable).
+  const onWheel = (
+    _pointer: Phaser.Input.Pointer,
+    _over: readonly Phaser.GameObjects.GameObject[],
+    _deltaX: number,
+    deltaY: number,
+  ): void => {
+    if (maxUnlockScroll() === 0) return;
+    scrollUnlockRows(deltaY > 0 ? 1 : -1);
+  };
+  scene.input?.on('wheel', onWheel);
+
   focusManager.attachKeyboard(scene);
-  if (options?.onFocusChange) {
-    const onFocusChange = options.onFocusChange;
-    focusManager.setFocusChangeListener(() => onFocusChange(focusedKey()));
-  }
+  // Always observe focus: an unlock row that gains keyboard focus is scrolled
+  // back into the window before the external listener reports it, so the grown
+  // tree can never hide the focused row from a keyboard-only player.
+  focusManager.setFocusChangeListener(() => {
+    const key = focusedKey();
+    ensureUnlockVisible(key);
+    options?.onFocusChange?.(key);
+  });
+  // Seed the window: the default focus may be a row below the first page.
+  ensureUnlockVisible(focusedKey());
 
   return {
     model,
@@ -2177,13 +2839,22 @@ export function renderHangarScreen(
       const index = focusable.findIndex((row) => row.key === key);
       if (index < 0) return false;
       focusManager.setFocusedIndex(index);
+      ensureUnlockVisible(key);
       return true;
     },
     activateFocused(): void {
       focusManager.activateFocused();
     },
+    getUnlockScroll: () => unlockScroll,
+    scrollUnlockRows,
+    isUnlockRowVisible(key: string): boolean {
+      const index = unlockIndexFor(key);
+      return index >= 0 && hangarUnlockRowVisible(index, unlockScroll);
+    },
+    scrollControls: { up: scrollUp, down: scrollDown },
     destroy(): void {
       focusManager.shutdown();
+      scene.input?.off('wheel', onWheel);
       for (const object of rendered.objects) object.destroy();
       rendered.objects.length = 0;
       rendered.rows.length = 0;

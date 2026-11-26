@@ -18,6 +18,13 @@
  * The next spawn coincides with the previous drop's despawn (one drop
  * on screen while nothing is collected).
  *
+ * Weapon-evolution pairings (AH-0MWL7OWPF003E4TP, epic AC8): the gym can
+ * equip both halves of any shipped pairing through {@link equipPairing}
+ * (field tier) or {@link equipOwnedPairing} (owned tier), after which the
+ * shared fire path fuses them into the pairing's evolved weapon — the same
+ * `Player.tryFire` → evolved-shot dispatch the game runs, so a divergence
+ * shows up as a gym failure (`GymWeapons.test.ts`, pairing parity).
+ *
  * Auto-fire (AC1, AC3): the ship auto-fires **every active weapon** in the
  * direction of movement (current velocity heading; most-recent heading
  * when stationary) with no fire button (GDD §2.3). Each weapon fires at
@@ -86,6 +93,10 @@ import {
 import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
+import {
+  OWNED_EVOLUTION_MIN_LEVEL,
+  type WeaponPairing,
+} from '../../utils/weaponEvolutions';
 
 /** A weapon-drop type: one of the weapons, or 'reset'. */
 type DropType = WeaponId | 'reset';
@@ -501,6 +512,43 @@ export class GymWeapons extends CombatScene<
 
   getPlayer(): Player | null {
     return this.player;
+  }
+
+  // ── Weapon-evolution pairing demonstration (AH-0MWL7OWPF003E4TP) ──
+
+  /**
+   * Equips both halves of a shipped pairing as **temporary** weapons, so the
+   * shared fire path fuses them into the pairing's evolved weapon for the
+   * timed overlap (the field tier). The two halves stay ordinary `Player`
+   * collections — no gym-local resolution or firing rule — so the fused shot
+   * travels through exactly the `_autoFire` → `Player.tryFire` → evolved-shot
+   * dispatch the game runs (epic AC8, gym↔game parity).
+   *
+   * @param pairing - A shipped pairing from {@link WEAPON_PAIRINGS}.
+   */
+  equipPairing(pairing: WeaponPairing): void {
+    const player = this.player;
+    if (!player) return;
+    for (const baseId of pairing.baseIds) player.equipWeapon(baseId);
+  }
+
+  /**
+   * Equips both halves of a shipped pairing **permanently** at level ≥
+   * {@link OWNED_EVOLUTION_MIN_LEVEL}, so the shared resolver reports the
+   * owned tier and the fusion persists for the rest of the run. Like
+   * {@link equipPairing}, this is a pure loadout convenience — the fusion
+   * itself is the shared `Player` path, never a gym copy (epic AC8).
+   *
+   * @param pairing - A shipped pairing from {@link WEAPON_PAIRINGS}.
+   */
+  equipOwnedPairing(pairing: WeaponPairing): void {
+    const player = this.player;
+    if (!player) return;
+    for (const baseId of pairing.baseIds) {
+      for (let grant = 0; grant < OWNED_EVOLUTION_MIN_LEVEL; grant++) {
+        player.equipWeapon(baseId, true);
+      }
+    }
   }
 
   // ── Shared-combat participant contract (AOE demonstration) ──────

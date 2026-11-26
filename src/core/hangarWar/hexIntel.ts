@@ -150,6 +150,14 @@ import type {
   PendingAttack,
 } from './types';
 import {
+  MATCHUP_GLYPHS,
+  buildAuthoredVerdictLookup,
+  normaliseMatchupWeaponId,
+  resolveHexMatchup,
+  type HexMatchupVerdict,
+  type MatchupGlyph,
+} from './hexMatchup';
+import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
 } from '../../data/hexRingDefinitions';
@@ -341,6 +349,64 @@ export interface HexSpecialMissionIntel {
 }
 
 /** One hex, with all the known-ahead intel the map publishes. */
+/**
+ * One authored weapon's published matchup row for a hex (AH-0MWL8965R008K588).
+ *
+ * The detail panel publishes the **same** verdict and glyph the fight will
+ * apply, resolved through the one matchup rule (`resolveHexMatchup` over the
+ * hex's authored lookup) — the map never re-derives it.
+ */
+export interface HexWeaponMatchupIntel {
+  /** Canonical catalogue weapon id (the combat lookup's key). */
+  readonly weaponId: string;
+  /** The verdict the combat path applies to this weapon on this hex. */
+  readonly verdict: HexMatchupVerdict;
+  /** The published glyph entry for {@link verdict}. */
+  readonly glyph: MatchupGlyph;
+}
+
+/**
+ * The per-weapon matchup rows a hex publishes: one per **authored** weapon
+ * (`strengths` ∪ `weaknesses`), resolved by the shared combat rule.
+ *
+ * An unauthored hex publishes no rows — nothing is invented. A weapon id that
+ * normalises to no id is skipped (the authored-id validation rejects those at
+ * load, so this is only a corrupt-data guard).
+ */
+function authoredMatchupRows(
+  definition: HexRingDefinition | undefined,
+): HexWeaponMatchupIntel[] {
+  if (definition === undefined) return [];
+  const lookup = buildAuthoredVerdictLookup(
+    definition.strengths,
+    definition.weaknesses,
+  );
+  const authored = [...definition.strengths, ...definition.weaknesses];
+  const rows: HexWeaponMatchupIntel[] = [];
+  const seen = new Set<string>();
+  for (const authoredId of authored) {
+    const weaponId = normaliseMatchupWeaponId(authoredId);
+    if (weaponId === null || seen.has(weaponId)) continue;
+    seen.add(weaponId);
+    const verdict = resolveHexMatchup(weaponId, lookup);
+    rows.push({ weaponId, verdict, glyph: MATCHUP_GLYPHS[verdict] });
+  }
+  return rows;
+}
+
+/**
+ * The authored weapon list of a hex, each entry marked with the glyph the
+ * fight will show: the `resisted` mark on `STRENGTHS:`, the `effective` mark on
+ * `WEAKNESSES:` (AH-0MWL8965R008K588).
+ */
+function markedWeapons(
+  weapons: readonly string[],
+  verdict: HexMatchupVerdict,
+): string {
+  const { glyph } = MATCHUP_GLYPHS[verdict];
+  return weapons.map((weapon) => `${weapon} ${glyph}`).join(',');
+}
+
 export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
   readonly key: string;
   /** Stable hex id. */
@@ -361,6 +427,12 @@ export interface HexIntel {  /** Row key (`hex:<id>`), unique within the map. */
   readonly strengths: readonly string[];
   /** What the boss is weak against (empty when unknown). */
   readonly weaknesses: readonly string[];
+  /**
+   * One row per **authored** weapon (`strengths` ∪ `weaknesses`) publishing the
+   * verdict and glyph the fight will show for it on this hex
+   * (AH-0MWL8965R008K588). Empty for an unauthored hex.
+   */
+  readonly matchups: readonly HexWeaponMatchupIntel[];
   /** Weapon/upgrade the hex grants once its boss is beaten, or `null`. */
   readonly grants: string | null;
   /**
@@ -569,6 +641,14 @@ export interface HexMapModel {
    */
   readonly winBonusLine: string | null;
   /**
+   * The banked held-hex income announcement
+   * (`HEX INCOME BANKED: +N MINERALS`) this landing carries, copied straight
+   * from the report model's own `hexIncomeLine`; `null` when the tick banked
+   * nothing (no hex held). The third persistent-mineral source's announcement
+   * (AH-0MWL8CDGN005878A), sibling to {@link winBonusLine}.
+   */
+  readonly hexIncomeLine: string | null;
+  /**
    * The special mission the rotation is offering on this sortie
    * (`AH-0MWF0CWB7002MG2F`), or `null` when the ring offers none (no special
    * hex authored, or every one already captured). Resolved through the shared
@@ -679,6 +759,7 @@ const QUIET_TICK_RECORD: FrontierTickRecord = Object.freeze({
   deltas: [],
   rose: 0,
   fell: 0,
+  hexIncome: 0,
   attacks: [],
 });
 
@@ -691,6 +772,7 @@ interface HexMapAttackOverlay {
   readonly ringWon: boolean;
   readonly campaignReset: boolean;
   readonly winBonusLine: string | null;
+  readonly hexIncomeLine: string | null;
 }
 
 /**
@@ -750,6 +832,7 @@ function buildAttackOverlay(
     ringWon: report.ringWon,
     campaignReset: report.campaignReset,
     winBonusLine: report.winBonusLine,
+    hexIncomeLine: report.hexIncomeLine,
   };
 }
 
@@ -995,8 +1078,16 @@ function hexLabel(
   if (definition) {
     lines.push(
       `${HEX_BOSS_PANEL_TITLE}: ${definition.boss}`,
-      `${HEX_STRENGTHS_PANEL_TITLE}: ${definition.strengths.join(',')}`,
-      `${HEX_WEAKNESSES_PANEL_TITLE}: ${definition.weaknesses.join(',')}`,
+      // Each authored weapon carries the glyph the fight will show for it
+      // (the panel speaks the combat vocabulary — AH-0MWL8965R008K588).
+      `${HEX_STRENGTHS_PANEL_TITLE}: ${markedWeapons(
+        definition.strengths,
+        'resisted',
+      )}`,
+      `${HEX_WEAKNESSES_PANEL_TITLE}: ${markedWeapons(
+        definition.weaknesses,
+        'effective',
+      )}`,
       `${HEX_GRANT_PANEL_TITLE}: ${definition.grants}`,
     );
   } else {
@@ -1115,6 +1206,7 @@ export function buildHexIntel(
     boss: definition?.boss ?? null,
     strengths: definition ? [...definition.strengths] : [],
     weaknesses: definition ? [...definition.weaknesses] : [],
+    matchups: authoredMatchupRows(definition),
     grants: definition?.grants ?? null,
     personality: definition?.personality ?? null,
     personalityMechanics: hexPersonalityMechanicsFor(definition?.personality),
@@ -1266,6 +1358,7 @@ export function buildHexMapModel(
     ringWon,
     campaignReset,
     winBonusLine,
+    hexIncomeLine,
   } = buildAttackOverlay(
     payload,
     options.record,
@@ -1306,6 +1399,7 @@ export function buildHexMapModel(
     assault,
     assaultLine,
     winBonusLine,
+    hexIncomeLine,
     specialOffer,
     ringWon,
     campaignReset,

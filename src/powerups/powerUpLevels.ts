@@ -237,7 +237,7 @@ export type PowerUpLevelVariable =
   | 'bombRange'
   /** Bomb — permanent pulse rate in pulses per second. */
   | 'bombFrequency'
-  /** Speed Boost — movement/fire-rate multiplier. */
+  /** Speed Boost — fire-rate multiplier (weapons only). */
   | 'speedMultiplier'
   /** Speed Boost — duration in seconds. */
   | 'speedDuration'
@@ -486,22 +486,23 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Speed Boost — +50% movement and fire rate for 10 s.
+  // Speed Boost — +50% rate of fire (weapons only) for 10 s.
   speed_boost: [
     {
       variable: 'speedMultiplier',
       powerUpId: 'speed_boost',
-      label: 'Speed boost',
+      label: 'Fire-rate boost',
       unit: '×',
-      description: 'Movement and fire-rate multiplier.',
+      description: 'Rate-of-fire multiplier (weapons only).',
       curve: 'exponential-saturation',
       base: 1.5,
       cap: 2.5,
       k: 0.2,
       discrete: false,
       rationale:
-        'A 2.5× ceiling keeps a levelled boost controllable; k=0.2 adds a ' +
-        'visible step at the first upgrade (~1.6×) before diminishing.',
+        'Speed Boost is a weapons-only fire-rate boost: a 2.5× ceiling keeps a ' +
+        'levelled boost controllable while k=0.2 adds a visible step at the first ' +
+        'upgrade (~1.6×) before diminishing.',
     },
     {
       variable: 'speedDuration',
@@ -1234,7 +1235,7 @@ export interface PowerUpLevelStats {
   bombRange?: number;
   /** Bomb — permanent pulse rate in pulses per second. */
   bombFrequency?: number;
-  /** Speed Boost — movement/fire-rate multiplier. */
+  /** Speed Boost — fire-rate multiplier (weapons only). */
   speedMultiplier?: number;
   /** Speed Boost — boost duration in seconds. */
   speedDuration?: number;

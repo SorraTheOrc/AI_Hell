@@ -26,6 +26,7 @@ import {
   BOT_TUNING_NUMERIC_FIELDS,
   BOT_TUNING_TOGGLES,
   coerceTuningValues,
+  defaultBotTuningValues,
   type BotTuningValues,
 } from '../ai/tuningFields';
 import {
@@ -35,6 +36,7 @@ import {
   serialiseBotTuningState,
 } from '../core/botTuningStore';
 import { COMPETENT_BOT_TUNABLES } from '../ai/framework/competent/tunables';
+import { BOT_HUMAN_INPUT_TUNABLES } from '../ai/botHumanLike';
 import { parseBotTuningStateBlob } from '../core/botTuningSchema';
 
 /**
@@ -171,6 +173,62 @@ describe('bot-tuning.json bundled baseline (AH-0MV9LCWVI002TOK7)', () => {
   });
 });
 
+describe('store Export surface (AH-0MWW4UK5M009Q36R)', () => {
+  /** The exported store state, parsed exactly as the store reads it back. */
+  function exportedState() {
+    const state = parseBotTuningStateBlob(freshExportBlob());
+    if (state === null) throw new Error('the store Export blob did not parse');
+    return state;
+  }
+
+  it('exports every registered numeric field and toggle for every config', () => {
+    // The Export is what a designer commits back as the bundled baseline, so it
+    // must always carry the **complete** registry surface. A field added to the
+    // gym but missing from the store's coercion would silently disappear from
+    // the exported file and the round-trip would drift from the committed one
+    // (AH-0MWW4UK5M009Q36R: the holdFire* knobs vanished this way).
+    const state = exportedState();
+    for (const config of state.configs) {
+      for (const field of BOT_TUNING_NUMERIC_FIELDS) {
+        expect(
+          typeof config.values[field.group][field.key],
+          `${config.name}.${field.key} must survive the Export as a number`,
+        ).toBe('number');
+      }
+      for (const toggle of BOT_TUNING_TOGGLES) {
+        expect(
+          typeof config.values[toggle.group][toggle.key],
+          `${config.name}.${toggle.key} must survive the Export as a boolean`,
+        ).toBe('boolean');
+      }
+    }
+  });
+
+  it('exports the hold-fire knobs the committed Default baseline authors', () => {
+    // The three holdFire* keys (AH-0MWW2PFU8001J0PM) are authored in the
+    // committed baseline; the Export must reproduce them with identical values
+    // instead of dropping them from the coerced state.
+    const state = exportedState();
+    const def = state.configs.find((config) => config.name === DEFAULT_BOT_TUNING_NAME);
+    expect(def).toBeDefined();
+    const committed = rawConfigs().find(
+      (config) => config.name === DEFAULT_BOT_TUNING_NAME,
+    )!;
+    const authored = (committed.values as { competent: Record<string, unknown> }).competent;
+    for (const key of [
+      'holdFireEnabled',
+      'holdFireHorizonSeconds',
+      'holdFireLineRadiusPx',
+    ]) {
+      expect(authored[key], `Default must author ${key}`).toBeDefined();
+      expect(
+        def!.values.competent[key],
+        `the Export must carry ${key} with the authored value`,
+      ).toBe(authored[key]);
+    }
+  });
+});
+
 describe('motion-model knobs in the bundled baseline (AH-0MWM0CCJE000AANE)', () => {
   const CLASSES = ['chaser', 'diver', 'patroller', 'formation', 'roamer'] as const;
 
@@ -214,6 +272,45 @@ describe('motion-model knobs in the bundled baseline (AH-0MWM0CCJE000AANE)', () 
     );
     expect(toggle).toBeDefined();
     expect(typeof competent['hazardMotionModelEnabled']).toBe('boolean');
+  });
+});
+
+describe('adaptive aim error knobs in the bundled baseline (AH-0MWR057Q8004PBOD AC4)', () => {
+  it('authors the three adaptive aim-error knobs in every shipped config', () => {
+    // Every config is seeded explicitly, not left to the code defaults, so a
+    // shipped preset cannot silently open with a different learn-to-aim feel.
+    const defaults = defaultBotTuningValues();
+    for (const config of rawConfigs()) {
+      const human = (config.values as { human: Record<string, unknown> }).human;
+      expect(human, `${config.name} has no human block`).toBeDefined();
+      expect(typeof human['aimErrorRad'], `${config.name}.aimErrorRad`).toBe(
+        'number',
+      );
+      expect(human['aimErrorDecay'], `${config.name}.aimErrorDecay`).toBe(
+        BOT_HUMAN_INPUT_TUNABLES.aimErrorDecay,
+      );
+      expect(
+        human['aimErrorResetDistance'],
+        `${config.name}.aimErrorResetDistance`,
+      ).toBe(BOT_HUMAN_INPUT_TUNABLES.aimErrorResetDistance);
+      const rad = human['aimErrorRad'] as number;
+      expect(rad).toBeGreaterThanOrEqual(0);
+      expect(rad).toBeLessThanOrEqual(0.5);
+      // The curated recording presets pin the adaptive error off so their
+      // seed-tuned promo runs stay byte-identical to the pre-adaptive
+      // behaviour (no draw at 0); only the shipped gameplay Default carries
+      // the live error.
+      if (config.name !== 'Default') {
+        expect(rad, `${config.name} must pin aimErrorRad off`).toBe(0);
+      }
+    }
+    // The shipped game config carries the live, deliberately imperfect error.
+    const def = rawConfigs().find((config) => config.name === 'Default');
+    const human = (def!.values as { human: Record<string, unknown> }).human;
+    expect(human['aimErrorRad']).toBe(BOT_HUMAN_INPUT_TUNABLES.aimErrorRad);
+    expect(defaults.human['aimErrorRad']).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.aimErrorRad,
+    );
   });
 });
 
@@ -314,5 +411,53 @@ describe('curated promo bot-tuning presets (AH-0MVSDM5T1007KBB8)', () => {
     // Prove the lookup is a real gate rather than a vacuous loop while the
     // promo catalogue is still empty: an unknown preset name is rejected.
     expect(names.has('no-such-preset')).toBe(false);
+  });
+});
+
+describe('oscillation-damping knobs in the bundled baseline (AH-0MWT4BBYO0085CN8)', () => {
+  it('turns the aim damping on in the shipped Default preset, off elsewhere', () => {
+    const configs = rawConfigs();
+    const def = configs.find((config) => config.name === DEFAULT_BOT_TUNING_NAME);
+    expect(def).toBeDefined();
+    const defaults = defaultBotTuningValues();
+    // The compiled factory defaults are off, so every harness that flies them
+    // is byte-identical to its pre-change baseline.
+    expect(defaults.human['aimDampingEnabled']).toBe(false);
+    expect(defaults.competent['engagementRangeHysteresis']).toBe(0);
+    // The shipped gameplay preset is the configuration the producer plays: it
+    // carries the damping and the standoff hysteresis.
+    const defHuman = (def!.values as { human: Record<string, unknown> }).human;
+    const defCompetent = (
+      def!.values as { competent: Record<string, unknown> }
+    ).competent;
+    expect(defHuman['aimDampingEnabled']).toBe(true);
+    expect(defHuman['aimTurnHoldMs']).toBeTypeOf('number');
+    expect(defHuman['aimTurnHoldMs'] as number).toBeGreaterThan(0);
+    expect(defCompetent['engagementRangeHysteresis']).toBeTypeOf('number');
+    expect(defCompetent['engagementRangeHysteresis'] as number).toBeGreaterThan(0);
+    // The curated recording presets stay damping-off so their seed-tuned
+    // recordings are unchanged.
+    for (const config of configs) {
+      if (config.name === DEFAULT_BOT_TUNING_NAME) continue;
+      const human = (config.values as { human?: Record<string, unknown> }).human;
+      if (!human) continue;
+      expect(
+        human['aimDampingEnabled'] ?? false,
+        `${config.name} must not silently enable aim damping`,
+      ).toBe(false);
+    }
+  });
+
+  it('keeps the new knobs inside their gym bounds', () => {
+    const bounds = [...BOT_TUNING_NUMERIC_FIELDS];
+    const def = rawConfigs().find((c) => c.name === DEFAULT_BOT_TUNING_NAME)!;
+    const coerced = coerceTuningValues(def.values);
+    for (const field of bounds) {
+      const value = coerced[field.group][field.key];
+      if (value === undefined) continue;
+      expect(typeof value).toBe('number');
+      expect(value as number).toBeGreaterThanOrEqual(field.min);
+      expect(value as number).toBeLessThanOrEqual(field.max);
+    }
   });
 });

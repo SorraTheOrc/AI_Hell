@@ -333,6 +333,86 @@ describe('validateRingDefinitions', () => {
   });
 });
 
+/**
+ * Matchup-list validation (AH-0MWL88F1G0025IQ1 tests, guard landed by
+ * AH-0MWL88JJM004ORZS — Phase 1 of 5 of AH-0MWL5376H001WJFZ).
+ *
+ * The authored `strengths`/`weaknesses` lists are mechanically load-bearing, so
+ * `validateRingDefinitions` must reject the two ways a hand-authored list can
+ * silently break the rule at load time (parent AC3):
+ *
+ * - an entry that resolves to **no catalogue weapon** (after the shared
+ *   `waveLaser` → `wave_laser` alias normalisation), and
+ * - a weapon that appears in **both** lists of the **same** hex (the rule can no
+ *   longer say unambiguously whether the boss resists or is weak to it).
+ *
+ * The tests were authored red-first under the repo's `it.fails` convention (see
+ * `src/core/levelScaling.test.ts`) and flipped back to `it` when the guard
+ * landed. Each failure names the offending hex id **and** the offending entry,
+ * so a bad edit is actionable without re-reading the data.
+ */
+describe('matchup-list validation (AH-0MWL88F1G0025IQ1, TEST-FIRST)', () => {
+  /**
+   * The first validation issue attributed to `hexId` (the checks under test are
+   * per-hex), so an unrelated issue elsewhere in the ring does not mask it.
+   */
+  function issueForHex(
+    issues: ReturnType<typeof validateRingDefinitions>['issues'],
+    hexId: string,
+  ) {
+    return issues.find((issue) => issue.hexId === hexId);
+  }
+
+  it(
+    'rejects an authored matchup id that resolves to no catalogue weapon, naming the hex id and entry',
+    () => {
+      const definitions = definitionsFor(1);
+      const offender = definitions[0].id;
+      const bad = withDefinition(definitions, 0, {
+        weaknesses: ['not-a-catalogue-weapon'],
+      });
+
+      const { ok, issues } = validateRingDefinitions(1, bad);
+
+      expect(ok).toBe(false);
+      const issue = issueForHex(issues, offender);
+      expect(issue).toBeDefined();
+      expect(issue!.message).toContain(offender);
+      expect(issue!.message).toContain('not-a-catalogue-weapon');
+      // Fails loudly at load: generating the ring throws, naming both the hex
+      // id and the offending entry in the error message.
+      expect(() => generateRing(1, bad)).toThrow(offender);
+      expect(() => generateRing(1, bad)).toThrow('not-a-catalogue-weapon');
+    },
+  );
+
+  it(
+    'rejects a weapon authored in both lists of the same hex, naming the hex id and entry',
+    () => {
+      const definitions = definitionsFor(1);
+      const offender = definitions[0].id;
+      // `nova` is a real catalogue weapon, so only the same-hex overlap (not
+      // the unknown-id rule) can reject this ring.
+      const bad = withDefinition(definitions, 0, {
+        strengths: ['nova'],
+        weaknesses: ['nova'],
+      });
+
+      const { ok, issues } = validateRingDefinitions(1, bad);
+
+      expect(ok).toBe(false);
+      const issue = issueForHex(issues, offender);
+      expect(issue).toBeDefined();
+      expect(issue!.message).toContain(offender);
+      expect(issue!.message).toContain('nova');
+      // Fails loudly at load: generating the ring throws, naming both the hex
+      // id and the offending entry in the error message.
+      expect(() => generateRing(1, bad)).toThrow(offender);
+      expect(() => generateRing(1, bad)).toThrow('nova');
+    },
+  );
+});
+
 describe('hex variety vocabulary (AH-0MVWZYQN8007SXIG)', () => {
   /** A valid ring-1 contract: an objective and a positive salvage bonus. */
   const SAMPLE_CONTRACT: HexContractDefinition = Object.freeze({

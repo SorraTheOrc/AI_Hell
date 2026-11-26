@@ -30,7 +30,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveHexCapture, resolveHexGrant } from '../../core/hangarWar/captureCycle';
 import { createRingState } from '../../core/hangarWar/hexRing';
-import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
+import {
+  HEX_AGGRESSION_RAMP_PER_RING,
+  deploymentAggressionFor,
+  hexDifficultyProfile,
+} from '../../core/hangarWar/hexDifficulty';
 import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
 import type { HexRingDefinition } from '../../core/hangarWar/hexRing';
 import {
@@ -252,7 +256,6 @@ describe('ring timing: the measured + modelled play time', () => {
       strategy: 'grind',
       seeds: [1],
       hexes: modelRing(),
-      aggressionRisePerSortie: 1,
       runDeployment: fakeRunner(),
     });
     const deployments = report.runs[0].deployments;
@@ -261,11 +264,47 @@ describe('ring timing: the measured + modelled play time', () => {
         hexDifficultyProfile(deployment.aggression).level,
       );
     });
-    // The rise is applied per sortie: base aggression + sortie index.
-    const base = planRingDeployments(modelRing(), 'grind').played;
-    deployments.forEach((deployment, index) => {
-      expect(deployment.aggression).toBe(base[index].baseAggression + index);
+    expect(deployments.length).toBe(6);
+  });
+
+  it('ramps each deployment from the ring capture progress (AH-0MWFDQ9EY004NO4X)', () => {
+    // The producer's ruling: a ring is relatively low at 0 owned hexes and
+    // rises "a little" with each hex taken in it. The model measures the SAME
+    // rule the game's deployment builder applies, so a capture raises every
+    // later deployment in the ring (up to the authored per-ring ramp) while a
+    // lost deployment raises nothing.
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+      hexes: modelRing(),
+      // Aggression 3+ is lost, so the first three hexes are taken and the
+      // range stalls at three held hexes for the rest of the ring.
+      runDeployment: fakeRunner(3),
     });
+    const deployments = report.runs[0].deployments;
+    const played = planRingDeployments(modelRing(), 'grind').played;
+    deployments.forEach((deployment, index) => {
+      expect(deployment.hexId).toBe(played[index].id);
+      expect(deployment.baseAggression).toBe(played[index].baseAggression);
+      // Held count is read BEFORE the sortie's own capture is applied.
+      expect(deployment.heldInRing).toBe(Math.min(index, 3));
+      expect(deployment.aggression).toBe(
+        deploymentAggressionFor(
+          played[index].baseAggression,
+          deployment.heldInRing,
+          modelRing().length,
+        ),
+      );
+    });
+    // The ramp is real: the ring's tail is harder than its authored value once
+    // three hexes are held, and never more than the authored per-ring step.
+    expect(deployments[3].aggression).toBeGreaterThan(
+      deployments[3].baseAggression,
+    );
+    expect(
+      deployments[5].aggression - deployments[5].baseAggression,
+    ).toBeLessThanOrEqual(HEX_AGGRESSION_RAMP_PER_RING);
   });
 
   it('aggregates several seeds into a min/mean/max summary', () => {
@@ -481,7 +520,8 @@ describe('ring timing: the deployment loadout model (AH-0MW9QA2YC009PSF5)', () =
 
   it('falls back to the strongest itemised hull when a grant is not in the catalogue', () => {
     // A hull grant the catalogue does not itemise (`hull-9`) is owned but
-    // contributes no run stats, exactly like `rapid` / `core-bank`.
+    // contributes no run stats, exactly like the capture cycle's defence-in-depth
+    // fallback for any unknown upgrade id.
     const ownership: RingLoadoutOwnership = {
       hulls: ['hull-1', 'hull-2', 'hull-9'],
       weapons: [],
@@ -578,13 +618,14 @@ describe('ring timing: budget verdicts', () => {
  * an accidental recalibration.
  *
  * Re-rated against the derived windows, the regenerated one-level sortie
- * misses ring 1 (15.4 min against 30–90) and sits within-tolerance on ring 2
- * (57.0 min against 60–180): a window
+ * misses ring 1 (23.7 min against 30–90) and sits within-tolerance on ring 2
+ * (51.7 min against 60–180): a window
  * change is a producer ruling, not a re-word of the measurement, so the per-hex
  * pin stays authored and each ruling is re-ruled by its linked rebalancing item
  * (AH-0MWFDQ9EY004NO4X ring 1, AH-0MWFDQCFV007BZE5 ring 2). The figures moved
- * 16.2/48.7 → 15.4/57.0 min when the AH-0MWJ1680Z001QYV2 audit follow-up
- * (calmer flight, pass-through collection, tighter aim hold) landed;
+ * from a retry-dominated 15.4/57.0 min to 23.7/51.7 min when the per-level
+ * arena began honouring the wave `shootEnabled` gate and the ring's
+ * capture-progress aggression ramp landed (AH-0MWFDQ9EY004NO4X);
  * `docs/EVALUATION.md` records the regenerated measurements as the evidence.
  */
 describe('ring timing: the design windows are pinned literally', () => {
@@ -657,6 +698,7 @@ type CommittedBaselineReport = {
   }>;
   summary: {
     totalMinutes: { mean: number; min: number; max: number };
+    deploymentMinutes: { mean: number; min: number; max: number };
   };
   budget: {
     verdict: string;
@@ -689,6 +731,20 @@ function committedGrindReport(ringIndex: number): CommittedBaselineReport {
   return report;
 }
 
+/** Any committed ring/line report (`grind` or `rush`). */
+function committedReport(
+  ringIndex: number,
+  strategy: 'grind' | 'rush',
+): CommittedBaselineReport {
+  const report = readCommittedBaseline().find(
+    (entry) => entry.ringIndex === ringIndex && entry.strategy === strategy,
+  );
+  if (!report) {
+    throw new Error(`no committed ${strategy} report for ring ${ringIndex}`);
+  }
+  return report;
+}
+
 describe('ring timing: real arena evidence', () => {
   it('is deterministic: the same seed measures the same summed duration', () => {
     const options = { ringIndex: 1, strategy: 'grind' as const, seeds: [7] };
@@ -702,13 +758,14 @@ describe('ring timing: real arena evidence', () => {
     expect(first.summary.deploymentMinutes.mean).toBeGreaterThan(0);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the one-level MVP grind measures ~16 min and misses the derived 30–90 window (AH-0MWCOWSVN003X81A)', () => {
-    // One hex, one level, five-wave sortie: measured twice as fast as the
-    // retired campaign-slice model and every sortie is lost to enemy fire, so
-    // the derived 30–90-minute window (6 × 5–15 per hex) no longer holds. The
-    // verdict is pinned against the committed artifact (AH-0MWCQ4HTC004U73V)
-    // and tracked as the rebalancing item AH-0MWFDQ9EY004NO4X, so a fire-model
-    // or balance change cannot move it silently in the meantime.
+  it('the one-level MVP grind measures ~24 min and misses the derived 30–90 window (AH-0MWFDQ9EY004NO4X)', () => {
+    // One hex, one level, five-wave sortie: the levels 1–3 opening is a
+    // no-fire sortie (the per-level arena honours the wave `shootEnabled`
+    // gate), so the weaker hexes are captured and the ring measures 23.7 min —
+    // still short of the derived 30–90-minute window (6 × 5–15 per hex) and
+    // below its 24-minute tolerance floor. The verdict is pinned against the
+    // committed artifact and tracked as the rebalancing item
+    // AH-0MWFDQ9EY004NO4X.
     const report = simulateRingTiming({
       ringIndex: 1,
       strategy: 'grind',
@@ -716,15 +773,16 @@ describe('ring timing: real arena evidence', () => {
     });
     const committed = committedGrindReport(1);
     expect(report.runs[0].deployments).toHaveLength(6);
-    // The grind plays every hex, so the ring is secured even though every
-    // sortie is a first-attempt loss (losses are retried, not abandoned).
+    // The grind plays every hex, so the ring is secured (the losing sorties are
+    // retried, not abandoned).
     expect(report.summary.ringSecuredRuns).toBe(3);
     expect(report.budget.verdict).toBe('missed');
     expect(report.budget.verdict).toBe(committed.budget.verdict);
     expect(report.budget.withinTolerance).toBe(false);
-    // The real arena still measures the regenerated artifact's numbers: 15.4 min
-    // mean on seeds 1–3, decisively below the derived 30-minute floor.
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(15.4026, 4);
+    // The real arena still measures the regenerated artifact's numbers: 23.7 min
+    // mean on seeds 1–3, below the derived 30-minute floor (and its 24-minute
+    // tolerance floor).
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(23.7435, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
       6,
@@ -735,14 +793,13 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.measuredMinutes).toBeGreaterThan(5);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the 12-hex one-level ring 2 grind measures ~57 min and sits within-tolerance of the derived 60–180 window (AH-0MWCOWSVN003X81A)', () => {
-    // The same one-level model, twelve hexes: measured ≈ 57 min mean (seeds
-    // 1–3), every sortie lost to enemy fire. Against the derived 60–180-minute
-    // window (12 × 5–15 per hex) the total sits inside the ±12-minute tolerance
-    // (the 48-minute floor), so the verdict is `within-tolerance`. It is pinned
-    // against the committed artifact and tracked as the rebalancing item
-    // AH-0MWFDQCFV007BZE5 (the figure moved 46.8 → 48.7 → 39.4 → 57.0 as the
-    // bot's control was tuned; the last move is this smoother-control round).
+  it('the 12-hex one-level ring 2 grind measures ~52 min and sits within-tolerance of the derived 60–180 window (AH-0MWFDQCFV007BZE5)', () => {
+    // The same one-level model, twelve hexes: measured ≈ 52 min mean (seeds
+    // 1–3), the six level-3 hexes captured and the firing tail lost. Against
+    // the derived 60–180-minute window (12 × 5–15 per hex) the total sits
+    // inside the ±12-minute tolerance (the 48-minute floor), so the verdict is
+    // `within-tolerance`. It is pinned against the committed artifact and
+    // tracked as the rebalancing item AH-0MWFDQCFV007BZE5.
     const report = simulateRingTiming({
       ringIndex: 2,
       strategy: 'grind',
@@ -754,7 +811,7 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.verdict).toBe(committed.budget.verdict);
     expect(report.budget.withinTolerance).toBe(true);
     expect(report.budget.withinWindow).toBe(false);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(57.0165, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(51.6835, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
       6,
@@ -790,12 +847,13 @@ describe('ring timing: real arena evidence', () => {
     expect(grind.runs[0].expectedRetakes).toBe(0);
     expect(rush.runs[0].ringSecured).toBe(false);
     expect(grind.runs[0].ringSecured).toBe(true);
-    // On the one-level model every sortie on this seed is a first-attempt
-    // loss (the per-level arena's documented fire-on fidelity), so neither
-    // line banks salvage — the risk discriminator is exposure + the
-    // re-capture charge, not banked salvage.
+    // The rush line's one deployment is the ring's hardest hex (the weapon hex,
+    // a firing level), so it is a first-attempt loss and banks nothing; the
+    // grind captures the no-fire hexes on the way (the per-level arena honours
+    // the wave `shootEnabled` gate, AH-0MWFDQ9EY004NO4X) and banks their
+    // salvage. The discriminator is still exposure + the re-capture charge.
     expect(rush.runs[0].salvageBanked).toBe(0);
-    expect(grind.runs[0].salvageBanked).toBe(0);
+    expect(grind.runs[0].salvageBanked).toBeGreaterThan(0);
     // Neither line dominates: the rush is faster but leaves the ring open, the
     // grind spends more minutes and ends with the ring secured.
     expect(grind.summary.totalMinutes.mean).toBeGreaterThan(
@@ -887,22 +945,20 @@ describe('ring timing: the arena starting-loadout seam is live (AH-0MW9QA2YC009P
   }, REAL_ARENA_TIMEOUT_MS);
 });
 
-describe('ring timing: the one-level survival boundary under the deployment loadout', () => {
+describe('ring timing: the one-level fire-gate boundary under the deployment loadout', () => {
   /**
-   * The one-level model plays the arena's **per-level mode**, whose documented
-   * fidelity boundary ignores the wave `shootEnabled` gate — every enemy
-   * fires, at every level. With the shipped competent bot and the deployment
-   * loadout, a one-level five-wave sortie therefore **dies to enemy fire
-   * before the wave-5 clear on every seed**, at every level a ring-1 hex
-   * selects (levels 2–3 for hex-r1-2 / hex-r1-1; the higher levels die even
-   * sooner). The old campaign-slice boundary (a level-3 slice escalated into
-   * the first enemy-fire level 4 by kills) is gone with the slice itself.
+   * The one-level model plays the arena's **per-level mode**, which honours
+   * each wave's authored `shootEnabled` gate (AH-0MWFDQ9EY004NO4X). GDD §2.4
+   * makes levels 1–3 the "enemies are the bullets" opening — nothing fires —
+   * so a one-level sortie at those levels is survivable and the competent bot
+   * clears the five-wave composition with **zero hits**. From level 4 the
+   * enemies fire (GDD §2.5) and the sortie is a first-attempt loss.
    *
-   * This pin records the boundary the one-level budgets are now measured at,
-   * so a later fire-model or balance change cannot move it silently: a
-   * captured one-level sortie, or a surviving seed, would be the change.
+   * This pin records the boundary the one-level budgets are measured at, so a
+   * later fire-model or balance change cannot move it silently: a lost no-fire
+   * sortie, or a captured firing sortie, would be the change.
    */
-  it('a one-level sortie at levels 2–3 dies to enemy fire on every seed', () => {
+  it('a one-level sortie at levels 2–3 clears with no enemy fire, and a firing level does not', () => {
     const runner = createArenaDeploymentRunner();
     const balance = loadBalanceConfig();
     const loadout = resolveDeploymentLoadout(ringEntryOwnership(2));
@@ -922,16 +978,33 @@ describe('ring timing: the one-level survival boundary under the deployment load
       });
     };
     // hex-r1-2 is aggression 1 → level 2; hex-r1-1 is aggression 2 → level 3
-    // (the aggression → level mapping is the shipped one). The sortie never
-    // clears: every seed dies to a `player_hit` after spending its lives.
+    // (the aggression → level mapping is the shipped one). Both are no-fire
+    // levels, so every seed clears the sortie without taking a hit.
     for (const seed of [1, 2, 3]) {
       const atLevel2 = deploy('hex-r1-2', seed);
-      expect(atLevel2.captured).toBe(false);
-      expect(atLevel2.hits).toBeGreaterThan(0);
+      expect(atLevel2.captured).toBe(true);
+      expect(atLevel2.hits).toBe(0);
       const atLevel3 = deploy('hex-r1-1', seed);
-      expect(atLevel3.captured).toBe(false);
-      expect(atLevel3.hits).toBeGreaterThan(0);
+      expect(atLevel3.captured).toBe(true);
+      expect(atLevel3.hits).toBe(0);
     }
+    // The gate is the boundary, not a muzzled arena: the ring-1 firing tail
+    // (hex-r1-6 is aggression 6 → level 7) still shoots the sortie down.
+    const firingHex = hexRingDefinitionsFor(1).find(
+      (entry) => entry.id === 'hex-r1-6',
+    )!;
+    const atLevel7 = runner({
+      seed: 1,
+      hexId: firingHex.id,
+      aggression: firingHex.baseAggression,
+      level: hexDifficultyProfile(firingHex.baseAggression).level,
+      ticks: 18_000,
+      dt: 1 / 60,
+      balance,
+      loadout,
+    });
+    expect(atLevel7.captured).toBe(false);
+    expect(atLevel7.hits).toBeGreaterThan(0);
   }, REAL_ARENA_TIMEOUT_MS);
 });
 
@@ -967,14 +1040,14 @@ describe('ring timing: the one-level income runner (AH-0MWCOWTOR00994NA)', () =>
     expect(result.minerals).toBeGreaterThanOrEqual(0);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('measures a faster-paced income than the fire-on per-level runner', () => {
-    // The one-level sortie played through the arena's **full-campaign** mode
-    // honours the wave `shootEnabled` gate (levels 1–3 do not fire), so the
-    // competent bot wipes it and the measured capture rate (and therefore
-    // cores + banked minerals per deployment) sits well above the default
-    // per-level runner's fire-on result — the income drop the baseline
-    // feared is refuted by the measurement (recorded on
-    // AH-0MWCOWTOR00994NA).
+  it('measures the same capture income as the per-level runner now both honour the fire gate', () => {
+    // The full-campaign sortie honours the wave `shootEnabled` gate, and since
+    // AH-0MWFDQ9EY004NO4X the default per-level runner does too — so the two
+    // runners agree on WHICH hexes are captured (the no-fire levels 1–3) and on
+    // the cores they bank. The income drop the baseline feared is refuted by
+    // both measurements, not just the full-campaign one; the runners still
+    // differ in measured duration (per-level mode plays the truncated wave set
+    // without the campaign state machine).
     const sortie = simulateRingTiming({
       ringIndex: 1,
       strategy: 'grind',
@@ -986,10 +1059,9 @@ describe('ring timing: the one-level income runner (AH-0MWCOWTOR00994NA)', () =>
       strategy: 'grind',
       seeds: [1],
     });
-    expect(sortie.summary.captured.mean).toBeGreaterThan(slice.summary.captured.mean);
-    expect(sortie.summary.salvageCores.mean).toBeGreaterThan(
-      slice.summary.salvageCores.mean,
-    );
+    expect(sortie.summary.captured.mean).toBe(slice.summary.captured.mean);
+    expect(sortie.summary.salvageCores.mean).toBe(slice.summary.salvageCores.mean);
+    expect(slice.summary.captured.mean).toBeGreaterThan(0);
     // Every captured sortie banks exactly one core (one mini-boss).
     expect(sortie.runs[0].salvageCores).toBe(sortie.runs[0].captured);
   }, REAL_ARENA_TIMEOUT_MS);
@@ -1014,25 +1086,29 @@ describe('ring timing: committed baseline evidence', () => {
    * moving the verdicts, and each ruling is tracked as its own rebalancing
    * item.
    */
-  it('ring 1 grind: 15.4 min (13.9–17.3) misses the derived 30–90 min window', () => {
-    // Tracked for a producer ruling by AH-0MWFDQ9EY004NO4X. Re-measured after
-    // the AH-0MWJ1680Z001QYV2 audit follow-up (calmer flight, pass-through
-    // collection): 16.2 → 15.4 min.
+  it('ring 1 grind: 23.7 min (23.5–23.9) misses the derived 30–90 min window', () => {
+    // Ruled by AH-0MWFDQ9EY004NO4X: the producer refused a window re-word,
+    // refused the allowance changes, and asked for the ring's aggression to
+    // ramp with in-ring captures plus the wave `shootEnabled` gate to be
+    // honoured. Both landed (15.4 → 23.7 min), and the honest verdict is still
+    // `missed`: 4.3 min under the window floor and 0.3 min under its tolerance
+    // floor. The remaining gap is the per-hex budget itself (a measured
+    // deployment clears in ~1.7 min against a 5–15-minute authored unit).
     const report = committedGrindReport(1);
     expect(report.budget.verdict).toBe('missed');
     expect(report.budget.withinWindow).toBe(false);
     expect(report.budget.withinTolerance).toBe(false);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(15.4026, 4);
-    expect(report.summary.totalMinutes.min).toBeCloseTo(13.945, 4);
-    expect(report.summary.totalMinutes.max).toBeCloseTo(17.2744, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(23.7435, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(23.5186, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(23.9217, 4);
     // The derived window (6 × 5–15) and its tolerance are computed, not pinned.
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[1]);
     expect(report.budget.toleranceMinutes).toBeCloseTo(6, 6);
-    // Δ to the window floor: 15.4026 − 30 = −14.5974 min (and −8.5974 min
+    // Δ to the window floor: 23.7435 − 30 = −6.2565 min (and −0.2565 min
     // below the 24-minute tolerance floor).
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[1].minMinutes,
-    ).toBeCloseTo(-14.5974, 4);
+    ).toBeCloseTo(-6.2565, 4);
     // Re-judged through the shipped budget rule, the artifact's measurement is
     // still `missed`: the verdict is not merely a stored string.
     expect(
@@ -1048,35 +1124,38 @@ describe('ring timing: committed baseline evidence', () => {
           run.retryMinutes +
           run.retakeMinutes,
       ).toBeCloseTo(run.totalMinutes, 9);
-      expect(run.retryMinutes).toBeCloseTo(run.deploymentMinutes, 9);
       expect(run.retakeMinutes).toBe(0);
       expect(run.betweenSortieMinutes).toBeCloseTo(12, 9);
-      expect(run.captured).toBe(0);
-      expect(run.losses).toBe(6);
+      // Three captures (the no-fire levels 2–3) and three losses (the firing
+      // tail), so the retry bill is the lost half only — never the whole set.
+      expect(run.captured).toBe(3);
+      expect(run.losses).toBe(3);
+      expect(run.retryMinutes).toBeLessThan(run.deploymentMinutes);
       expect(run.ringSecured).toBe(true);
     }
   });
 
-  it('ring 2 grind: 57.0 min (46.0–70.8) sits within-tolerance of the derived 60–180 min window', () => {
-    // Tracked for a producer ruling by AH-0MWFDQCFV007BZE5. Re-measured after
-    // the AH-0MWJ1680Z001QYV2 audit follow-up: 48.7 → 46.0 → 57.0 min as the
-    // bot's control was tuned, landing back inside the 48-minute tolerance
-    // floor.
+  it('ring 2 grind: 51.7 min (50.8–52.5) sits within-tolerance of the derived 60–180 min window', () => {
+    // Tracked for its own producer ruling by AH-0MWFDQCFV007BZE5. Re-measured
+    // with ring 1's ruling (the wave `shootEnabled` gate and the ring's
+    // capture-progress ramp): 57.0 → 51.7 min. The six level-3 hexes now
+    // capture, so the retry bill halves, and the total still sits inside the
+    // 48-minute tolerance floor.
     const report = committedGrindReport(2);
     expect(report.budget.verdict).toBe('within-tolerance');
     expect(report.budget.withinWindow).toBe(false);
     expect(report.budget.withinTolerance).toBe(true);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(57.0165, 4);
-    expect(report.summary.totalMinutes.min).toBeCloseTo(45.9594, 4);
-    expect(report.summary.totalMinutes.max).toBeCloseTo(70.7828, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(51.6835, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(50.8383, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(52.4908, 4);
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[2]);
     expect(report.budget.toleranceMinutes).toBeCloseTo(12, 6);
-    // Δ to the window floor: 57.0165 − 60 = −2.9835 min, inside the 48-minute
+    // Δ to the window floor: 51.6835 − 60 = −8.3165 min, inside the 48-minute
     // tolerance floor (60 − 12), so the total is `within-tolerance` — computed
     // from the producer's per-hex budget rather than authored.
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[2].minMinutes,
-    ).toBeCloseTo(-2.9835, 4);
+    ).toBeCloseTo(-8.3165, 4);
     expect(
       evaluateRingTimingBudget(2, 'grind', report.summary.totalMinutes.mean)
         .verdict,
@@ -1088,15 +1167,53 @@ describe('ring timing: committed baseline evidence', () => {
           run.retryMinutes +
           run.retakeMinutes,
       ).toBeCloseTo(run.totalMinutes, 9);
-      expect(run.retryMinutes).toBeCloseTo(run.deploymentMinutes, 9);
       expect(run.retakeMinutes).toBe(0);
       expect(run.betweenSortieMinutes).toBeCloseTo(24, 9);
-      expect(run.captured).toBe(0);
-      expect(run.losses).toBe(12);
+      expect(run.captured).toBe(6);
+      expect(run.losses).toBe(6);
+      expect(run.retryMinutes).toBeLessThan(run.deploymentMinutes);
       expect(run.ringSecured).toBe(true);
     }
   });
 
+
+  it('pins the per-deployment means the docs restate (AH-0MWFDQCFV007BZE5)', () => {
+    // The docs' "Per-deployment (mean)" column and § Session shape split are
+    // restated from the artifact's measured deployment length; pin those means
+    // here so a re-measurement that moves them fails the docs guard instead of
+    // letting prose silently drift. Ring 2 grind 22.1842 and ring 1 grind
+    // 10.4159 are the values whose 2-dp forms the docs quote (22.18 / 10.42);
+    // the rush lines quote 0.21 / 0.43.
+    expect(committedReport(1, 'grind').summary.deploymentMinutes.mean).toBeCloseTo(
+      10.4159,
+      4,
+    );
+    expect(committedReport(1, 'rush').summary.deploymentMinutes.mean).toBeCloseTo(
+      0.2139,
+      4,
+    );
+    expect(committedReport(2, 'grind').summary.deploymentMinutes.mean).toBeCloseTo(
+      22.1842,
+      4,
+    );
+    expect(committedReport(2, 'rush').summary.deploymentMinutes.mean).toBeCloseTo(
+      0.4269,
+      4,
+    );
+    // Ring 2 grind's split, stated term by term, sums to the measured total:
+    // 22.1842 measured deployments + 24 modelled between-sortie visits +
+    // 5.4994 modelled retries + 0.0 re-capture = 51.6835 min. The retry term
+    // is the lost half of the ring (six losses), not the whole set.
+    const ring2 = committedReport(2, 'grind');
+    const retryMean =
+      ring2.runs.reduce((sum, run) => sum + run.retryMinutes, 0) /
+      ring2.runs.length;
+    expect(retryMean).toBeCloseTo(5.4994, 4);
+    expect(
+      ring2.summary.deploymentMinutes.mean + retryMean + 24,
+    ).toBeCloseTo(ring2.summary.totalMinutes.mean, 3);
+    expect(ring2.runs.every((run) => run.retakeMinutes === 0)).toBe(true);
+  });
 
   it('records the rush line as faster and not ring-securing on both rings', () => {
     for (const ringIndex of [1, 2]) {
@@ -1190,7 +1307,7 @@ describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
     // competent bot wipes the five-wave sortie far more often than it
     // cleared the slice, so capture rate (and therefore cores + banked
     // minerals per deployment) climbs well above the campaign-slice
-    // figures (ring-1 grind 0.222 → 0.5, ring-2 grind 0.111 → 0.333).
+    // figures (ring-1 grind 0.222 → 0.5, ring-2 grind 0.111 → 0.5).
     const r1g = line(1, 'grind').income;
     const r2g = line(2, 'grind').income;
     expect(r1g.captureRate).toBeGreaterThan(0.22);
@@ -1198,10 +1315,10 @@ describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
     expect(r2g.captureRate).toBeGreaterThan(0.11);
     expect(r2g.mineralsPerDeployment).toBeGreaterThan(1.86);
     // Every captured one-level sortie banks the minerals held at its
-    // mini-boss checkpoint (16.75 per captured ring-1 sortie on the
-    // regenerated artifact; 18 before the AH-0MWJ1680Z001QYV2 audit
-    // follow-up's pass-through collection).
-    expect(r1g.mineralsPerCapturedDeployment).toBeCloseTo(16.75, 2);
+    // mini-boss checkpoint (10.67 per captured ring-1 sortie on the regenerated
+    // artifact: pass-through collection, then the ring's capture-progress
+    // aggression ramp made the firing tail harder — AH-0MWFDQ9EY004NO4X).
+    expect(r1g.mineralsPerCapturedDeployment).toBeCloseTo(10.67, 2);
     // The rush line (one weapon hex per ring) banks nothing: its sorties are
     // the ring's hardest and the bot loses them — recorded, not assumed.
     expect(line(1, 'rush').income.captured).toBe(0);
@@ -1217,14 +1334,14 @@ describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
     );
     // Campaign-slice before: hull-2 55 / wave_laser 30 / ricochet 23 /
     // cluster 40 / hardened_plating 20 ring-1-grind deployments. Re-baselined
-    // after the AH-0MWJ1680Z001QYV2 audit follow-up (pass-through collection
-    // banks fewer minerals per sortie): 30 / 17 / 13 / 22 / 14 — still shorter
-    // than the campaign slice for every entry.
-    expect(pace.get('hull-2')).toBe(30);
-    expect(pace.get('wave_laser')).toBe(17);
-    expect(pace.get('ricochet')).toBe(13);
-    expect(pace.get('cluster')).toBe(22);
-    expect(pace.get('hardened_plating')).toBe(11);
+    // after pass-through collection and the ring's capture-progress aggression
+    // ramp (AH-0MWFDQ9EY004NO4X): 42 / 23 / 17 / 30 / 15 — still shorter than
+    // the campaign slice for every entry.
+    expect(pace.get('hull-2')).toBe(42);
+    expect(pace.get('wave_laser')).toBe(23);
+    expect(pace.get('ricochet')).toBe(17);
+    expect(pace.get('cluster')).toBe(30);
+    expect(pace.get('hardened_plating')).toBe(15);
   });
 });
 
@@ -1340,9 +1457,6 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
   const BUYABLE = [
     'hull-2',
     'hull-3',
-    'wave_laser',
-    'ricochet',
-    'cluster',
     'hardened_plating',
     // The defending-bot skill modifier (AH-0MVWZYJ740037EZ1).
     'anti_maw_plating',
@@ -1350,6 +1464,11 @@ describe('ring timing: the unlock pace (AH-0MWCOWTOR00994NA)', () => {
     // report measures every buyable entry, not the attract bot's choice.
     'bomb',
     'magnet',
+    // The purchasable weapon rows are derived and appended after the authored
+    // set (AH-0MWWI3KIO001DY5C); grant-only derived weapons are not buyable.
+    'wave_laser',
+    'ricochet',
+    'cluster',
   ];
 
   it('derives deployments-to-afford from both currency bounds', () => {

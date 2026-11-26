@@ -26,6 +26,7 @@ import { createCompetentBotBrain } from './framework/competent';
 import { makeSnapshot } from './framework/testFixtures';
 import { BOT_HUMAN_INPUT_TUNABLES } from './botHumanLike';
 import { BOT_WORLD_TUNABLES } from './framework/worldModel';
+import { PLAYER_BULLET_SPEED } from '../core/constants';
 
 /** Looks a spec up by its flat key. */
 function numericField(key: string) {
@@ -110,6 +111,38 @@ describe('bot tuning fields (AH-0MV4D7LAD009XYR0)', () => {
   });
 });
 
+describe('aim solve live physics fields (AH-0MWR04ZDU0005O8J AC2)', () => {
+  it('exposes the ship shot-speed knob seeded at the compiled shot speed', () => {
+    const values = defaultBotTuningValues();
+    expect(readTuningNumber(values, numericField('shotSpeed'))).toBe(
+      COMPETENT_BOT_TUNABLES.shotSpeed,
+    );
+    // The compiled default is the ship's own travelling-shot speed, not the
+    // enemy-bullet tell constant.
+    expect(COMPETENT_BOT_TUNABLES.shotSpeed).toBe(PLAYER_BULLET_SPEED);
+    expect(COMPETENT_BOT_TUNABLES.shotSpeed).not.toBe(
+      COMPETENT_BOT_TUNABLES.assumedBulletSpeed,
+    );
+  });
+
+  it('describes assumedBulletSpeed as the enemy-bullet tell constant only', () => {
+    const description = numericField('assumedBulletSpeed').description.toLowerCase();
+    expect(description).toContain('enemy');
+    expect(description).toContain('tell');
+    // It is described as the enemy-fire tell constant, pointing the aim solve
+    // at the ship's own live shot speed instead.
+    expect(description).toContain('enemy-fire tell constant');
+    expect(description).toContain('shotspeed');
+  });
+
+  it('documents the alignment term as live-derived with the constant as fallback', () => {
+    const description = numericField('aimLeadAlignSeconds').description;
+    expect(description).toContain('rotation model');
+    expect(description).toContain('fallback');
+    expect(description).toContain('AH-0MWR04ZDU0005O8J');
+  });
+});
+
 describe('bot rotation skills knobs (AH-0MV1DUSM2005HL98 AC4)', () => {
   it('exposes the skill and aim-lead controls with shipped defaults', () => {
     const values = defaultBotTuningValues();
@@ -156,6 +189,76 @@ describe('bot rotation skills knobs (AH-0MV1DUSM2005HL98 AC4)', () => {
     expect(maxError.max).toBeGreaterThan(0);
     const iterations = numericField('aimLeadIterations');
     expect(iterations.min).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('adaptive aim error knobs (AH-0MWR057Q8004PBOD AC4)', () => {
+  it('exposes the three knobs with shipped defaults', () => {
+    const values = defaultBotTuningValues();
+    expect(readTuningNumber(values, numericField('aimErrorRad'))).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.aimErrorRad,
+    );
+    expect(readTuningNumber(values, numericField('aimErrorDecay'))).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.aimErrorDecay,
+    );
+    expect(readTuningNumber(values, numericField('aimErrorResetDistance'))).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.aimErrorResetDistance,
+    );
+    // The shipped error is small and positive: deliberately imperfect, not
+    // accidentally wrong.
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimErrorRad).toBeGreaterThan(0);
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimErrorRad).toBeLessThanOrEqual(0.05);
+  });
+
+  it('round-trips the knobs into the governor overrides', () => {
+    const values = defaultBotTuningValues();
+    values.human['aimErrorRad'] = 0.12;
+    values.human['aimErrorDecay'] = 0.25;
+    values.human['aimErrorResetDistance'] = 140;
+
+    const human = toHumanOverrides(values);
+    expect(human.aimErrorRad).toBe(0.12);
+    expect(human.aimErrorDecay).toBe(0.25);
+    expect(human.aimErrorResetDistance).toBe(140);
+  });
+
+  it('keeps the knobs inside sensible declared bounds', () => {
+    const values = defaultBotTuningValues();
+    // The error can be disabled (0) or dialled to a meaningful maximum.
+    const error = numericField('aimErrorRad');
+    expect(error.min).toBe(0);
+    expect(error.max).toBeGreaterThanOrEqual(0.2);
+    expect(error.step).toBeGreaterThan(0);
+    // The decay spans no-improvement (1) to instant-zero (0).
+    const decay = numericField('aimErrorDecay');
+    expect(decay.min).toBe(0);
+    expect(decay.max).toBe(1);
+    // A reposition can be immediate or a long repositioning leg.
+    const reset = numericField('aimErrorResetDistance');
+    expect(reset.min).toBe(0);
+    expect(reset.max).toBeGreaterThanOrEqual(60);
+
+    for (const field of [error, decay, reset]) {
+      const shipped = BOT_HUMAN_INPUT_TUNABLES[
+        field.key as 'aimErrorRad' | 'aimErrorDecay' | 'aimErrorResetDistance'
+      ];
+      expect(shipped).toBeGreaterThanOrEqual(field.min);
+      expect(shipped).toBeLessThanOrEqual(field.max);
+      writeTuningNumber(values, field, field.max + 10);
+      expect(readTuningNumber(values, field)).toBe(field.max);
+      writeTuningNumber(values, field, field.min - 10);
+      expect(readTuningNumber(values, field)).toBe(field.min);
+    }
+  });
+
+  it('describes all three knobs, including the disabled-at-0 semantics', () => {
+    for (const key of ['aimErrorRad', 'aimErrorDecay', 'aimErrorResetDistance']) {
+      const description = numericField(key).description;
+      expect(description.length).toBeGreaterThan(0);
+    }
+    expect(numericField('aimErrorRad').description).toMatch(/0 disables/i);
+    expect(numericField('aimErrorDecay').description).toMatch(/hit/i);
+    expect(numericField('aimErrorResetDistance').description).toMatch(/torus/i);
   });
 });
 

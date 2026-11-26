@@ -1,0 +1,109 @@
+# AI Hell cue: aihell-matchup-effective-impact — an effective (counter-weapon)
+# hit on a boss/mini-boss — a bright, sharp critical shatter, ≤ 0.12 s.
+#
+# (AH-0MWL88YYO0053DWH) The B presentation half of producer decision Q1 = A + B:
+# when the player's weapon counters the hex's boss, the impact must read as a
+# *critical* hit within seconds — brighter, sharper and higher than the weapon's
+# own neutral impact. Three layers:
+#
+#   - a hot triangle body 3200 → 2400 Hz (well above every per-weapon impact cue,
+#     which top out around 2800 Hz for the Shard Swarm and 2400 Hz for the
+#     Broadside/Rapid);
+#   - a glassy 4800 Hz sine overtone;
+#   - a short high-passed (5200 Hz) white-noise shard crack.
+#
+# The cue is played at the raised rate in `MATCHUP_IMPACT_STATE_CUES`
+# (`playMatchupEffectiveImpactSound`), so the baked asset itself only has to be
+# sharp and bright — the state's pitch separation from neutral (rate 1) and
+# resisted (rate 0.75) is applied at the call site. The dull resisted partner is
+# `aihell-matchup-resisted-impact`; the two must never alias.
+#
+# Seed 32293 is drawn from the game-specific reservation block
+# (32100–32299) and baked via scripts/build-audio.sh.
+version: "0.1"
+meta:
+  name: aihell-matchup-effective-impact
+  description: Effective hex-matchup hit — a bright, sharp critical shatter of a hot triangle 3200 to 2400 Hz, a glassy 4800 Hz sine overtone and a high-passed noise shard crack, ~0.12 s. Designed to be played at the raised matchup state rate; deliberately sharper and higher than every per-weapon neutral impact cue.
+  category: AIHell
+  tags:
+    - matchup
+    - hit
+  duration: 0.12
+nodes:
+  # v0 — hot body: a high triangle falling 3200 → 2400 Hz.
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 3200
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 3200
+        - kind: exponentialRamp
+          time: 0.1
+          value: 2400
+  e0:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.1
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.16
+  # v1 — glassy overtone: a steady 4800 Hz sine shimmer.
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 4800
+  e1:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.08
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.08
+  # n0 — shard crack: a very short high-passed white-noise burst.
+  n0:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f0:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 5200
+      Q: 0.9
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.06
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.14
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [n0, f0, e2, g2, mix]
+  - from: mix
+    to: out

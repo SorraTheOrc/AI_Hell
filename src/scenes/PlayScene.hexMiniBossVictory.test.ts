@@ -36,6 +36,7 @@ import {
   defenderRatingFromSnapshot,
   deriveDefenderRating,
 } from '../core/hangarWar/hangarEconomy';
+import { HEX_INCOME_MINERALS_PER_AGGRESSION } from '../core/hangarWar/hexDefence';
 import { createRingState } from '../core/hangarWar/hexRing';
 import {
   HANGAR_WAR_STORAGE_KEY,
@@ -56,6 +57,10 @@ import { winBonusMinerals } from '../test/hangarWinBonusContract';
 import type { LevelDefinition } from '../waves/Formations';
 import { GameOverScene } from './GameOverScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
+import {
+  HEX_COMBAT_RESULT_SCENE_KEY,
+  HexCombatResultScene,
+} from './HexCombatResultScene';
 import { MenuScene } from './MenuScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import {
@@ -198,6 +203,9 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       HexMapScene,
       GameOverScene,
       MenuScene,
+      // The landing's post-battle results dialog ships in the boot config, so
+      // every landing boots with it (AH-0MWMGPV420013MGB).
+      HexCombatResultScene,
       ...(withRewardOverlays
         ? [MiniBossWheelScene, MineralChoiceScene]
         : []),
@@ -522,14 +530,36 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
   }
 
   /**
+   * Dismisses the landing's post-battle results dialog with its single confirm
+   * input (AH-0MWMGPV420013MGB), then waits for the map to be live again. A
+   * landing that carries no results dialog (the hexless/arcade paths) is left
+   * untouched, so the helper reads the same on every landing shape.
+   */
+  function dismissResults(): void {
+    const manager = booted!.game.scene;
+    const dialog = manager.getScene(HEX_COMBAT_RESULT_SCENE_KEY);
+    if (dialog && dialog.sys.isActive()) {
+      (dialog as HexCombatResultScene).confirm();
+    }
+    stepGameUntil(
+      booted!.game,
+      'the map resumes after the results dialog',
+      () => manager.isActive(HEX_MAP_SCENE_KEY),
+      600,
+    );
+  }
+
+  /**
    * Every presentable reward surface the win path must leave untouched: no
-   * reward payload, no launched overlay and a live (never paused) map.
+   * reward payload, no launched reward overlay and — once the post-battle
+   * results dialog is confirmed — a live (never paused) map.
    */
   function expectNoWinRewardOverlay(map: HexMapScene): void {
     const manager = map.game.scene;
     expect(map.getReward()).toBeNull();
     expect(manager.isActive(MINI_BOSS_WHEEL_SCENE_KEY)).toBe(false);
     expect(manager.isActive(MINERAL_CHOICE_SCENE_KEY)).toBe(false);
+    dismissResults();
     expect(manager.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
     expect(manager.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
   }
@@ -640,10 +670,12 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(stored!.hangar.bankedCores).toBe(1);
       expect(stored!.ring.hexes).toEqual([]);
 
-      // The map announces exactly the number the resolution banked — never a
-      // constant that could over-claim (Q3 = a).
+      // The results dialog announces exactly the number the resolution
+      // banked — never a constant that could over-claim (Q3 = a) — and the
+      // map's separate win-bonus line is folded into it.
       const map = await landOnMap(scene);
-      expect(map.getWinBonusLine()).toBe(
+      expect(map.getWinBonusLine()).toBeNull();
+      expect(map.getResultsText()).toContain(
         `WIN BONUS BANKED: +${bonus} MINERALS`,
       );
     },
@@ -678,7 +710,8 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(stored!.hangar.bankedCores).toBe(1);
 
       const map = await landOnMap(scene);
-      expect(map.getWinBonusLine()).toBe(
+      expect(map.getWinBonusLine()).toBeNull();
+      expect(map.getResultsText()).toContain(
         `WIN BONUS BANKED: +${bonus} MINERALS`,
       );
     },
@@ -730,6 +763,99 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       expect(scene.getBankedSalvage()).toEqual({ minerals: 0, cores: 0 });
       expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(0);
       expect(loadHangarWarPayload()!.hangar.bankedCores).toBe(0);
+    },
+    30_000,
+  );
+
+  /**
+   * Owned-hex income on a winning sortie (AH-0MWL8CDGN005878A).
+   *
+   * A winning deployment resolves **one** between-sortie tick — the win path
+   * caches it in `pendingBetweenSortieTick` and `_finishRun` reuses it — so the
+   * held-hex income is banked exactly once. The income must survive the
+   * capture, which derives from the run's in-memory bank; a pre-held hex keeps
+   * the amount non-zero.
+   */
+  it(
+    'banks one held-hex income amount on a winning sortie (no double-bank)',
+    async () => {
+      const payload = warPayload(3);
+      const heldHex = payload.ring.hexes.find((hex) => hex.id !== TARGET_HEX)!;
+      heldHex.held = true;
+      heldHex.bossDefeated = true;
+      // A strong defender guarantees the pre-held hex survives this tick.
+      heldHex.defender = {
+        hullId: 'hull-1',
+        defenceRating: 99,
+        bankedMinerals: 0,
+      };
+      const scene = await bootPlay(
+        buildHangarDeployment(payload, { hexId: TARGET_HEX, seed: 7 }),
+      );
+      scene.getGameState().minerals = 25;
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      await landOnMap(scene);
+
+      const stored = loadHangarWarPayload()!;
+      // Exactly one tick resolved for the whole sortie (win path reused).
+      expect(stored.frontierTick).toBe(1);
+      const heldAfter = stored.ring.hexes.find(
+        (hex) => hex.id === heldHex.id,
+      )!;
+      expect(heldAfter.held).toBe(true);
+      const income =
+        HEX_INCOME_MINERALS_PER_AGGRESSION * heldAfter.aggression;
+      expect(income).toBeGreaterThan(0);
+      // Salvage (25) + one win bonus + exactly ONE tick's income (double-banking
+      // would add `income` twice).
+      expect(stored.hangar.bankedMinerals).toBe(
+        25 + winBonusMinerals() + income,
+      );
+      expect(stored.hangar.bankedCores).toBe(1);
+    },
+    30_000,
+  );
+
+  /**
+   * A demo sortie never persists its income (AH-0MWL8CDGN005878A, AC2).
+   *
+   * `_saveHangarWarPayload` returns before writing the versioned store in demo
+   * mode, so the tick's banked income reaches the in-memory run and the map but
+   * never the player's saved war — the same guard that keeps a demo off the
+   * leaderboard.
+   */
+  it(
+    'never persists a demo sortie\'s held-hex income',
+    async () => {
+      // The player's saved war: a clean balance, nothing held, never ticked.
+      saveHangarWarPayload(warPayload());
+
+      const payload = warPayload(3);
+      const heldHex = payload.ring.hexes.find((hex) => hex.id !== TARGET_HEX)!;
+      heldHex.held = true;
+      heldHex.bossDefeated = true;
+      heldHex.defender = {
+        hullId: 'hull-1',
+        defenceRating: 99,
+        bankedMinerals: 0,
+      };
+      const scene = await bootPlay(
+        buildHangarDeployment(payload, { hexId: TARGET_HEX, seed: 7 }),
+      );
+      scene.setDemoMode(true);
+      ownAWeapon(scene);
+      enterMiniBossWave(scene);
+      defeatMiniBoss(scene);
+      finishMiniBossSweep(scene);
+      await landOnMap(scene);
+
+      // The demo banked income in memory but wrote nothing to the store.
+      const saved = loadHangarWarPayload()!;
+      expect(saved.hangar.bankedMinerals).toBe(0);
+      expect(saved.frontierTick).toBe(0);
     },
     30_000,
   );

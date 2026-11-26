@@ -55,6 +55,7 @@ const DOC_PATH = path.resolve(
 
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
+const EVALUATION_PATH = path.resolve(process.cwd(), 'docs/EVALUATION.md');
 
 /** The committed ring-timing baseline artifact — the guard's source of truth. */
 const RING_TIMING_BASELINE_PATH = path.resolve(
@@ -118,6 +119,75 @@ const ringTimingBudgetVerdict = (
     );
   }
   return entry.budget.verdict;
+};
+
+/**
+ * The measured per-deployment mean (`summary.deploymentMinutes.mean`) the docs
+ * restate for a ring and line, formatted from the committed artifact
+ * (AH-0MWFDQCFV007BZE5). The EVALUATION.md "Per-deployment (mean)" column and
+ * the OUTER_LOOP_CANDIDATES.md § Session shape split quote this value, so
+ * deriving it at test runtime keeps the docs and the artifact in step: a
+ * re-measurement that moves the mean fails the guard instead of leaving stale
+ * prose behind.
+ */
+const ringTimingDeploymentMean = (
+  ringIndex: number,
+  strategy: string,
+  decimals = 1,
+): string => {
+  const artifact = JSON.parse(
+    fs.readFileSync(RING_TIMING_BASELINE_PATH, 'utf8'),
+  ) as Array<{
+    ringIndex: number;
+    strategy: string;
+    summary: { deploymentMinutes: { mean: number } };
+  }>;
+  const entry = artifact.find(
+    (candidate) =>
+      candidate.ringIndex === ringIndex && candidate.strategy === strategy,
+  );
+  if (!entry) {
+    throw new Error(
+      `ring-timing baseline artifact ${RING_TIMING_BASELINE_PATH} has no ` +
+        `${ringIndex}-${strategy} entry`,
+    );
+  }
+  return entry.summary.deploymentMinutes.mean.toFixed(decimals);
+};
+
+/**
+ * The modelled **retry** mean (`retryMinutes` averaged over the seeds) the docs
+ * restate for a ring and line, formatted from the committed artifact
+ * (AH-0MWFDQ9EY004NO4X). Only lost deployments are retried, so this is no
+ * longer the per-deployment mean once captures exist; deriving it keeps the
+ * § Session shape split honest when the capture/loss mix moves.
+ */
+const ringTimingRetryMean = (
+  ringIndex: number,
+  strategy: string,
+  decimals = 1,
+): string => {
+  const artifact = JSON.parse(
+    fs.readFileSync(RING_TIMING_BASELINE_PATH, 'utf8'),
+  ) as Array<{
+    ringIndex: number;
+    strategy: string;
+    runs: Array<{ retryMinutes: number }>;
+  }>;
+  const entry = artifact.find(
+    (candidate) =>
+      candidate.ringIndex === ringIndex && candidate.strategy === strategy,
+  );
+  if (!entry || entry.runs.length === 0) {
+    throw new Error(
+      `ring-timing baseline artifact ${RING_TIMING_BASELINE_PATH} has no ` +
+        `${ringIndex}-${strategy} runs`,
+    );
+  }
+  const mean =
+    entry.runs.reduce((sum, run) => sum + run.retryMinutes, 0) /
+    entry.runs.length;
+  return mean.toFixed(decimals);
 };
 
 /**
@@ -291,6 +361,32 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
       expect(body).toMatch(/30\s*[–—-]\s*90/i);
       expect(body).toMatch(/12\s+hexes/i);
       expect(body).toMatch(/ring/i);
+    });
+
+    it('states a ring-2 grind split whose terms sum to the measured total (AH-0MWFDQCFV007BZE5)', () => {
+      // Pin the spend split to the committed artifact: a docs split that does
+      // not sum to the measured total (it once stated 4.1 + 24 + 4.1 = 32.2
+      // against a 57.0 total) fails here instead of silently drifting.
+      const sessionShape =
+        /###\s+Session shape\s*\n([\s\S]*?)(?=\n###\s|$)/i.exec(body)?.[1] ?? '';
+      expect(sessionShape).not.toBe('');
+      // Collapse Markdown's hard line-wrapping so a phrase that spans a line
+      // break still matches its stated terms.
+      const flat = sessionShape.replace(/\s+/g, ' ');
+      const deploy = ringTimingDeploymentMean(2, 'grind'); // "22.2"
+      const retry = ringTimingRetryMean(2, 'grind'); // "5.5"
+      const total = ringTimingMean(2, 'grind'); // "51.7"
+      // The four split terms, each restated from the artifact. The retry term
+      // prices the LOST attempts only, so it is its own figure once the ring
+      // captures half its hexes (AH-0MWFDQ9EY004NO4X).
+      expect(flat).toContain(`${deploy} of measured deployments`);
+      expect(flat).toContain('24 between sorties');
+      expect(flat).toContain(`${retry} of modelled retries`);
+      expect(flat).toContain('0.0 of re-capture');
+      // The section states the total as the artifact measures it, and shows the
+      // four terms summing to that total.
+      expect(flat).toContain(total);
+      expect(flat).toContain(`${deploy} + 24 + ${retry} + 0.0 = ${total}`);
     });
 
     it('makes boss and weapon strength known ahead of a deployment (AC16)', () => {
@@ -692,6 +788,7 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
         mineralsPerDeployment: number;
         coresPerDeployment: number;
         mineralsPerCapturedDeployment: number;
+        captureRate: number;
       };
       unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
     }>;
@@ -707,10 +804,15 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
         new RegExp(`${entry.id}[^\n]*\\*\\*${entry.deploymentsToAfford}\\*\\*`),
       );
     }
-    // Capture rate is stated as a percentage, derived from the artifact
-    // (44.4 % / 33.3 % on the regenerated measurement).
-    expect(spec).toMatch(/\(44\.4\s*%\)/);
-    expect(spec).toMatch(/\(33\.3\s*%\)/);
+    // Capture rate is stated as a percentage, derived from the artifact so the
+    // prose cannot drift from a re-measurement (50.0 % on both rings after the
+    // wave fire gate and the capture-progress ramp, AH-0MWFDQ9EY004NO4X); the
+    // campaign-slice "before" rates stay as measured.
+    const percent = (rate: number): string => `${(rate * 100).toFixed(1)} %`;
+    expect(spec).toContain(`(${percent(r1g.income.captureRate)})`);
+    expect(spec).toContain(`(${percent(r2g.income.captureRate)})`);
+    expect(spec).toMatch(/\(22\.2\s*%\)/);
+    expect(spec).toMatch(/\(11\.1\s*%\)/);
     // The reproducible artifact and the producer's reward-value ruling.
     expect(spec).toContain('docs/dev/one-level-income-baseline.json');
     expect(spec).toContain('AH-0MWEVNBMM000QFO2');
@@ -735,5 +837,100 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
   it('keeps the producer decision record', () => {
     expect(gddFutureScope()).toMatch(/producer/i);
     expect(gddFutureScope()).toMatch(/2026-10-2\d/);
+  });
+});
+
+describe('EVALUATION.md quotes the committed per-deployment means (AH-0MWFDQCFV007BZE5)', () => {
+  const evaluation = fs.existsSync(EVALUATION_PATH)
+    ? fs.readFileSync(EVALUATION_PATH, 'utf8')
+    : '';
+
+  it('exists', () => {
+    expect(evaluation).not.toBe('');
+  });
+
+  it('reconciles every ring/line "Per-deployment (mean)" cell with the artifact', () => {
+    // The table's per-deployment column once quoted 2.1 / 0.1 / 4.1 / 0.2, which
+    // do not reconcile with the artifact's deployment means (1.70 / 0.21 /
+    // 16.51 / 0.43). Derive each cell from the artifact so a re-measurement
+    // that moves a deployment mean fails here rather than leaving stale prose.
+    const lines = evaluation.split('\n');
+    for (const ringIndex of [1, 2] as const) {
+      for (const strategy of ['grind', 'rush'] as const) {
+        const row = lines.find(
+          (line) =>
+            new RegExp(
+              `^\\|\\s*${ringIndex}\\s*\\(.*\\)\\s*\\|\\s*${strategy}\\s*\\|`,
+            ).test(line),
+        );
+        expect(row, `${ringIndex}-${strategy} row`).toBeDefined();
+        // Two decimals, exactly as the artifact-derived cell is formatted.
+        expect(row).toContain(`${ringTimingDeploymentMean(ringIndex, strategy, 2)} min`);
+      }
+    }
+    // The header says what the column measures, rather than implying a ring
+    // total (the next column already states that).
+    expect(evaluation).toMatch(/\|\s*Per-deployment \(mean\)\s*\|/i);
+    expect(evaluation).not.toMatch(/\|\s*Measured runs\s*\|/i);
+  });
+});
+
+/**
+ * The hangar unlock tree's weapon rows are **derived** from the shipped roster
+ * (parent AH-0MWW6PNA5008NC91, AC11/AC13). The docs once stated a fixed
+ * "three unlockable starting weapons" tree size; that count went stale when
+ * every shipped weapon became a derived catalogue entry. These guards pin the
+ * corrected wording so a hand-authored count cannot silently drift back.
+ */
+describe('The derived hangar weapon roster is documented, not a fixed count (AH-0MWWI3KIO001DY5C)', () => {
+  const CATALOGUE_PATH = path.resolve(
+    process.cwd(),
+    'src/data/hangarCatalogue.ts',
+  );
+
+  it('the catalogue module header documents the derivation, exclusion and import direction', () => {
+    const text = fs.readFileSync(CATALOGUE_PATH, 'utf8');
+    expect(text).toMatch(/Derivation, exclusions and guards/);
+    expect(text).toMatch(/Import direction \(no cycle/);
+    expect(text).toContain('HANGAR_EXCLUDED_WEAPON_IDS');
+    expect(text).toMatch(/tracks `src\/data\/weapons\.csv`/);
+  });
+
+  it.each([
+    ['the outer-loop catalogue', DOC_PATH],
+    ['the README', README_PATH],
+    ['the Game Design Document', GDD_PATH],
+  ])('%s no longer claims a fixed three-weapon unlock tree', (_label, filePath) => {
+    const text = fs.readFileSync(filePath, 'utf8');
+    expect(text).not.toMatch(/three unlockable starting weapons/i);
+    expect(text).not.toMatch(/three starting weapons/i);
+  });
+
+  it('the outer-loop catalogue states the roster is derived from weapons.csv', () => {
+    const text = fs.readFileSync(DOC_PATH, 'utf8');
+    expect(text).toContain('weapons.csv');
+    expect(text).toMatch(/derived into the unlock tree/i);
+    // The single documented exclusion keeps the promise honest.
+    expect(text).toMatch(/`cannon`/);
+  });
+
+  it('the README states the derived roster instead of a fixed weapon count', () => {
+    const text = fs.readFileSync(README_PATH, 'utf8');
+    expect(text).toContain('src/data/weapons.csv');
+    expect(text).toMatch(/grant-only derived row/i);
+    expect(text).toMatch(/`rapid`/);
+  });
+
+  it('the Game Design Document states the derived roster and the grant-only default', () => {
+    const text = fs.readFileSync(GDD_PATH, 'utf8');
+    expect(text).toMatch(/builds one entry per\s+`src\/data\/weapons\.csv` row/i);
+    expect(text).toMatch(/grant-only/i);
+    expect(text).toMatch(/four purchasable weapon rows/i);
+  });
+
+  it('EVALUATION.md no longer claims a granted weapon can be uncatalogued', () => {
+    const text = fs.readFileSync(EVALUATION_PATH, 'utf8');
+    expect(text).not.toMatch(/A grant the catalogue does not itemise/i);
+    expect(text).toMatch(/derives one weapon entry per/i);
   });
 });

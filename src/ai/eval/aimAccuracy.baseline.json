@@ -1,0 +1,49 @@
+{
+  "seeds": [1, 7, 42],
+  "classes": ["chaser", "diver", "patroller", "formation", "roamer"],
+  "ticks": 1800,
+  "dt": 0.016666666666666666,
+  "perClass": [
+    {
+      "movementClass": "chaser",
+      "shotsFired": 182,
+      "shotsHit": 84,
+      "hitRate": 0.4615,
+      "meanMissDistance": 2.2828
+    },
+    {
+      "movementClass": "diver",
+      "shotsFired": 218,
+      "shotsHit": 95,
+      "hitRate": 0.4358,
+      "meanMissDistance": 2.5616
+    },
+    {
+      "movementClass": "patroller",
+      "shotsFired": 199,
+      "shotsHit": 104,
+      "hitRate": 0.5226,
+      "meanMissDistance": 10.7164
+    },
+    {
+      "movementClass": "formation",
+      "shotsFired": 204,
+      "shotsHit": 129,
+      "hitRate": 0.6324,
+      "meanMissDistance": 45.7425
+    },
+    {
+      "movementClass": "roamer",
+      "shotsFired": 203,
+      "shotsHit": 101,
+      "hitRate": 0.4975,
+      "meanMissDistance": 65.4901
+    }
+  ],
+  "pooled": {
+    "shotsFired": 1006,
+    "shotsHit": 513,
+    "hitRate": 0.5099,
+    "meanMissDistance": 23.6664
+  }
+}

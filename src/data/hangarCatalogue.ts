@@ -4,10 +4,14 @@
  *
  * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D, *New systems
  * required* (hulls, starting weapons, permanent modifiers) and *Persistence and
- * save model*; the epic (`AH-0MVU3VNJI00066YE`, AC1) fixes the contents: **one
- * extra hull, three unlockable starting weapons and one permanent modifier**,
- * on top of the minimal starting kit (one basic hull and its starting weapon,
- * owned but not equipped by default — AH-0MVZJ6V1J001DA9D). The post-MVP
+ * save model*; the epic (`AH-0MVU3VNJI00066YE`, AC1) fixed the original
+ * contents — **one extra hull, three unlockable starting weapons and one
+ * permanent modifier** — on top of the minimal starting kit (one basic hull and
+ * its starting weapon, owned but not equipped by default — AH-0MVZJ6V1J001DA9D).
+ * The weapon half has since grown past that original three: every shipped
+ * weapon is **derived** into the tree (see *Derivation, exclusions and guards*
+ * below), so the unlock tree tracks `src/data/weapons.csv` rather than a fixed
+ * hand-authored count. The post-MVP
  * special-reward hull (`hull-3`, AH-0MWF0CUS3009M5SY) is the one deliberate
  * addition: **extra hit points**, expressed with today's {@link HullDefinition}
  * / {@link HullRunStats} fields and granted by the ring-2 special mission
@@ -26,12 +30,57 @@
  * so the hangar slice stands alone; ring-2+ grants (phase B) are the entries
  * that actually use a higher gate.
  *
+ * ## Derivation, exclusions and guards (AH-0MWWI3KIO001DY5C)
+ *
+ * Weapon entries are **derived** from the guarded runtime `WEAPON_CATALOGUE`
+ * (`src/utils/weapons.ts`) instead of being hand-authored: `deriveWeaponEntry`
+ * reads `name`, `description` and `weaponId` from the shipped weapon row, so a
+ * designer adding a row to `src/data/weapons.csv` gets a hangar entry with no
+ * code change and the unlock tree can never drift from the shipped roster.
+ * {@link AUTHORED_ENTRIES} keeps only the entries with no CSV home (hulls,
+ * modifiers and power-ups); {@link HANGAR_CATALOGUE} is that authored set plus
+ * one derived entry per non-excluded weapon.
+ *
+ * {@link HANGAR_EXCLUDED_WEAPON_IDS} is the **only** documented way a shipped
+ * weapon is not itemised (`cannon` — the always-mounted permanent default,
+ * which must never be sellable). Price and ring gate are **authored**, never
+ * derived from tuning: {@link WEAPON_UNLOCK_ECONOMY} promotes a derived entry to
+ * a purchasable unlock and its **absence means grant-only** (the existing
+ * `GRANT_ONLY_MIN_RING` posture), so a rebalance can never reprice the tree.
+ * `src/utils/weapons.ts` rules out deriving prices from the shipped data:
+ * "Baselines are frozen history — they are never re-derived from the shipped
+ * data, or a regression in the catalogue would be invisible". Guard (c) in
+ * {@link validateHangarCatalogue} fails the build on a stale/typo'd economy key
+ * rather than letting a promotion silently vanish.
+ *
+ * ## Import direction (no cycle — AC12)
+ *
+ * This module is now a **runtime consumer** of `src/utils/weapons.ts`. The
+ * graph stays acyclic because the dependency runs one way:
+ * `data/hangarCatalogue → utils/weapons → core/csv` (which imports weapons'
+ * types and `core/configDefaults` only) and `utils/weapons → utils/beat`.
+ * Nothing in that chain imports this module at runtime: the only back-edges are
+ * **type-only** (`core/csv`'s `import type` of `weapons.ts`, and
+ * `core/hangarWar/grantAliases`'s `import type` of this module), which are
+ * erased. Guard (e) adds two more **one-way** runtime reads:
+ * `data/hangarCatalogue → core/hangarWar/grantAliases` (the shared alias table,
+ * which itself imports this module only as a type) and
+ * `data/hangarCatalogue → data/hexRingDefinitions` (the authored grants, whose
+ * own `core/hangarWar/hexRing` import is type-only), so neither closes a cycle.
+ * {@link validateHangarCatalogue} is `applyWeaponCatalogueGuards`'
+ * counterpart: it runs at catalogue build time and fails loudly with an
+ * actionable diagnostic rather than silently skipping an uncovered weapon or
+ * an un-itemised hex grant.
+ *
  * @module src/data/hangarCatalogue
  */
 
 import type { DefenceSkill } from '../core/hangarWar/types';
+import { resolveGrantAlias } from '../core/hangarWar/grantAliases';
+import { HEX_RING_DEFINITIONS } from './hexRingDefinitions';
 import type { PowerUpId } from '../powerups/types';
-import type { WeaponId } from '../utils/weapons';
+import { WEAPON_CATALOGUE } from '../utils/weapons';
+import type { WeaponDefinition, WeaponId } from '../utils/weapons';
 
 /**
  * What kind of thing an unlock is (and which owned set it joins).
@@ -212,7 +261,14 @@ export function isBotPurchaseCandidate(entry: HangarEntry): boolean {
 }
 
 /**
- * The hangar's unlock tree.
+ * The **hand-authored** hangar entries: the hulls, modifiers and power-ups.
+ *
+ * These are the entries with no CSV home. The unlock tree's weapon entries are
+ * **derived** from the runtime `WEAPON_CATALOGUE` (see
+ * {@link deriveWeaponEntry}) and appended by {@link buildHangarCatalogue}, so a
+ * designer's `src/data/weapons.csv` edit flows into the tree with no code change
+ * (AH-0MWWI3KIO001DY5C). A hand-authored weapon row here would fail the
+ * duplicate / coverage guards in {@link validateHangarCatalogue}.
  *
  * The buyable tree is the MVP hulls/weapons/modifiers plus the post-MVP
  * additions: the special-reward hulls, a second defending-bot-skill modifier
@@ -240,7 +296,7 @@ export function isBotPurchaseCandidate(entry: HangarEntry): boolean {
  * permanent, level-bearing kinds are sold (never a consumable charge pool or
  * the field-pickup-only kind).
  */
-export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
+export const AUTHORED_ENTRIES: readonly HangarEntry[] = [
   {
     id: STARTER_HULL_ID,
     kind: 'hull',
@@ -324,50 +380,6 @@ export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
     runStats: { startingLives: 4, speedMultiplier: 0.9 },
   },
   {
-    id: STARTER_WEAPON_ID,
-    kind: 'weapon',
-    name: 'Spread Cannon',
-    description:
-      'The factory three-bullet fan: one shot ahead, two angled off it.',
-    price: { minerals: 0, cores: 0 },
-    minRing: 1,
-    starter: true,
-    weaponId: 'spread',
-  },
-  {
-    id: 'wave_laser',
-    kind: 'weapon',
-    name: 'Wave Laser',
-    description:
-      'A slow, wide beam that punches through the enemies it destroys and spends the rest on the ones behind them.',
-    price: { minerals: 120, cores: 1 },
-    minRing: 1,
-    starter: false,
-    weaponId: 'wave_laser',
-  },
-  {
-    id: 'ricochet',
-    kind: 'weapon',
-    name: 'Ricochet',
-    description:
-      'A single shot that reflects off the arena edges, so a missed line can still come back around.',
-    price: { minerals: 90, cores: 2 },
-    minRing: 1,
-    starter: false,
-    weaponId: 'ricochet',
-  },
-  {
-    id: 'cluster',
-    kind: 'weapon',
-    name: 'Cluster Missile',
-    description:
-      'A missile that splits once on impact or expiry into a radial cluster of warheads.',
-    price: { minerals: 160, cores: 1 },
-    minRing: 1,
-    starter: false,
-    weaponId: 'cluster',
-  },
-  {
     id: 'hardened_plating',
     kind: 'modifier',
     name: 'Hardened Plating',
@@ -429,3 +441,406 @@ export const HANGAR_CATALOGUE: readonly HangarEntry[] = [
     powerUpId: 'magnet',
   },
 ];
+
+// ── Derived weapon entries (AH-0MWWI3KIO001DY5C) ────────────────────
+
+/**
+ * The **only** documented way a shipped weapon is not itemised in the unlock
+ * tree (parent AC2).
+ *
+ * `cannon` is the always-mounted, permanent default weapon: every run has it
+ * from the first frame, so it must never be sold, owned or upgraded through the
+ * hangar. Any future exclusion must be added here with a reason; the coverage
+ * guard ({@link validateHangarCatalogue}) fails closed on a weapon that is
+ * neither itemised nor listed here. Count rule: `weapons.csv` rows minus this
+ * list equals the number of weapon entries in {@link HANGAR_CATALOGUE}.
+ */
+export const HANGAR_EXCLUDED_WEAPON_IDS: readonly WeaponId[] = ['cannon'];
+
+/**
+ * Authored hex-grant ids that intentionally resolve to **no** catalogue entry.
+ *
+ * A hex may pay a flat, effect-free strength grant the unlock tree does not
+ * itemise (there is nothing to own, display or equip). Guard (e) is the only
+ * reader of this list, so an authored grant that falls outside both the
+ * catalogue and this allowlist fails the build rather than leaving the player
+ * owning an invisible weapon.
+ *
+ * The three entries belong to AH-0MWWARIW6003F7OV ("Ring-2 modifier grants
+ * have no hangar catalogue entry"), which owns either a catalogue entry or a
+ * `GRANT_ALIASES` re-point for them; removing an id here is that item's
+ * follow-up. The authored `extra-life` grant needs no entry: it resolves through
+ * its alias to `hardened_plating`, so it is checked like any other grant.
+ */
+export const HEX_GRANT_EFFECT_FREE_ALLOWLIST: readonly string[] = Object.freeze([
+  'armour-plating',
+  'systems-upgrade',
+  'firepower-up',
+]);
+
+/** One authored weapon economy row — a price and ring gate, never derived. */
+export interface WeaponUnlockEconomyRow {
+  /** Salvage cost of the unlock. */
+  readonly price: HangarPrice;
+  /** Lowest ring index at which the weapon may be bought. */
+  readonly minRing: number;
+  /** Whether a fresh fleet already owns it (the starter weapon only). */
+  readonly starter?: boolean;
+}
+
+/**
+ * The authored weapon economy rows — **data, never derived**
+ * (AH-0MWWI3L3Z006LX3Z, parent AC3).
+ *
+ * A row promotes a derived weapon entry to a purchasable unlock; a weapon
+ * absent from the table is **grant-only** (zero price, {@link
+ * GRANT_ONLY_MIN_RING}, {@link isPurchasableEntry} false), exactly as `hull-4`
+ * already expresses the posture. Promotion is therefore an explicit authored
+ * decision, never a derivation: adding a CSV row makes a weapon *ownable*, but
+ * it is never *sellable* until a designer authors an economy row here.
+ *
+ * Prices are authored deliberately, never derived from shipped tuning:
+ * `src/utils/weapons.ts` rules that out ("Baselines are frozen history — they
+ * are never re-derived from the shipped data, or a regression in the catalogue
+ * would be invisible"). A designer retuning a CSV `subdivisions`/`lifetime`
+ * must not silently reprice the tree.
+ *
+ * This slice carries only the four shipped rows so their prices survive the
+ * derivation byte-for-byte; the eleven newly derived weapons (`dual`, `rapid`,
+ * `options`, `nova`, `mortar`, `arc`, `rear_guard`, `broadside`, `railgun`,
+ * `shard_swarm`, `heavy_slug`) are deliberately absent and ship grant-only.
+ * Their price ladder is AH-0MWWGFDE1001FW4J. Every key is validated at build
+ * time by guard (c) in {@link validateHangarCatalogue}: a stale or typo'd row
+ * fails closed rather than silently promoting nothing.
+ */
+export const WEAPON_UNLOCK_ECONOMY: Readonly<
+  Partial<Record<WeaponId, WeaponUnlockEconomyRow>>
+> = {
+  spread: { price: { minerals: 0, cores: 0 }, minRing: 1, starter: true },
+  wave_laser: { price: { minerals: 120, cores: 1 }, minRing: 1 },
+  ricochet: { price: { minerals: 90, cores: 2 }, minRing: 1 },
+  cluster: { price: { minerals: 160, cores: 1 }, minRing: 1 },
+};
+
+/**
+ * Derives one hangar weapon entry from a runtime weapon definition.
+ *
+ * `name`, `description` and `weaponId` come from the definition (the CSV row),
+ * so a designer's edit flows straight into the tree with no code change and the
+ * hangar copy can never drift from the shipped roster. `price`/`minRing` come
+ * from the authored {@link WEAPON_UNLOCK_ECONOMY} row; a weapon with no row is
+ * grant-only. Tuning fields (fire rate, lifetime, VFX) are deliberately never
+ * copied onto the entry: a hangar weapon is a **pointer at** a shipped weapon,
+ * never a variant of it (AGENTS.md gym↔game parity).
+ *
+ * @param weapon — a runtime `WEAPON_CATALOGUE` definition.
+ * @returns the single hangar entry for that weapon.
+ */
+export function deriveWeaponEntry(
+  weapon: WeaponDefinition,
+): StartingWeaponDefinition {
+  const economy = WEAPON_UNLOCK_ECONOMY[weapon.id];
+  return {
+    id: weapon.id,
+    kind: 'weapon',
+    weaponId: weapon.id,
+    name: weapon.name,
+    description: weapon.description,
+    price: economy?.price ?? { minerals: 0, cores: 0 },
+    minRing: economy?.minRing ?? GRANT_ONLY_MIN_RING,
+    starter: economy?.starter ?? false,
+  };
+}
+
+/**
+ * Builds the hangar catalogue from a weapon catalogue: every authored entry
+ * plus one derived entry per non-excluded weapon, in weapon-catalogue order.
+ *
+ * Injectable so the derivation can be exercised over a fixture catalogue (a new
+ * row appears with no code change) and so the guards can check a broken
+ * fixture. `Object.values` preserves the runtime catalogue's insertion order,
+ * so the tree is deterministic.
+ *
+ * @param weapons — the runtime weapon catalogue (defaults to the shipped,
+ *   guarded `WEAPON_CATALOGUE`; the derivation never reads the raw CSV parse).
+ * @param exclusions — weapon ids deliberately not itemised (defaults to
+ *   {@link HANGAR_EXCLUDED_WEAPON_IDS}).
+ */
+export function buildHangarCatalogue(
+  weapons: Readonly<Record<string, WeaponDefinition>> = WEAPON_CATALOGUE as Readonly<
+    Record<string, WeaponDefinition>
+  >,
+  exclusions: readonly string[] = HANGAR_EXCLUDED_WEAPON_IDS,
+): readonly HangarEntry[] {
+  const excluded = new Set(exclusions);
+  const derived = Object.values(weapons)
+    .filter((weapon) => !excluded.has(weapon.id))
+    .map((weapon) => deriveWeaponEntry(weapon));
+  return [...AUTHORED_ENTRIES, ...derived];
+}
+
+// ── Fail-closed catalogue-build guards (AC5) ────────────────────────
+
+/** Severity of one hangar-catalogue diagnostic. */
+export type HangarCatalogueIssueSeverity = 'error' | 'warning';
+
+/** One actionable finding from {@link validateHangarCatalogue}. */
+export interface HangarCatalogueDiagnostic {
+  /** `error` rejects the tree; `warning` is advisory only. */
+  readonly severity: HangarCatalogueIssueSeverity;
+  /** Every id the finding is about (the actionable offender(s)). */
+  readonly ids: readonly string[];
+  /** The field/rule at fault (e.g. `coverage`, `id`, `weaponId`). */
+  readonly field: string;
+  /** One human-readable line naming the ids and the reason. */
+  readonly message: string;
+}
+
+/** The result of validating a hangar catalogue. */
+export interface HangarCatalogueValidation {
+  /** True when the tree carries no `error` diagnostic. */
+  readonly ok: boolean;
+  /** Every finding, in guard order. */
+  readonly diagnostics: readonly HangarCatalogueDiagnostic[];
+}
+
+/** Injectable input for {@link validateHangarCatalogue} (fixtures/tests). */
+export interface HangarCatalogueGuardInput {
+  /** The runtime weapon catalogue; defaults to the shipped one. */
+  readonly weapons?: Readonly<Record<string, { readonly id: string }>>;
+  /** The catalogue entries to check; defaults to {@link HANGAR_CATALOGUE}. */
+  readonly entries?: readonly HangarEntry[];
+  /**
+   * The authored economy table; defaults to {@link WEAPON_UNLOCK_ECONOMY}.
+   *
+   * Typed over plain string keys (not just `WeaponId`) so a fixture can inject
+   * a typo'd or stale id and prove guard (c) rejects it.
+   */
+  readonly economy?: Readonly<
+    Record<string, WeaponUnlockEconomyRow | undefined>
+  >;
+  /** Weapon ids deliberately not itemised; defaults to the shipped list. */
+  readonly exclusions?: readonly string[];
+  /**
+   * Authored hex grant ids to check, **replacing** the shipped list. Defaults
+   * to every `HEX_RING_DEFINITIONS` `grants` value, so a fixture can inject a
+   * drifting grant and prove guard (e) rejects it.
+   */
+  readonly hexGrants?: readonly string[];
+}
+
+/** Builds one error diagnostic with the catalogue's house-style message shape. */
+function hangarDiagnostic(
+  ids: readonly string[],
+  field: string,
+  reason: string,
+): HangarCatalogueDiagnostic {
+  return {
+    severity: 'error',
+    ids,
+    field,
+    message: `${ids.join(', ')}: ${field}: ${reason}`,
+  };
+}
+
+/**
+ * Validate a hangar catalogue against the build-time referential-integrity
+ * guards (parent AC5), mirroring `validateWeaponCatalogue` in
+ * `src/utils/weaponCatalogue.ts`.
+ *
+ * Pure and non-throwing: a broken fixture becomes a diagnostic, never an
+ * exception, so a test (and the build) can report every offender at once. Every
+ * diagnostic names the offending id(s) and the rule, so it is directly
+ * actionable. Implemented here:
+ *
+ * - **(a) full coverage** — every non-excluded weapon has exactly one entry and
+ *   no excluded weapon is itemised;
+ * - **(b) unique entry ids** — no duplicate id across authored + derived;
+ * - **(c) economy keys resolve** — every {@link WEAPON_UNLOCK_ECONOMY} key is a
+ *   shipped, non-excluded weapon id, so a stale/typo'd row fails closed rather
+ *   than silently promoting nothing;
+ * - **(d) weapon id resolves** — every weapon entry's `weaponId` is a shipped
+ *   runtime weapon;
+ * - **(e) authored hex grants resolve** — every `HEX_RING_DEFINITIONS`
+ *   `grants` id resolves to a catalogue entry (through the shared
+ *   {@link resolveGrantAlias} table or directly), or is on the documented
+ *   {@link HEX_GRANT_EFFECT_FREE_ALLOWLIST}. This is the referential-integrity
+ *   guard that was missing: without it a hex could award an id the catalogue
+ *   cannot display, leaving the player owning a weapon they can never see,
+ *   equip or fly.
+ *
+ * @param input — optional injected fixtures (defaults to the shipped data).
+ */
+export function validateHangarCatalogue(
+  input: HangarCatalogueGuardInput = {},
+): HangarCatalogueValidation {
+  const weapons =
+    input.weapons ??
+    (WEAPON_CATALOGUE as unknown as Readonly<
+      Record<string, { readonly id: string }>
+    >);
+  const entries = input.entries ?? HANGAR_CATALOGUE;
+  const economy = input.economy ?? WEAPON_UNLOCK_ECONOMY;
+  const excluded = new Set(input.exclusions ?? HANGAR_EXCLUDED_WEAPON_IDS);
+  const diagnostics: HangarCatalogueDiagnostic[] = [];
+
+  const weaponEntries = entries.filter(
+    (entry): entry is StartingWeaponDefinition => entry.kind === 'weapon',
+  );
+
+  // (a) Full coverage: every non-excluded runtime weapon is itemised exactly
+  // once, and an excluded weapon is never itemised.
+  for (const id of Object.keys(weapons)) {
+    if (excluded.has(id)) continue;
+    const matches = weaponEntries.filter((entry) => entry.weaponId === id);
+    if (matches.length === 0) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'coverage',
+          `shipped weapon ${id} has no hangar catalogue entry — add it to the ` +
+            'derivation or to HANGAR_EXCLUDED_WEAPON_IDS with a reason',
+        ),
+      );
+    } else if (matches.length > 1) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'coverage',
+          `shipped weapon ${id} has ${matches.length} hangar entries — exactly one is required`,
+        ),
+      );
+    }
+  }
+  for (const entry of weaponEntries) {
+    if (excluded.has(entry.weaponId)) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [entry.weaponId],
+          'coverage',
+          `excluded weapon ${entry.weaponId} must not be itemised (entry ${entry.id})`,
+        ),
+      );
+    }
+  }
+
+  // (b) Unique entry ids across authored + derived.
+  const idCounts = new Map<string, number>();
+  for (const entry of entries) {
+    idCounts.set(entry.id, (idCounts.get(entry.id) ?? 0) + 1);
+  }
+  for (const [id, count] of idCounts) {
+    if (count < 2) continue;
+    diagnostics.push(
+      hangarDiagnostic(
+        [id],
+        'id',
+        `duplicate hangar entry id ${id} across ${count} entries — every ` +
+          'authored and derived entry needs a unique id',
+      ),
+    );
+  }
+
+  // (c) Every WEAPON_UNLOCK_ECONOMY key is a shipped, non-excluded weapon id.
+  // A stale or typo'd row promotes nothing (there is no derived entry to
+  // promote), so it fails closed instead of being silently ignored.
+  for (const id of Object.keys(economy)) {
+    if (weapons[id] === undefined) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'economy',
+          `WEAPON_UNLOCK_ECONOMY has a row for ${id}, which is not a shipped ` +
+            'weapon id — remove the stale row or fix the typo',
+        ),
+      );
+    } else if (excluded.has(id)) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'economy',
+          `WEAPON_UNLOCK_ECONOMY prices the excluded weapon ${id}, which can ` +
+            'never be sold — remove the row or fix HANGAR_EXCLUDED_WEAPON_IDS',
+        ),
+      );
+    }
+  }
+
+  // (d) Every weapon entry's weaponId resolves in the runtime weapon catalogue.
+  for (const entry of weaponEntries) {
+    if (weapons[entry.weaponId] === undefined) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [entry.id, entry.weaponId],
+          'weaponId',
+          `hangar entry ${entry.id} points at weapon ${entry.weaponId}, which ` +
+            'is not in the runtime weapon catalogue',
+        ),
+      );
+    }
+  }
+
+  // (e) Every authored hex grant resolves to a catalogue entry (or is on the
+  // documented effect-free allowlist). The authored id may be an alias
+  // (`waveLaser` → `wave_laser`) or a catalogue id; either way the player must
+  // end up owning an entry the hangar can show, equip and deploy.
+  const hexGrants =
+    input.hexGrants ??
+    HEX_RING_DEFINITIONS.map((definition) => definition.grants);
+  const allowlistedGrants = new Set(HEX_GRANT_EFFECT_FREE_ALLOWLIST);
+  const entryIds = new Set(entries.map((entry) => entry.id));
+  for (const authored of hexGrants) {
+    if (typeof authored !== 'string') continue;
+    const id = authored.trim();
+    if (id === '') continue;
+    if (allowlistedGrants.has(id)) continue;
+    const entryId = resolveGrantAlias(id)?.entryId ?? id;
+    if (!entryIds.has(entryId)) {
+      diagnostics.push(
+        hangarDiagnostic(
+          [id],
+          'hexGrant',
+          `authored hex grant ${id} resolves to no hangar catalogue entry ` +
+            `(looked for ${entryId}) — derive/add the entry, point the grant at ` +
+            'an existing id, or add it to HEX_GRANT_EFFECT_FREE_ALLOWLIST with a reason',
+        ),
+      );
+    }
+  }
+
+  return {
+    ok: diagnostics.every((entry) => entry.severity !== 'error'),
+    diagnostics,
+  };
+}
+
+/**
+ * The shipped unlock tree: the authored hulls/modifiers/power-ups plus one
+ * derived entry per non-excluded weapon (see {@link buildHangarCatalogue}).
+ *
+ * Built once at module load from the **guarded** runtime `WEAPON_CATALOGUE`, so
+ * a weapon the weapon guard rejected runs its code-default id — the derivation
+ * can never see both a rejected row and its fallback, and therefore can never
+ * itemise the same weapon twice.
+ */
+export const HANGAR_CATALOGUE: readonly HangarEntry[] = buildHangarCatalogue();
+
+/**
+ * The result of validating the shipped tree at build time.
+ *
+ * Exposed so a boot-time self-check (and tests) can surface a drift, and so a
+ * duplicate/coverage break is a loud failure rather than a silently missing
+ * hangar row.
+ */
+export const HANGAR_CATALOGUE_VALIDATION: HangarCatalogueValidation =
+  validateHangarCatalogue();
+
+// Fail closed: a broken shipped tree is a programming/data error, never a
+// silently missing row (mirrors `applyWeaponCatalogueGuards`).
+if (!HANGAR_CATALOGUE_VALIDATION.ok) {
+  throw new Error(
+    `Hangar catalogue guard failed:\n${HANGAR_CATALOGUE_VALIDATION.diagnostics
+      .map((entry) => `  ${entry.severity}: ${entry.message}`)
+      .join('\n')}`,
+  );
+}

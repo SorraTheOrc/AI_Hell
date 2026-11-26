@@ -657,3 +657,51 @@ describe('overshoot filter (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
     ]);
   });
 });
+
+/**
+ * Collection re-tune — opportunistic forward sweep (AH-0MWLCGXGW004KA3J).
+ *
+ * The pass-through bot leaves ~30–45 % of the minerals it flies past on the
+ * field. The re-tune lowers the mineral diversion threshold (0.5 -> 0.35) so a
+ * small forward cluster earns a diversion and is swept on the way through,
+ * while a lone gold dot still does not pull the bot off its combat course.
+ */
+describe('collection re-tune — opportunistic mineral sweep (AH-0MWLCGXGW004KA3J)', () => {
+  // Three enemies, no incoming fire: the primary is combat but not urgent, so
+  // the diversion gate (payoff vs threshold) is what decides collection.
+  const enemyPrimary = (extra: Parameters<typeof makeSnapshot>[0]) =>
+    makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(480, 70, 'scout'), enemy(200, 90, 'scout'), enemy(760, 110, 'scout')],
+      ...extra,
+    });
+
+  // Four gold dots spaced 12 px apart sit inside `mineralClusterRadius` (120):
+  // summed value 4 / depositValue 10 = payoff 0.4, between the old 0.5
+  // threshold and the re-tuned 0.35.
+  const smallCluster = [660, 672, 684, 696].map((x) => mineral(x, 270));
+
+  it('still does not divert for a lone gold dot (no over-collection under fire)', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    brain.decide(enemyPrimary({ minerals: [mineral(680, 270)] }), 0.1);
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.engageEnemy);
+  });
+
+  it('diverts to a small forward cluster when the threshold is 0.35 (mechanism)', () => {
+    const brain = createCompetentBotBrain({
+      fallback: null,
+      tunables: resolveCompetentTunables({ diversionThreshold: 0.35 }),
+    });
+    brain.decide(enemyPrimary({ minerals: smallCluster }), 0.1);
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
+  });
+
+  it.fails(
+    'sweeps the small cluster under the shipped default threshold (RED-first: flips to `it` once AH-0MWLLPA1Q0006U2P sets the default to 0.35)',
+    () => {
+      const brain = createCompetentBotBrain({ fallback: null });
+      brain.decide(enemyPrimary({ minerals: smallCluster }), 0.1);
+      expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
+    },
+  );
+});

@@ -108,6 +108,12 @@ export interface CliOptions {
    */
   readonly forceFields: boolean;
   /**
+   * Override the seeded elite (anomaly) budget for full-campaign mode
+   * (AH-0MWU667OG00287SY); `null` keeps the shipped `ELITE_WAVE_CHANCE`.
+   * `0` captures the elite-free baseline with the same harness code/seeds.
+   */
+  readonly eliteWaveChance: number | null;
+  /**
    * Full-campaign mode for **batch** runs (AC1/AC2): `true` (the default)
    * sweeps the whole shipped campaign; `false` is the CLI's `--skirmish`
    * opt-out into the legacy single-level skirmish. Ignored outside batch
@@ -162,6 +168,7 @@ function runConfig(options: CliOptions) {
     level: options.level ?? undefined,
     scaleLevels: options.scaleLevels,
     forceFields: options.forceFields,
+    eliteWaveChance: options.eliteWaveChance ?? undefined,
   };
 }
 
@@ -347,6 +354,7 @@ export function defaultOptions(): CliOptions {
     level: null,
     scaleLevels: true,
     forceFields: true,
+    eliteWaveChance: null,
     campaign: true,
     telemetrySink: null,
   };
@@ -390,6 +398,7 @@ export function runBalanceBatch(
     level: options.level ?? undefined,
     scaleLevels: options.scaleLevels,
     forceFields: options.forceFields,
+    eliteWaveChance: options.eliteWaveChance ?? undefined,
     campaign: options.campaign,
     onRun: hooks?.onRun,
   });

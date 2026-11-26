@@ -31,6 +31,10 @@ import {
   type DifficultySource,
 } from './configTypes';
 import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
+import {
+  validateEliteArchetype,
+  type EliteBehaviour,
+} from './eliteVocabulary';
 import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from '../utils/beat';
 import type {
   AoEDescriptor,
@@ -121,6 +125,10 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   // default `true` (see {@link DEFAULT_WRAP_AWARE}). Appended last so legacy
   // rows without the column keep resolving to the documented default.
   'wrapAware',
+  // Elite (anomaly) variant axis (AH-0MWU664T300140IL): one bounded extra
+  // behaviour plus a bonus hit-point pool. Appended after `wrapAware` so the
+  // leading columns stay byte-compatible; a blank/absent cell is neutral.
+  'eliteBehaviour', 'eliteBonusHp',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -543,6 +551,17 @@ export function validateEnemyConfig(
     }
   }
 
+  // Validate the elite (anomaly) variant axis (AH-0MWU664T300140IL). The
+  // bounded vocabulary and the uncounted-hazard rule live once in
+  // `eliteVocabulary.ts`; a blank cell is neutral, so legacy rows pass.
+  for (const eliteError of validateEliteArchetype({
+    key: row.key ?? '',
+    eliteBehaviour: row.eliteBehaviour,
+    eliteBonusHp: row.eliteBonusHp,
+  }).errors) {
+    errors.push(eliteError.message);
+  }
+
   return { ok: errors.length === 0, errors };
 }
 
@@ -763,6 +782,19 @@ export function coerceEnemyConfig(
   if (row.laneSpacing != null && row.laneSpacing.trim() !== '') {
     merged.laneSpacing = coerceNumber(row.laneSpacing, merged.laneSpacing ?? 0);
   }
+  // Elite (anomaly) variant axis (AH-0MWU664T300140IL). A blank/absent cell is
+  // **neutral** (explicitly `undefined`, so a seed can never leak an elite into
+  // an ordinary row). A present cell is preserved verbatim — the codec must not
+  // silently normalise an unknown id or an out-of-range bonus away, because
+  // `configStore.loadEnemyConfig` is what rejects it loudly at load.
+  const eliteBehaviour = row.eliteBehaviour?.trim() ?? '';
+  merged.eliteBehaviour = eliteBehaviour === ''
+    ? undefined
+    : (eliteBehaviour as EliteBehaviour);
+  const eliteBonusHp = row.eliteBonusHp?.trim() ?? '';
+  // `Number('')` is 0, so only coerce a non-blank cell; a malformed cell keeps
+  // `NaN` so validation reports it instead of silently becoming 0.
+  merged.eliteBonusHp = eliteBonusHp === '' ? undefined : Number(eliteBonusHp);
 
   return merged;
 }

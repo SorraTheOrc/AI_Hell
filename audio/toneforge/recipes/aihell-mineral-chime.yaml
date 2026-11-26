@@ -1,0 +1,78 @@
+# AI Hell cue: aihell-mineral-chime — player mineral pickup chime — steady A5
+# triangle with a quiet A6 sine shimmer and a gentle decay, ~0.2 s.
+# (AH-0MWNMRD6I002CCVT)
+#
+# Target peak level: <= 0.20 linear (the documented player-cue ceiling in GDD
+# §7.3). The triangle partial (0.13) plus the quiet sine shimmer (0.035)
+# through a unity mix peaks safely under that ceiling, so the chime sits under
+# weapon fire and never masks an enemy-fire telegraph. This is a *player* cue,
+# so it carries no enemy-family tag and no `AMPLITUDE_TIERS` key — the enemy
+# balance guard leaves it outside its tiers. The peak is pinned by
+# `src/audio/mineralChimeCue.test.ts`.
+#
+# Pitch rise: `playMineralCollectChimeSound(step)` plays this asset at
+# `mineralChimeRate(step)` (`2 ** (semitones / 12)`, the A-minor ladder capped
+# at +10 semitones). Raising the playback rate also shortens the whole cue
+# proportionally — ~0.2 s at the base note down to ~0.1 s at the octave
+# ceiling — the accepted countdown-tick precedent. The baked tone is
+# deliberately **steady** (no internal pitch sweep) so the escalation reads as
+# a clean rising chime rather than a smeared glide.
+#
+# Deliberately distinct from aihell-mineral-tinkle (the Mystery UFO **spill**
+# cue, seed 32290): this cue has no falling E7 -> A6 sweep and no high-pass
+# noise tick. It is a steady A5 with a gentle shimmer, so a mineral pickup
+# never reads as a spill.
+version: "0.1"
+meta:
+  name: aihell-mineral-chime
+  description: Player mineral pickup chime — steady A5 triangle with a quiet A6 sine shimmer, gentle decay, ~0.2 s.
+  category: AIHell
+  tags:
+    - mineral
+    - pickup
+    - player
+  duration: 0.2
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 880
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.165
+      sustain: 0
+      release: 0.02
+  g0:
+    kind: gain
+    params:
+      gain: 0.13
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1760
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.12
+      sustain: 0
+      release: 0.02
+  g1:
+    kind: gain
+    params:
+      gain: 0.035
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - from: mix
+    to: out

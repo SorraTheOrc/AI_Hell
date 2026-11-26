@@ -38,12 +38,14 @@ import {
 } from '../../data/hexRingDefinitions';
 import {
   DEFAULT_FRONTIER_TUNING,
+  HEX_INCOME_MINERALS_PER_AGGRESSION,
   advanceClock,
   attackingNeighbour,
   createFrontierClock,
   frontierClockFor,
   authoredRingBaseMass,
   heldRingDefenderSum,
+  hexIncome,
   massedAssaultBase,
   redistributeAggression,
   resolveDefence,
@@ -749,6 +751,57 @@ describe('heldRingDefenderSum — the defender-side derivation from stored ring 
   });
 });
 
+describe('hexIncome — the pure held-hex income rule (AH-0MWL8CDGN005878A)', () => {
+  it('pays nothing for an empty ring', () => {
+    expect(hexIncome([])).toBe(0);
+  });
+
+  it('pays HEX_INCOME_MINERALS_PER_AGGRESSION × aggression for one held hex', () => {
+    expect(HEX_INCOME_MINERALS_PER_AGGRESSION).toBe(10);
+    expect(hexIncome([{ held: true, aggression: 4 }])).toBe(40);
+    expect(hexIncome([{ held: true, aggression: 0 }])).toBe(0);
+  });
+
+  it('counts only held hexes (a partially held ring)', () => {
+    const income = hexIncome([
+      { held: true, aggression: 2 },
+      { held: false, aggression: 9 },
+      { held: true, aggression: 3 },
+    ]);
+    expect(income).toBe(10 * (2 + 3));
+  });
+
+  it('pays nothing for a fallen hex (held === false, aggression retained)', () => {
+    // `applyDefence` keeps a fallen hex's aggression, so the rule gates on
+    // `held`, not on the aggression value.
+    expect(hexIncome([{ held: false, aggression: 6 }])).toBe(0);
+  });
+
+  it('normalises hostile input to a non-negative whole number', () => {
+    expect(
+      hexIncome([
+        { held: true, aggression: -5 },
+        { held: true, aggression: Number.NaN },
+        { held: true, aggression: 2.9 },
+        { held: true, aggression: Number.POSITIVE_INFINITY },
+        { held: true },
+      ]),
+    ).toBe(10 * 2);
+  });
+
+  it('is total over a malformed hex list', () => {
+    expect(hexIncome(undefined as unknown as never)).toBe(0);
+    expect(
+      hexIncome([null as unknown as never, 'oops' as unknown as never]),
+    ).toBe(0);
+  });
+
+  it('consumes no RNG (a repeated call is identical, no seeded stream touched)', () => {
+    const hexes = [{ held: true, aggression: 7 }];
+    expect(hexIncome(hexes)).toBe(hexIncome(hexes));
+  });
+});
+
 describe('createFrontierClock / advanceClock', () => {
   it('normalises the seed and the tick count', () => {
     expect(createFrontierClock(-1, 3).seed).toBe(0xffff_ffff);
@@ -1237,7 +1290,7 @@ describe('runFrontierTick — defending-bot skills (AH-0MVWZYJ740037EZ1)', () =>
 });
 
 describe('a secured ring (deferred hangar assault, Q2 = a)', () => {
-  it('reports no attacks, leaves the hangar untouched and gates no hangar defence', () => {
+  it('reports no attacks, banks only the held-hex income and gates no hangar defence', () => {
     const hexes = ringOne();
     for (const id of RING_ONE_IDS) hold(hexes, id, 99);
     const payload = payloadWith(hexes);
@@ -1255,11 +1308,19 @@ describe('a secured ring (deferred hangar assault, Q2 = a)', () => {
       'beatableCeiling',
       'deltas',
       'fell',
+      'hexIncome',
       'playerStrength',
       'rose',
       'tick',
     ]);
-    expect(next.hangar).toEqual(hangarBefore);
+    // The only hangar change a quiet tick makes is the held-hex income
+    // (AH-0MWL8CDGN005878A); ownership, cores and the loadout are untouched.
+    expect(next.hangar.bankedMinerals).toBe(
+      hangarBefore.bankedMinerals + record.hexIncome,
+    );
+    expect({ ...next.hangar, bankedMinerals: hangarBefore.bankedMinerals }).toEqual(
+      hangarBefore,
+    );
     expect(next.ring.hexes.every((hex) => hex.held)).toBe(true);
 
     // The next ring opens from data alone — there is no defence pass to run.
@@ -1826,5 +1887,96 @@ describe('runFrontierTick — the attacked hex defends (AH-0MWH3A87Z005LLOX)', (
         playerAttackingHexId: attacking,
       }),
     );
+  });
+});
+
+describe('runFrontierTick — owned hexes provide minerals (AH-0MWL8CDGN005878A)', () => {
+  /** A fully held ring 1 (a strong defender on every hex) — a secured ring. */
+  function fullyHeldRingOne(): HangarWarPayload {
+    const hexes = ringOne();
+    RING_ONE_IDS.forEach((id) => hold(hexes, id, 99));
+    return payloadWith(hexes);
+  }
+
+  it('banks one tick of held-hex income into the persistent balance', () => {
+    const payload = fullyHeldRingOne();
+    const startBalance = payload.hangar.bankedMinerals;
+
+    const { payload: next, record } = runFrontierTick(payload);
+
+    // A secured ring draws no attack, so every held hex survives the tick.
+    expect(record.attacks).toEqual([]);
+    expect(record.hexIncome).toBe(
+      HEX_INCOME_MINERALS_PER_AGGRESSION * authoredRingBaseMass(next.ring),
+    );
+    // Ring 1's authored base aggression is 18 → 180 minerals a tick (the
+    // producer's documented rate, AC1/constraints).
+    expect(record.hexIncome).toBe(180);
+    expect(next.hangar.bankedMinerals).toBe(startBalance + record.hexIncome);
+    // The transition stays pure: the input payload is never mutated.
+    expect(payload.hangar.bankedMinerals).toBe(startBalance);
+  });
+
+  it('banks again on a second tick (income is per-tick, not one-off)', () => {
+    const first = runFrontierTick(fullyHeldRingOne());
+    const second = runFrontierTick(first.payload);
+
+    expect(first.record.hexIncome).toBeGreaterThan(0);
+    expect(second.record.hexIncome).toBeGreaterThan(0);
+    expect(second.payload.hangar.bankedMinerals).toBe(
+      first.payload.hangar.bankedMinerals + second.record.hexIncome,
+    );
+  });
+
+  it('reads income from the post-tick ring (a hex lost this tick pays nothing)', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 0); // weak: falls to the queued attack
+    hold(hexes, RING_ONE_IDS[1], 99); // strong: holds
+    setAggression(hexes, RING_ONE_IDS[0], 5);
+    setAggression(hexes, RING_ONE_IDS[1], 4);
+    const payload = payloadWith(hexes, {
+      pendingAttacks: [{ hexId: RING_ONE_IDS[0], force: 1000 }],
+    });
+
+    const { payload: next, record } = runFrontierTick(payload, {
+      tuning: QUIET_RISE,
+    });
+
+    const fallen = hexOf(next, RING_ONE_IDS[0]);
+    const survivor = hexOf(next, RING_ONE_IDS[1]);
+    expect(fallen.held).toBe(false);
+    // `applyDefence` keeps the fallen hex's aggression — the rule gates on
+    // `held`, so a post-tick fall pays nothing even though aggression survives.
+    expect(fallen.aggression).toBeGreaterThan(0);
+    expect(survivor.held).toBe(true);
+
+    expect(record.hexIncome).toBe(
+      HEX_INCOME_MINERALS_PER_AGGRESSION * survivor.aggression,
+    );
+  });
+
+  it('never consumes a seeded RNG draw (bankedMinerals cannot shift the frontier)', () => {
+    const base = payloadWith(ringOne());
+    const rich: HangarWarPayload = {
+      ...base,
+      hangar: {
+        ...base.hangar,
+        bankedMinerals: base.hangar.bankedMinerals + 5_000,
+      },
+    };
+
+    const sequence = (payload: HangarWarPayload) => {
+      const first = runFrontierTick(payload, { tuning: SEEDED_JITTER });
+      const second = runFrontierTick(first.payload, {
+        clock: first.clock,
+        tuning: SEEDED_JITTER,
+      });
+      return [first.record, second.record];
+    };
+
+    // Two payloads that differ only in the banked balance produce byte-identical
+    // records (deltas, attacks and income alike): income is pure arithmetic and
+    // never draws from the seeded aggression/attack stream.
+    expect(sequence(rich)).toEqual(sequence(base));
   });
 });

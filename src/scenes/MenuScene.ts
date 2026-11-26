@@ -738,9 +738,23 @@ export class MenuScene extends Phaser.Scene {
    * `GameOverScene` (AH-0MUXZ4CAE008QRFZ). Production calls it with no
    * argument and uses the single-source default; exposed so tests can drive a
    * short dwell without wall-clock waits (mirrors `scheduleAttractTimer`).
+   *
+   * `seed` optionally pins the demo run seed through the same
+   * scene-start-data path a normal start uses (AH-0MWW6Y9JO009UJN3).
+   * Production calls it with no seed, so the attract run keeps drawing a fresh
+   * `randomSeed()`; a caller that needs a reproducible run — a test asserting
+   * live bot physics, or a capture run — passes one. Without it the run seed
+   * is random, which made seed-dependent assertions flake.
    */
-  startDemo(demoDwellMs?: number): void {
-    this.scene.start('PlayScene', { demo: true, demoDwellMs });
+  startDemo(demoDwellMs?: number, seed?: number): void {
+    // `seed` is omitted rather than passed as `undefined` so the payload keeps
+    // the exact shape a production attract start sends (`PlayScene.init`
+    // treats an absent seed as "no pin", and an explicit one as the run seed).
+    this.scene.start('PlayScene', {
+      demo: true,
+      demoDwellMs,
+      ...(seed === undefined ? {} : { seed }),
+    });
   }
 
   /**

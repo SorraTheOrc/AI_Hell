@@ -68,6 +68,7 @@ import {
   findHexRingDefinition,
   hexRingDefinitionsFor,
 } from './hexRingDefinitions';
+import { WEAPON_IDS } from '../utils/weapons';
 
 /** Reads a committed CSV seed next to this test file. */
 function readCsv(name: string): string {
@@ -319,6 +320,75 @@ describe('authored ring definitions', () => {
     expect(findHexRingDefinition('hex-r2-12')?.grants).toBe('nova');
     expect(findHexRingDefinition('hex-does-not-exist')).toBeUndefined();
   });
+});
+
+/**
+ * Shipped matchup data normalises and validates clean (AH-0MWL88F1G0025IQ1
+ * tests, guard landed by AH-0MWL88JJM004ORZS — Phase 1 of 5 of
+ * AH-0MWL5376H001WJFZ).
+ *
+ * Making the authored `strengths`/`weaknesses` mechanically load-bearing adds a
+ * load-time guard (parent AC3): every entry must normalise to a catalogue
+ * weapon id, and no weapon may appear in both lists of one hex. This test is
+ * the "breaks nothing shipped today" half of that guard: the committed ring
+ * data already satisfies both rules, including the one authored alias
+ * (`waveLaser` → `wave_laser`), so the guard must keep validating it clean.
+ *
+ * It was authored red-first (the repo's `it.fails` convention; see
+ * `src/core/levelScaling.test.ts`) and flipped back to `it` when
+ * AH-0MWL88JJM004ORZS landed the module and the guard.
+ */
+describe('shipped matchup data normalises and validates clean (TEST-FIRST)', () => {
+  /** The `src/core/hangarWar/hexMatchup.ts` surface this test pins. */
+  interface HexMatchupNormaliser {
+    normaliseMatchupWeaponId(weaponId: unknown): string | null;
+  }
+
+  /**
+   * Non-literal specifier so the local contract type below (rather than the
+   * module's own types) is what this shipped-data test is written against.
+   * Vitest resolves it at runtime.
+   */
+  const HEX_MATCHUP_MODULE = '../core/hangarWar/hexMatchup';
+
+  async function loadNormaliser(): Promise<HexMatchupNormaliser> {
+    return (await import(HEX_MATCHUP_MODULE)) as unknown as HexMatchupNormaliser;
+  }
+
+  it(
+    'normalises every authored strengths/weaknesses entry to a catalogue weapon id',
+    async () => {
+      const { normaliseMatchupWeaponId } = await loadNormaliser();
+
+      for (const hex of HEX_RING_DEFINITIONS) {
+        for (const entry of [...hex.strengths, ...hex.weaknesses]) {
+          const id = normaliseMatchupWeaponId(entry);
+          expect(id, `${hex.id} entry ${entry}`).not.toBeNull();
+          expect(WEAPON_IDS, `${hex.id} entry ${entry} → ${String(id)}`).toContain(
+            id as (typeof WEAPON_IDS)[number],
+          );
+        }
+      }
+    },
+  );
+
+  it(
+    'validates both shipped rings clean under the new matchup guard',
+    async () => {
+      // Load the module too, so this test exercises the landed module rather
+      // than passing against a validator that does not know about it.
+      await loadNormaliser();
+
+      expect(validateRingDefinitions(1, HEX_RING_DEFINITIONS)).toEqual({
+        ok: true,
+        issues: [],
+      });
+      expect(validateRingDefinitions(2, HEX_RING_DEFINITIONS)).toEqual({
+        ok: true,
+        issues: [],
+      });
+    },
+  );
 });
 
 describe('authored hex variety content (shipped rings)', () => {

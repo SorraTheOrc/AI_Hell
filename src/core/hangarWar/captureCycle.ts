@@ -135,6 +135,7 @@ import {
   type HangarEntryKind,
 } from '../../data/hangarCatalogue';
 import { BULLET_COLORS, WEAPON_CATALOGUE, type WeaponId } from '../../utils/weapons';
+import { resolveGrantAlias } from './grantAliases';
 
 /**
  * A hex's authored weapon/upgrade grant resolved to a hangar entry.
@@ -156,34 +157,15 @@ export interface HexGrant {
 }
 
 /**
- * Authored grant ids that are aliases of a shipped hangar catalogue entry.
+ * The one authored-spelling alias table, re-exported from its leaf module so
+ * every existing import of `resolveGrantAlias`/`GrantAlias` keeps working.
  *
- * The ring data uses the design's spelling (`waveLaser`, `extra-life`); the
- * hangar catalogue uses its own ids (`wave_laser`, `hardened_plating`). They
- * name the same entry, so the alias table keeps one entry from appearing twice
- * in the fleet.
+ * The table moved to `./grantAliases` (AH-0MWL88JJM004ORZS) so the hex matchup
+ * rule can read the **same** table without an `hexRing → hexMatchup →
+ * captureCycle → hexRing` import cycle. There is still exactly one table.
  */
-/** One authored-grant alias: the shared canonical entry and its weapon. */
-export interface GrantAlias {
-  /** The shipped hangar catalogue id the authored spelling names. */
-  readonly entryId: string;
-  /** Which owned set the entry belongs to. */
-  readonly kind: HangarEntryKind;
-  /** The shipped weapon id, when the entry is a weapon. */
-  readonly weaponId?: WeaponId;
-}
-
-const GRANT_ALIASES: Readonly<Record<string, GrantAlias>> = Object.freeze({
-  waveLaser: Object.freeze({
-    entryId: 'wave_laser',
-    kind: 'weapon' as const,
-    weaponId: 'wave_laser' as const,
-  }),
-  'extra-life': Object.freeze({
-    entryId: 'hardened_plating',
-    kind: 'modifier' as const,
-  }),
-});
+export { GRANT_ALIASES, resolveGrantAlias } from './grantAliases';
+export type { GrantAlias } from './grantAliases';
 
 /** `value` as a non-negative whole number; anything unusable collapses to `0`. */
 function toCount(value: unknown): number {
@@ -197,26 +179,6 @@ function toId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const id = value.trim();
   return id === '' ? null : id;
-}
-
-/**
- * The shared authored-spelling lookup, built on {@link GRANT_ALIASES}.
- *
- * This is the **one** alias table in the codebase: the capture cycle resolves
- * a grant through it here, and any other consumer that must compare an
- * authored spelling with a catalogue id (e.g. the weapon-vs-boss display
- * matchup, `./weaponMatchup`) reads it too — never a second ad-hoc table.
- *
- * Total: a blank/non-string id, or an id with no alias, resolves to `null`;
- * the caller keeps the id unchanged in that case.
- *
- * @param id — the authored (or catalogue) spelling, e.g. `waveLaser`.
- * @returns the aliased canonical entry, or `null` when there is no alias.
- */
-export function resolveGrantAlias(id: unknown): GrantAlias | null {
-  const key = toId(id);
-  if (key === null) return null;
-  return GRANT_ALIASES[key] ?? null;
 }
 
 /** Detached copy of the payload, so a resolution never mutates its caller. */
@@ -234,6 +196,10 @@ function cloneHangar(hangar: HangarState): HangarState {
     activeLoadout: {
       startingWeapons: [...hangar.activeLoadout.startingWeapons],
       modifiers: [...hangar.activeLoadout.modifiers],
+      // Preserve the power-up selection tri-state (absent stays absent).
+      ...(hangar.activeLoadout.powerUps !== undefined
+        ? { powerUps: [...hangar.activeLoadout.powerUps] }
+        : {}),
     },
   };
 }
@@ -265,6 +231,15 @@ function resolvedDeployedShip(
       modifiers: (ship.modifiers ?? []).filter(
         (id): id is string => toId(id) !== null,
       ),
+      // Power-ups are recorded but never spent, so the flown selection is
+      // carried through only for a faithful `DeployedShip` record.
+      ...(ship.powerUps !== undefined
+        ? {
+            powerUps: (ship.powerUps ?? []).filter(
+              (id): id is string => toId(id) !== null,
+            ),
+          }
+        : {}),
     };
   }
   const loadout = resolveActiveLoadout(hangar);
@@ -272,6 +247,7 @@ function resolvedDeployedShip(
     hullId: resolveActiveHull(hangar),
     startingWeapons: loadout.startingWeapons,
     modifiers: loadout.modifiers,
+    powerUps: loadout.powerUps ?? [],
   };
 }
 
@@ -293,8 +269,10 @@ function isShippedWeapon(id: string): id is WeaponId {
  * 5. otherwise an upgrade, recorded as a hangar modifier.
  *
  * Total: a missing/blank grant resolves to `null` (the hex grants nothing), and
- * an unknown upgrade id is still recorded — never dropped — because the design
- * lets hexes grant strength the catalogue has not itemised yet.
+ * an unknown upgrade id is still recorded — never dropped — as a
+ * defence-in-depth fallback. Every **authored** grant resolves to a catalogue
+ * entry (guard (e) in `hangarCatalogue`), so the fallback is never the path a
+ * weapon reward takes.
  *
  * @param grantId — the authored `grants` value (or anything at all).
  * @param catalogue — the hangar tree to resolve against (defaults to shipped).

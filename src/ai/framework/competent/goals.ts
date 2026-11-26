@@ -128,9 +128,12 @@ export interface ContentTarget extends BotWorldPoint {
    */
   readonly id?: number;
   /**
-   * Target velocity (px/s) when the source exposes it, used for aim-lead
-   * prediction (AH-0MV1DUSM2005HL98 · AC2). Absent for stationary sources
-   * (minerals, drops, formation-positioned enemies without a physics body).
+   * Target velocity (px/s) when the source exposes it. The `engage` aim solve
+   * uses it only as a **fallback** for a target with no bot-side tracker
+   * estimate (AH-0MWR04X10002VNDG · AC1): the tracked
+   * `BotWorld.hazards[].vx/vy` estimate wins when present. Absent for
+   * stationary sources (minerals, drops, formation-positioned enemies without
+   * a physics body).
    */
   readonly vx?: number;
   readonly vy?: number;

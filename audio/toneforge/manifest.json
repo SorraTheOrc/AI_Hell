@@ -687,11 +687,35 @@
       ]
     },
     {
+      "cue": "playMineralCollectChimeSound",
+      "recipe": "aihell-mineral-chime",
+      "delivery": "baked",
+      "seeds": [
+        32292
+      ]
+    },
+    {
       "cue": "playMiningLaserFireSound",
       "recipe": "aihell-mining-laser-fire",
       "delivery": "baked",
       "seeds": [
         32291
+      ]
+    },
+    {
+      "cue": "playMatchupEffectiveImpactSound",
+      "recipe": "aihell-matchup-effective-impact",
+      "delivery": "baked",
+      "seeds": [
+        32293
+      ]
+    },
+    {
+      "cue": "playMatchupResistedImpactSound",
+      "recipe": "aihell-matchup-resisted-impact",
+      "delivery": "baked",
+      "seeds": [
+        32294
       ]
     },
     {

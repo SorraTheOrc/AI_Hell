@@ -31,6 +31,7 @@ import {
   beatSubdivisionMs,
   createBeatClock,
 } from '../utils/beat';
+import { mineralChimeRate } from './mineralChime';
 import {
   RecordingAudioContext,
   RecordingSfxProvider,
@@ -103,6 +104,25 @@ describe('cue → baked asset mapping', () => {
     expect(recording.plays[0].url).toBe(
       'audio/sfx/aihell-countdown-tick.32264.wav',
     );
+  });
+
+  it('playMineralCollectChimeSound resolves the baked chime at the ladder rate (AH-0MWNMRD6I002CCVT)', () => {
+    effects.playMineralCollectChimeSound(0);
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-mineral-chime.32292.wav',
+    );
+    expect(recording.plays[0].rate).toBe(mineralChimeRate(0));
+
+    // The chime climbs the A-minor ladder with the streak step.
+    recording.plays.length = 0;
+    effects.playMineralCollectChimeSound(3);
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-mineral-chime.32292.wav',
+    );
+    expect(recording.plays[0].rate).toBe(mineralChimeRate(3));
+    expect(recording.plays[0].rate).toBeGreaterThan(mineralChimeRate(0));
   });
 
   it('playCannonImpactSound resolves to the baked cannon-impact asset (AH-0MV8228YW0050IXS)', () => {
@@ -1005,6 +1025,53 @@ describe('wave laser level (AH-0MW10K39E006CG0A)', () => {
     expect(recording.plays.map((play) => play.volume)).toEqual([
       1, 1, 1, 1, 1,
     ]);
+  });
+});
+
+// ── 3c. Weapon-evolution legibility cues (AH-0MWU7BC8E007SOI2) ────
+
+describe('playEvolutionFusionCue / playEvolutionExpiryCue', () => {
+  it('the fusion cue plays the cheerful collect chime through the shared funnel', () => {
+    effects.playEvolutionFusionCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/card-token-earn.1.wav');
+  });
+
+  it('the expiry cue plays the descending despawn blip through the shared funnel', () => {
+    effects.playEvolutionExpiryCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-pickup-despawn.32151.wav',
+    );
+  });
+
+  it('the two cues resolve to different baked assets (distinct, never colour)', () => {
+    effects.playEvolutionFusionCue();
+    effects.playEvolutionExpiryCue();
+    expect(recording.plays).toHaveLength(2);
+    expect(recording.plays[0].url).not.toBe(recording.plays[1].url);
+  });
+
+  it('both cues respect the shared SFX settings (muted / zero / headless never throw)', () => {
+    // Mute / volume 0: the cue still routes through the shared master gain
+    // (which is silent), so the dispatchers must not throw or special-case it.
+    effects.setSfxVolume(0);
+    effects.setSfxMuted(true);
+    expect(() => {
+      effects.playEvolutionFusionCue();
+      effects.playEvolutionExpiryCue();
+    }).not.toThrow();
+    // They still route through the provider (where mute/volume live).
+    expect(recording.plays.length).toBeGreaterThan(0);
+
+    // Headless (no AudioContext at all): a safe no-op, like every cue.
+    effects._resetAudioContextForTests();
+    effects.setSfxSoundProvider(null);
+    expect(effects.getAudioContext()).toBeNull();
+    expect(() => {
+      effects.playEvolutionFusionCue();
+      effects.playEvolutionExpiryCue();
+    }).not.toThrow();
   });
 });
 

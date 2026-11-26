@@ -299,11 +299,17 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   [docs/BOT_FRAMEWORK.md §9.10](BOT_FRAMEWORK.md#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din).
 - **Hold-full auto-select (AH-0MUXXQ1MN002RXGB):** when the mineral hold fills,
   the modal hold-full choice overlay auto-selects its first option after
-  `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run
-  never stalls on the selection screen. The auto-select drives the **same
-  selection → 3-2-1 countdown → on-beat resume** path as a human choice
+  `BOT_MINERAL_CHOICE_DELAY_MS` (**2500 ms**, raised from 900 ms so a viewer
+  can read the three offers — AH-0MWL7SU2Q009GEJ2) and resumes play, so a demo
+  run never stalls on the selection screen. The chosen option's **catalogue
+  title** is then shown beneath the 3-2-1 countdown numeral for the life of the
+  countdown, so the pick stays legible (§4.5). The auto-select drives the
+  **same selection → 3-2-1 countdown → on-beat resume** path as a human choice
   (§4.5), so an attract-mode run keeps its audible cadence. Normal play never
-  auto-selects.
+  auto-selects. The **mini-boss reward wheel** keeps its own faster demo spin
+  pace (`BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS`, 900 ms) — the longer 2.5 s dwell
+  applies only to the upgrade-selection overlay (hold-full choice and the
+  hold-full-style mini-boss fallback).
 - **Extra Life priority (AH-0MV03GXZQ00801T4):** the competent demo brain
   (`createCompetentBotBrain`) values the ship's remaining lives. While the
   ship is **below the 5-life cap** it pursues a live **Extra Life** drop above
@@ -1047,6 +1053,45 @@ reward overlay (§4.4.4) appears.
 - **Fires**: **Never** — `shootEnabled` is a no-op and its effective shot
   pattern is `none`.
 
+#### Elite (anomaly) variants (AH-0MWL7P1AO003LKXT)
+
+An **elite** is not a new archetype: it is **one ordinary, counted spawn** of an
+existing E1–E7 / classic-roster archetype elevated to a variant for a single
+wave. The axis is authored per archetype in
+[`src/data/enemy-configs.csv`](../src/data/enemy-configs.csv) by the
+`eliteBehaviour` / `eliteBonusHp` columns, validated **loudly at load** by
+[`src/core/eliteVocabulary.ts`](../src/core/eliteVocabulary.ts) (an unknown
+behaviour id, an out-of-range bonus, or an elite on an uncounted hazard fails
+when the config loads, not when it spawns).
+
+- **One bounded extra behaviour.** An elite carries exactly one mechanic,
+  implemented once in
+  [`src/scenes/core/eliteMechanics.ts`](../src/scenes/core/eliteMechanics.ts)
+  and shared by the game and the formation gyms:
+  - `splitter` — on death it releases two ordinary children of its own
+    archetype (counted wave enemies, so the wave cannot clear early);
+  - `reinforced` — it spawns behind the shipped force-field layer with one
+    extra field hit (`enemyForceFieldHits` + 1);
+  - `volatile` — on death it leaves a short radial burst of its own bullets.
+- **Bonus hit points.** `eliteBonusHp` adds **1–3** to the archetype's hull
+  through `eliteBonusHealth`, applied by the shared enemy factory.
+- **One per wave, never on the onboarding level.** A wave may author one elite;
+  otherwise a seeded budget (`ELITE_WAVE_CHANCE`) grants one. Wave accounting
+  is unchanged — the elite **is** one of the wave's counted spawns, never an
+  asteroid-style hazard — and **level 1 never spawns one**. The plan is a pure
+  function of the run seed and the wave's index
+  ([`src/waves/eliteSpawn.ts`](../src/waves/eliteSpawn.ts)), so the same seed
+  replays the same elite in the same slot.
+- **A real, legible reward.** An elite always drops from the shared power-up
+  pool (bypassing the ordinary per-kill chance roll) and pays a level-scaled
+  guaranteed mineral bump (2 → 4, `src/core/eliteRewardRules.ts`), announced by
+  its own death cue. The wave-opening cue names it and an `ELITE` tag tracks
+  its hull while it lives (`src/waves/eliteAnnounce.ts`), so prioritising it is
+  a decision the player can make.
+- **Balance evidence.** The seeded budget, the measured same-seed before/after
+  batch and the enable decision live in
+  [`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
+
 #### Classic-arcade roster (research epic AH-0MUYAQ6YH0010G52)
 
 Alongside the E1–E7 roster, eight archetypes selected from the classic arcade
@@ -1230,11 +1275,28 @@ on entry (AH-0MUJM746P000QAEO).
 
 ### 4.4 Power-Ups
 
-> **Proposed, not shipped (backlog §8.3):** **weapon evolutions** — pairings of
-> two active/owned weapon kinds fusing into a named evolved weapon (pattern and
-> coverage only, never damage per tick) — are proposed in §8.3 (Weapon
-> evolutions, AH-0MWL7OWPF003E4TP). The catalogue below stays normative until
-> that item lands.
+> **Weapon evolutions — shipped (AH-0MWL7OWPF003E4TP):** two active/owned weapon
+> kinds can now **fuse** into a named evolved weapon (pattern and coverage only,
+> never damage instances per cadence tick). The pairings are catalogue data in
+> `src/utils/weaponEvolutions.ts`, resolved by the one pure resolver
+> `resolveWeaponEvolution`, and fired through the same shared fire path the game
+> and `GymWeapons` run. The shipped pairings:
+>
+> | Evolved weapon | Pairing | Effect | Tiers |
+> |----------------|---------|--------|-------|
+> | Chain Ricochet | `ricochet` + `arc` | Banking pellets that hop to a second nearby target on every bounce. | field / owned |
+> | Cluster Barrage | `cluster` + `mortar` | MIRV warheads that leave a short lingering blast at each burst point. | field / owned |
+> | Fan Escort | `spread` + `options` | Orbiting pods that fire along the ship's heading instead of radially. | field / owned |
+>
+> A **field evolution** fires while both halves of a pairing are active
+> simultaneously; a **permanent evolution** persists for the rest of the run
+> once both halves are permanently owned at level ≥ 2. An evolution changes
+> pattern, coverage and behaviour only — never the number of damage instances
+> per cadence tick — so the boss's 200-hit pool (§4.3) and the level-0 output
+> budget (§4.4.2) keep their meaning, and every evolved cadence stays on the
+> shared 16th-note lattice (§2.3) with morphs on bar downbeats only. An evolved
+> weapon resolves to its **base** ids for hex-matchup purposes
+> (AH-0MWL5376H001WJFZ).
 
 The player collects power-ups dropped by destroyed enemies through the shared weighted-random drop pool (§6.4). There are **17 distinct types** — including the three **area-of-effect weapons** (Nova, Mortar, Arc) documented in the table below; the shipped defaults encode rarity as **relative weights** — standard power-ups (Shield–Teleport, Magnet, Mineral Scoop, Force Field) at **4**, **Extra Life** and the **Mystery UFO** at **3**, the **Smart Bomb**, the **Orbital Strike** and the **Mining Laser** at **2**, and each weapon drop at **2** (the `~15–20 %` / `~5 %` per-enemy figures below are conceptual guidance, not a directly coded per-enemy chance). Extra Life therefore takes ≈ **5.0 % of power-up draws** (weight 3 of the 60 total power-up weight) — still rarer than standard drops, and only from the **field** (it is a field-pickup-only kind, §4.4.1):
 
@@ -1293,7 +1355,7 @@ The player collects power-ups dropped by destroyed enemies through the shared we
 | P6 | **Options** | **Orbiting satellite escort (Gradius homage, AH-0MV1BIVVK0043TEM).** Adds **two neon satellite pods** that orbit the ship and each fire a bullet **radially outward along its own orbit direction** — in the direction of the orb, not the ship's heading (**0.5/beat** = 1500 ms at 80 BPM) — on the shared beat grid. The 2000 ms orbit is deliberately not a whole multiple of the 1500 ms fire interval (0.75 revolutions per trigger), so consecutive volleys aim in different directions and the escort fans into a rotating spike pattern (`isOptionsOrbitTriggerAligned`, AH-0MV5DFBVW002J2XO). The pod count grows with the **Projectiles** weapon-level variable (one extra pod per point, capped at **6** so the orbit stays legible); each pod bullet is smaller and slower than the cannon's, so the escort multiplies firepower without eclipsing the main gun. Each pod shot is a **small pod dart with a pale-aqua rim tint and a short faint fading trail**, firing with a bright soft-tone cue + aqua launch flash and popping with a soft-aqua hit pop + impact flash on connect (AH-0MV822BDN008IYL6). The pods are decorative satellites only — they never block bullets and never collide. It uses a new shared `orbit` companion-entity seam, **not** an `AoEDescriptor`. Collected as a timed 10 s drop. | Ship ringed by orbiting satellite pods |
 | shield | **Shield** | A field pickup grants **one charge** into the shared consumable pool and opens no effect window: the bubble is **armed while a charge is held** (`isShielded` reads the pool) and pops on the last absorb. A **pickup-only charge never regenerates** (Q-A1=b): one drop buys exactly one absorbed hit, then the Shield is inert until a hold-full reward owns it. The timed-window wind-down (final-second opaque fill + hull shrink) is retired with the window (AH-0MUAYB5HR001HDYC → AH-0MVVD8TCJ004RLXP). A hold-full (permanent) reward makes it a **charge pool**, never a timed window: one absorbed hit spends **one charge**, the pool holds up to the `shieldAbsorptions` cap (1 → 3) and each spent charge regenerates on the level-derived `shieldRecharge` (45 s at level 0 → 20 s floor, −5 s/level; §4.4.3), with the HUD row showing the charge count and a live **`next in Ns`** regeneration countdown | Shield outline |
 | bomb | **Bomb** | Clears enemy bullets within a level-resolved radius (base 120 px → cap 320 px) centred on the ship. A field pickup is a single explosion; a hold-full (permanent) bomb pulses at a level-resolved rate (base 0.33/s → cap 1/s). Does not damage enemies — they are 1 HP. | Exploding circle |
-| speed_boost | **Speed Boost** | Increases movement speed and rate of fire by 50% for 10 seconds | Arrow with motion lines |
+| speed_boost | **Speed Boost** | Increases rate of fire by 50% for 10 seconds (weapons only — ship movement is unchanged) | Arrow with motion lines |
 | phase_shift | **Phase Shift** | **Automatic** defensive pass-through (parent AH-0MUIYX1EE008FVS8), **single-use** since parent AH-0MW6O1690007P2SL (mirroring Teleport). The player holds exactly **one** Phase Shift activation: a field pickup or a hold-full grant **readies** it (a grant mid-recharge readies it immediately, and no grant can create a second stored activation), and spending it starts **one** recharge timer whose duration is the **level-derived recharge time** at the moment of consumption (30 s at base → 10 s at the cap; §4.4.3), advanced by the shared per-frame recharge clock; when it elapses Phase Shift is ready again. There is no stored count, no FIFO and no multi-charge pool — the retired `phaseCharges` axis is gone and the readiness timer is the whole Phase Shift state. When **3 or more hostile bodies/bullets** close within **40 px** (`2 × ship size`) of the ship and Phase Shift is **ready**, the ship phases out for **1.5 s** — passing through enemies and bullets and **unable to collect minerals** while phased during combat (power-up/weapon drops remain collectable; the between-waves/levels transition pause is the one exception — a phase active at wave-clear still collects minerals, AH-0MUX96GJF006CAZP). After expiry the effect re-arms only once the danger has dropped below the threshold **and** a **~0.5 s re-arm cooldown** has elapsed. The **hold-full reward readies it** (never an unlimited supply, AH-0MV82I7TX0009JMT), so a recharging Phase Shift drops out of the auto-defence draw until its timer elapses; the HUD row shows the readiness state and a live **`next in Ns`** countdown while it recharges (§4.4.3). | Ghostly outline |
 | teleport | **Teleport** *(collectable)* | Automatically teleports the player (no key press) in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds) when the ship is in danger; if no safe spot exists, teleport to nearest on-screen position; it is a **single-use escape** (parent AH-0MVY096RT006QMF4): exactly **one** warp is held, a collection or a hold-full grant **readies** it (a later pickup refreshes readiness rather than stacking), and spending it starts **one** recharge timer at the **level-derived recharge time** (60 s at base → 20 s at the upgrade cap; §4.4.3) that readies the warp again when it elapses; the HUD row shows the readiness state and a live **`next in Ns`** countdown while the warp recharges (§4.4.3); on arrival, player gains Phase Shift effect (1.5-second intangibility) | Teleport symbol (portal/ripple) |
 | extra_life | **Extra Life** *(passive, rare; field-pickup only)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Carries the **Extra Life relative weight of 3** versus **4** for standard power-ups (Shield–Teleport, Magnet, Mineral Scoop, Force Field) and the Orbital Strike's / Mining Laser's **2**, so it takes ≈ **5.0 % of power-up draws** in the shared weighted pool (weight 3 of the 60 total power-up weight) — rarer than standard drops. Its own per-kill chance is halved with the rest of the supply dial (§4.4), so it is roughly half as common per kill as before while keeping the same share of power-up draws. It is a **field-pickup-only** kind (`PowerUpEntry.fieldPickupOnly`): it is **excluded from every reward surface** — the hold-full choice pool, its owned level-up/charge offers, the mini-boss wheel and the hold-full-style fallback — and can be obtained only by collecting a field drop. It remains slot-exempt (`availableWhenSlotsFull`) while on the field. | Heart outline with neon glow |
@@ -1595,7 +1657,7 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves **two mineral
 - **Dropping**: each destroyed small asteroid drops **two minerals** (doubled from one by parent AH-0MWB9LCED004K67Y), placed deterministically as a symmetric pair at the death site so the extra dot consumes **no additional RNG draws**; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops twice its collected total plus a random additive bonus** — `2 × round(collected + bonus)` with `mineralRedropBonusMin`/`Max` (defaults 0.25/1.25) — as individual minerals scattered at its explosion site when destroyed. The extra mineral of each pair is a **mirror** of the random drop across the wreck, so the doubling is visible without extra RNG draws — **unless** the doubled resolved count reaches the red-deposit threshold (next bullet). There is **no upper cap**, so a kill may return slightly more than the enemy absorbed. An enemy that absorbed nothing still draws the bonus and may drop **0 or 2** minerals (never 1). The rule is implemented **once** in the shared helper `src/scenes/core/mineralKillDrops.ts` (`resolveMineralKillDrops`, plus the shared scatter maths in `src/entities/Mineral.ts`) and the multiplier lives once as `MINERAL_DROP_MULTIPLIER = 2` in `src/core/constants.ts`; it is consumed by **both** `PlayScene` and `GymFormationScene`, so the game and every formation gym (`GymMinerals`, the `GymFodderEnemies` asteroid row, …) drop identically and cannot drift apart. **Salvage bonus drops are orange** (AH-0MVJ72I8O0009T09): while the Salvage bounty window is active each destroyed enemy ship also scatters its level-resolved bonus minerals through the shared `scatterSalvageMineralDrops` seam, which renders them `MINERAL_SALVAGE_COLOR` (orange) instead of the gold `MINERAL_COLOR`. Every other mineral — asteroid drop, enemy re-drop, seeded gym field, collector-drone spill — stays gold, so the orange dots uniquely mean "Salvage bonus" and the baseline economy stays readable; the bonus is still worth one mineral per dot and is **not** doubled.
 - **Red mineral deposits — one big payout (AH-0MVJ79739008396I; doubled-seam interaction AH-0MWB9LCED004K67Y)**: when a destroyed **ship's** resolved mineral count — `mineralRedropCount(rng)`, i.e. **twice** `round(absorbed + bonus)` following the doubling, and, while the Salvage window is active, its level-resolved bonus — reaches **`MINERAL_DEPOSIT_THRESHOLD` (10)**, the wreck leaves a **single red deposit** (`MINERAL_DEPOSIT_COLOR`) at the wreck instead of a scatter of dots. The deposit **replaces the entire payout**, so any value above 10 is intentionally lost: a wreck whose doubled payout resolves 34 pays one 10-value deposit and nothing else — no remainder gold minerals and no second deposit. Because the doubled count is what the threshold sees, a wreck that absorbed roughly five or more minerals plateaus at one 10-value deposit — the doubling is **effectively capped at 10** for larger wrecks (an explicitly accepted trade-off). Collecting it pays **`MINERAL_DEPOSIT_VALUE` (10)** minerals **in one pickup**, independent of `mineralCollectAmount` (still 1 per ordinary dot); a non-asteroid enemy that overlaps it absorbs it as worth **10**, so its own later re-drop resolves at ≥ 10 and itself becomes a deposit. The friendly **Mystery UFO** collector drone credits at most its **remaining capacity** when it vacuums a deposit — the surplus value is destroyed with the deposit (never left on the field, never paid into the hold, never credited elsewhere). A doubled resolved count below 10 (8 or less) keeps the ordinary gold scatter, and small-asteroid drops are doubled as described above. A deposit is otherwise an **ordinary mineral** for every existing rule: stationary, persists until collected, never destroyed by bullets, no damage or collision response, gated by the Phase-Shift collection gate during combat, and attracted by Mineral Scoop/Magnet. **Salvage folds into one payout**: the bounty counts toward the threshold and, when the deposit fires, that wreck's orange Salvage scatter is suppressed — one wreck always produces exactly one payout shape. Threshold (10), value (10) and colour are fixed named constants in `src/core/constants.ts` beside `MINERAL_COLOR` (no `rules.ts` tunable, no persisted-rules migration). The rule exists **once** in the shared seam — the deposit decision in `resolveMineralKillPayout` (`src/scenes/core/mineralKillDrops.ts`, which both `PlayScene` and `GymFormationScene` call), the pickup/absorption value in `collectMinerals` (`src/scenes/core/mineralLayer.ts`) and the drone overflow in `src/entities/MysteryUfoDrone.ts` — so the game and every formation gym pay out identically. Coverage: `src/scenes/core/mineralKillDrops.test.ts`, `src/scenes/core/mineralLayer.test.ts`, `src/entities/__tests__/Mineral.test.ts`, `src/entities/__tests__/BaseEnemy.minerals.test.ts`, `src/entities/MysteryUfoDrone.test.ts`, `src/scenes/PlayScene.test.ts`, `src/scenes/__tests__/PlayScene.minerals.test.ts`, `src/scenes/gym/core/GymFormationScene.test.ts` and the repo-wide defined-once guard in `src/scenes/core/CombatScene.equivalence.test.ts`.
 - **Asteroid Extra Life drop (AH-0MV6M2M9P0078N4S, default off by AH-0MW10ZVLH005IJRM)**: a fully destroyed **small** asteroid additionally rolls an **Extra Life** with configurable probability `asteroidExtraLifeDropChance` (default **0**), persisted in the game-rules config (`src/core/rules.ts`, schema-optional key — older blobs load the default) and clamped to `[0, 1]`. This roll is **additive** to the generic per-kill drop pool (§4.4 — asteroids stay in the shared weighted pool and may still drop other power-ups/weapons) and to the mineral rule above; large/medium asteroids (which split) never roll it. At the shipped default the roll never fires; the rule and key are retained so a designer can re-enable it. The roll is implemented **once** in the shared helper `src/scenes/core/asteroidKillDrops.ts` (`rollAsteroidExtraLife`) and consumed by `PlayScene`, every asteroid-bearing formation gym (`GymMinerals`, the `GymFodderEnemies` asteroid row) and `GymLevel`, so the game and the gyms drop identically.
-- **Collection**: the pickup/absorption pass (player collects, non-asteroid enemy absorbs, asteroids inert) is implemented **once** in `src/scenes/core/mineralLayer.ts` (`collectMinerals`) and called by `PlayScene` and `GymFormationScene`, so the two scenes can no longer run divergent collection loops. Between waves/levels and at boss entry `PlayScene` keeps running the shared scoop (`_applyMineralScoop`) and collection passes through the ~1.5 s transition pause, and bypasses the phase gate for that non-combat breather only, so an automatic defensive phase activation at wave-clear does not cost the player minerals already earned; normal wave play keeps the Q7 gate unchanged (AH-0MUX96GJF006CAZP).
+- **Collection**: the pickup/absorption pass (player collects, non-asteroid enemy absorbs, asteroids inert) is implemented **once** in `src/scenes/core/mineralLayer.ts` (`collectMinerals`) and called by `PlayScene` and `GymFormationScene`, so the two scenes can no longer run divergent collection loops. Between waves/levels and at boss entry `PlayScene` keeps running the shared scoop (`_applyMineralScoop`) and collection passes through the ~1.5 s transition pause, and bypasses the phase gate for that non-combat breather only, so an automatic defensive phase activation at wave-clear does not cost the player minerals already earned; normal wave play keeps the Q7 gate unchanged (AH-0MUX96GJF006CAZP). Every **player** pickup also plays the quiet baked pickup chime (`playMineralCollectChimeSound()`, `aihell-mineral-chime`, seed 32292) through the one shared `CombatCoreScene.noteMineralCollected()` dispatch, so the game and every gym climb the same A-minor ladder `MINERAL_CHIME_SEMITONES = [0, 2, 3, 5, 7, 8, 10]` — one scale degree per pickup, capped at one octave — and reset to base after `MINERAL_CHIME_RESET_GAP_MS` (1500 ms, 1.5 s) of **game time** without a pickup; enemy absorption never calls it (silent), and the cue is deliberately not the Mystery UFO `aihell-mineral-tinkle` spill cue.
 - **Ship's hold**: collected minerals fill a run-scoped hold modelled by the shared **`MineralHold`** (`src/core/mineralHold.ts`). The **first** hold fills at **5** minerals (configurable) and each hold-full resolution **doubles** the next requirement — `capacity(n) = firstHoldCapacity × growthMultiplier^(n−1)` → **5, 10, 20, 40, …** — so early power-ups are earned quickly while later ones ramp up (growth is multiplicative, and unbounded by default). Pick-up amount defaults to **1**. `GameState` (game) and `GymFormationScene` (every formation gym) both hold this one model, so the gym adopts the game's **overflow-carry** semantics (resolving the hold restores `collected − capacity`, clamped to the new capacity, never 0 — the gym previously reset to 0) and the same progression. **On Continue** the checkpoint's hold capacity is restored **first** and the saved mineral count is then clamped into `[0, capacity]` with any recorded overflow cleared (`MineralHold.restore` via `GameState.restoreHold`, applied by `PlayScene._restoreCheckpoint()`), so a resumed hold is **never over-capacity**, the HUD bar never exceeds 100%, and the next hold-full choice arrives only once the **restored** hold has actually been filled — the saved surplus is never carried into the next hold. A legacy checkpoint that predates the persisted capacity resumes at the first-hold capacity (its over-capacity minerals are still clamped). The hold is shown on the HUD as a bar that fills proportionally to the **current** capacity (`src/ui/HUD.ts`), resets to the first-hold capacity on `GameState.startGame()`, and is never written to the leaderboard.
 - **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The overlay knows nothing about its launcher: its only selection contract is an optional `onSelect(index, option)` callback, supplied by `PlayScene` and by every gym. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws at **weighted random** without replacement from the full drop pool (**every power-up and every weapon drop — the whole catalogue minus the `reset` utility and every field-pickup-only kind**, i.e. minus **Extra Life**; below the six-slot cap — see the six-slot gate below) and degrades gracefully when the pool has fewer than three entries, and the launcher always passes the exact options it will apply. Owned `weapon-level`/`power-up-level` offers carry a **1.35×** weight named `OWNED_UPGRADE_BONUS_WEIGHT`, while unowned base entries keep **1.0×**, so an owned upgrade is **35% more likely** to be drawn than an unowned item of the same pool size (AH-0MUY47W62005FF74; retuned 1.1×→1.25× and then 1.25×→1.35× by AH-0MVCFB00Y004AQ2Z); the weighting lives in the strategy layer only, never in `buildChoiceCandidates`, so the game and every gym share one implementation. When the player already owns weapons or power-ups, the pool is **extended with a permanent level-up offer for each** (`kind: 'weapon-level'` / `'power-up-level'`, e.g. "Spread Shot Lv.3") and the item's **base-pool entry is suppressed**, so each owned item is offered **exactly once** — as its correctly-labelled level-up — instead of as both a base and a levelled offer (AH-0MUVRACE9001WVT2, parents AH-0MUPMPCB2009J54J and AH-0MUV5CLVO002ZHS9); the offer label always names the level it grants. A permanently-owned **consumable** (Shield, Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO) is offered instead as a **charge grant** (`kind: 'power-up-charge'`, e.g. "Shield Charge"): a consumable never levels up — the reward adds **one charge** to its regenerating pool (or, for a single-use kind, readies its one activation), never a level — and the offer copy names the one-event effect and the level-derived regeneration interval, so the option is legible without opening the codex; it keeps the same 1.35× owned weight as a level-up. The chosen option is applied through the same shared `applyMineralChoiceReward` → `grantPermanentPowerUp` path a level-up uses, so a checkpoint resume replays the charge state without double-counting (AH-0MVUXH35J002WSAB). **Ownership and the offered level derive from the permanent level only** (AH-0MUX802450085VZZ): a kind held only from the field (not permanently owned) is not owned for the choice, so it is still offered as a **★ New** base entry and never as a level-up — the choice never prices a temporary level that would vanish on expiry (field-pickup-only kinds such as Extra Life are excluded from the pool entirely, above). Each option in the overlay additionally shows:
   - A **description** of what the item actually does, rendered in a **two-line description area** beneath the option name and resolved from the shared catalogue `description` via `getHelpDescription` (`src/utils/gymHelp.ts`) — the same copy the gym help overlay shows, so the overlay and the help cannot drift (AH-0MV2N2591007UGPD). The area word-wraps the copy onto up to **two lines** so even the longest catalogue entries (Teleport, 210 characters) stay inside the 960-pixel playfield, and copy needing more than two lines is ellipsised (AH-0MVBLBSG3002WHBI). The change summary sits beneath it, so every option is a **three-part block** (name → two-line description area → change-summary detail line). The catalogue wording is **level-neutral**, accurate for both a timed field pickup and a permanent hold-full reward (hard-coded temporary-duration clauses such as "for 10 s" were removed, while the per-level deltas stay in the change summary).
@@ -1605,7 +1667,7 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves **two mineral
 - **Permanent pick**: the chosen option is applied to the player **permanently for the current run** via the shared `applyMineralChoiceReward` helper (also in `src/scenes/core/mineralLayer.ts`), so a choice grants the same effect in the game and in every gym — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). A `weapon-level` option takes the same permanent `equipWeapon(id, true)` path, which raises the weapon's run-scoped level by one (parent AH-0MUPMPCB2009J54J §4.4.2); a `power-up-level` option takes the permanent `EffectsRegistry.applyCollect(id, true)` path, which raises the power-up's run-scoped level by one on the single player-owned store the registry consumes (parent AH-0MUV5CLVO002ZHS9 §4.4.3; single mutation point — AH-0MUV5CLW6005VF7K). Every launcher (`PlayScene`, `GymFormationScene`, `GymWeaponLeveling` and `GymPowerUpLeveling`) supplies `ChoiceContext.powerUpLevels` from the player's run-scoped power-up level store, and every launcher except the power-ups-only `GymPowerUpLeveling` additionally supplies `ChoiceContext.weaponLevels` from the weapon level state — both reporting **permanent** levels only (`PowerUpLevelStore.getLevels()` / `Player.getWeaponLevels()`), so a temporary field pickup never inflates an offer — and marks unowned base-pool power-ups as **★ New**. Permanence is scoped to the run and cleared on reset/restart.
 - **Owned-permanents panel (AH-0MVCRKAPL000L68Y)**: because the overlay is the one paused moment where a permanent decision is taken, it also shows the **build the player already has**. A top-left panel headed **`YOUR UPGRADES`** lists every kind the player owns **permanently** this run — permanent weapon drops **and** power-ups, one row per item, labelled `"<Name> Lv.<N>"` (always including `Lv.1`, matching the offer labels on the same screen). It is a **single flat list**, weapons first then power-ups and catalogue order within each kind, so the order is deterministic; the permanent `cannon` (never a permanent reward) and the `reset` utility (which removes weapons) are excluded, and the six-slot cap bounds it to ≤ 6 kinds plus the available-when-full exemptions, so no scrolling or paging is needed. Rows are built once by the pure `buildOwnedLoadout` helper ([`src/powerups/ownedLoadout.ts`](../src/powerups/ownedLoadout.ts)) from the **same permanent snapshots the offers are priced from** (`Player.getWeaponLevels()` / `Player.getPowerUpLevels()`), and every row name resolves through the shared choice catalogue (`toChoiceOption(id).name`), so the panel can never disagree with the offer list. **Only permanent state is shown**: a field-pickup-only kind never appears (and is never offered as a reward either, §4.4), and a displayed level is the permanent level only, never `permanent + temporary`. When nothing is permanently owned — the first hold-full of every run — the heading reads **`YOUR UPGRADES — none yet`** instead of an empty region. Every hold-full launcher (`PlayScene.openMineralChoice`, `GymFormationScene.openMineralChoice`, `GymWeaponLeveling.openMineralChoice`, `GymPowerUpLeveling.openMineralChoice`) passes the same built rows, so the game and every gym show an identical panel; it is torn down with the rest of the choice UI when a selection starts the countdown and rebuilt from current state on the next hold-full. The mini-boss reward overlay (§4.4.4), which reuses the same scene but is not the hold-full screen, is unchanged (recorded intake default).
 - **Metronomic ghost fire while the overlay is open (AH-0MV0QPO4N009KWVT)**: opening the hold-full choice pauses the launcher at the SceneManager level, which freezes the shared beat clock and would otherwise cut the fire audio dead. Instead, the overlay keeps playing the player's **currently active** weapon fire cues on the same beat grid (§4.4 beat-aligned fire grid) at a reduced volume — **`HOLD_FULL_FIRE_VOLUME_SCALE` (0.3×)** — with **no projectiles and no gameplay simulation advanced**. No enemy or other gameplay cue plays during the overlay. A pure scheduler (`createHoldFullFireMetronome`, `src/scenes/core/holdFullFire.ts`) derives every ghost tick from `src/utils/beat.ts` grid maths (phase-locked to the tick the next real shot would have used), and the launcher captures the frozen schedule (`buildHoldFullFireSchedule` from `Player.getActiveWeapons()` / `getFireInterval`) into the overlay's `fireSchedule` payload. The same cue path (`playWeaponFireSound`) serves live fire and the ghosts, so the two cannot drift.
-- **Beat-locked 3-2-1 countdown and resume (AH-0MV0QPO4N009KWVT)**: when the player selects an option the choice is **not applied instantly** — `MineralChoiceScene` plays a **3-2-1 countdown, one count per beat** (750 ms at the default 80 BPM, `createHoldFullCountdown` in `src/scenes/core/holdFullCountdown.ts`), each count showing a large on-screen numeral and playing the distinct countdown cue (`playCountdownTickSound`, baked `aihell-countdown-tick` ‑ see §7.3). The moment the choice is made the **choice screen is torn down** — the backdrop, the option rows and the heading disappear, leaving only the countdown numeral (AH-0MV722WJS0075UTZ). The tone **rises with each beat** (count 3 base, 2 a major third above, 1 a perfect fifth above — a C6→E6→G6 rise) by playing the single baked asset at a rising playback rate (`playCountdownTickSound(step)`, `countdownTickRate`, §7.3). The reduced-volume fire **continues underneath** the countdown and ends only when the overlay closes. On the beat after "1" (≈2.25 s after selection) the choice is applied and gameplay resumes via the same single `onSelect` contract; the launcher then **re-bases the frozen beat clock** across the whole overlay duration (`CombatCoreScene.rebaseBeatClockForHoldFullResume`) so the ship's real fire resumes **phase-locked on the same grid** — no phase jump or restart. The demo/attract auto-select drives the identical selection → countdown → resume path, so an attract-mode run never stalls and keeps its cadence (AC6).
+- **Beat-locked 3-2-1 countdown and resume (AH-0MV0QPO4N009KWVT)**: when the player selects an option the choice is **not applied instantly** — `MineralChoiceScene` plays a **3-2-1 countdown, one count per beat** (750 ms at the default 80 BPM, `createHoldFullCountdown` in `src/scenes/core/holdFullCountdown.ts`), each count showing a large on-screen numeral and playing the distinct countdown cue (`playCountdownTickSound`, baked `aihell-countdown-tick` ‑ see §7.3). The moment the choice is made the **choice screen is torn down** — the backdrop, the option rows and the heading disappear, leaving the countdown numeral with the chosen option's **catalogue title** drawn beneath it, and both are destroyed together when the countdown completes so nothing outlives the overlay (AH-0MV722WJS0075UTZ; title readout AH-0MWL7SU2Q009GEJ2 · AC2). The tone **rises with each beat** (count 3 base, 2 a major third above, 1 a perfect fifth above — a C6→E6→G6 rise) by playing the single baked asset at a rising playback rate (`playCountdownTickSound(step)`, `countdownTickRate`, §7.3). The reduced-volume fire **continues underneath** the countdown and ends only when the overlay closes. On the beat after "1" (≈2.25 s after selection) the choice is applied and gameplay resumes via the same single `onSelect` contract; the launcher then **re-bases the frozen beat clock** across the whole overlay duration (`CombatCoreScene.rebaseBeatClockForHoldFullResume`) so the ship's real fire resumes **phase-locked on the same grid** — no phase jump or restart. The demo/attract auto-select drives the identical selection → countdown → resume path, so an attract-mode run never stalls and keeps its cadence (AC6).
 - **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (**first-hold** capacity, default 5), `mineralHoldGrowthMultiplier` (default 2), `mineralRedropBonusMin`/`Max` (additive re-drop bonus, defaults 0.25/1.25). Persisted rules are schema-versioned (v3); pre-v2 configs (which stored a *fixed* capacity) migrate to the new first-hold defaults, and pre-v3 configs reset the re-drop tunables to the additive defaults so stale fraction values are never carried forward.
 - **Gym**: the asteroids-only `GymMinerals` gym (§6.4) demonstrates the whole loop; every formation gym also seeds 100 random minerals on create.
 
@@ -1743,8 +1805,8 @@ Power-ups are **constantly upgradable**, exactly like weapons: every power-up ca
      Both directions are the same `remaining / total` ratio the row's `Ns` / `next in Ns` text already shows, resolved through the one shared seam (`resolveCountdownSweep`, `src/ui/hudCountdown.ts`) via the registry projections, so the arc and the text can never disagree. **No live countdown, no ring**: a row with a permanent base and no timer (`∞`, a full charge pool, a ready single-use warp) draws no arc.
 - **Curve family.** Most variables use the same exponential-saturation curve as §4.4.2: `effective(level) = cap − (cap − base) × e^(−k × level)` — monotonic non-decreasing, clamped to a finite cap; discrete counts round and saturate at the cap. **Additive-capped schedules use the `src/utils/curve.ts` linear/clamped curve instead** (`effective(level) = clamp(base + k × level, [min(base, cap), max(base, cap)])`): the Smart Bomb's pulse radius (**200 → 400 px**, +2 % of base per level) and its permanent pulse interval (**30 → 10 s**, −2 s per level, floor 10 s) both resolve through it — a fixed per-level step that flattens at the clamp rather than asymptotically.
 - **Stack reconciliation (AC3).** Existing stack/charge semantics are derived from the level model rather than a second counter: Magnet/Mineral Scoop permanent stacks are `min(permanentGrants, levelCap)` with a cap of **5**; Phase Shift and Teleport are **single-use** — each whole state is one readiness flag plus the seconds left on its single recharge timer, with no count, no FIFO queue and no pool (Phase Shift parent AH-0MW6O1690007P2SL, mirroring Teleport parent AH-0MVY096RT006QMF4); Extra Life lives are `min(livesStart + Σ lifeGain(level), 5)`. The Magnet/Mineral Scoop **hybrid is preserved**: a field pickup levels the power-up up and refreshes the timed attraction, but does **not** create a permanent stack — only a hold-full reward does.
-- **Wired into the effect path (AH-0MUV5CLW6005VF7K).** `EffectsRegistry` consumes the **single** run-scoped `PowerUpLevelStore` owned by `Player` — every scene injects that same instance (via a dynamic resolver, so a respawned player is picked up automatically), so there is no second, independently-incremented counter. `EffectsRegistry.applyCollect` is the single mutation point: it routes the collection to the store's **temporary stack** (field pickup) or **permanent grant** (hold-full reward), then resolves the effect strength from the catalogue — Shield/Speed Boost durations, the Speed Boost `speedMultiplier`, Phase Shift/Teleport durations, the Phase Shift and Teleport recharge rates, Extra Life lives and the Magnet/Mineral Scoop stack caps all come from `resolvePowerUpAtLevel`/`store.stats()` rather than raw tuning constants. Spent consumable uses — the single-use Phase Shift activation and Teleport warp and the permanent Shield, Thorn Field, Force Field and Mystery UFO pools — are recovered through the **shared recharge clock**: every scene that ticks the registry (`EffectsRegistry.tick(dt)`) forwards `dt` to `PowerUpLevelStore.tickRecharge`, so the game and every gym recharge identically (AH-0MV82I8IL0012RXY AC1/AC5; parent AH-0MVTQMREN009DSFW). On a timed-window expiry the effect path calls `store.clearTemporary(id)`, which reverts the effective level without removing the permanent grant or any consumable already banked. The only non-levelled effect constants that remain are the **Magnet/Mineral Scoop field-pickup timed windows** (15 s): that window has no catalogue axis, so only the permanent stack cap (and hence attraction radius) levels. Game and every gym consume the same code, enforced by the duplicate-body guard.
-- **Deterministic expiry tests (AH-0MV6T0HU0001IS71).** The scene-level P5/Speed Boost expiry tests (PlayScene: "P5 expired → multiplier back to 1" and "…fire-rate multiplier back to 1 (AC2)") derive their advance from the registry's **actual remaining timed window** (`EffectsRegistry.remaining`) plus a fixed safety margin, rather than a hard-coded tick count. The first-level resolved window is exactly 10 s, so a fixed 10.1 s advance left only ~0.1 s of margin and flaked under full-suite load; advancing to *just inside* the resolved window (asserting the effect is still active) and then *comfortably past* it (asserting expiry and the fallback to the un-boosted base) keeps the test deterministic regardless of catalogue tuning.
+- **Wired into the effect path (AH-0MUV5CLW6005VF7K).** `EffectsRegistry` consumes the **single** run-scoped `PowerUpLevelStore` owned by `Player` — every scene injects that same instance (via a dynamic resolver, so a respawned player is picked up automatically), so there is no second, independently-incremented counter. `EffectsRegistry.applyCollect` is the single mutation point: it routes the collection to the store's **temporary stack** (field pickup) or **permanent grant** (hold-full reward), then resolves the effect strength from the catalogue — Shield/Speed Boost durations, the Speed Boost fire-rate `speedMultiplier`, Phase Shift/Teleport durations, the Phase Shift and Teleport recharge rates, Extra Life lives and the Magnet/Mineral Scoop stack caps all come from `resolvePowerUpAtLevel`/`store.stats()` rather than raw tuning constants. Spent consumable uses — the single-use Phase Shift activation and Teleport warp and the permanent Shield, Thorn Field, Force Field and Mystery UFO pools — are recovered through the **shared recharge clock**: every scene that ticks the registry (`EffectsRegistry.tick(dt)`) forwards `dt` to `PowerUpLevelStore.tickRecharge`, so the game and every gym recharge identically (AH-0MV82I8IL0012RXY AC1/AC5; parent AH-0MVTQMREN009DSFW). On a timed-window expiry the effect path calls `store.clearTemporary(id)`, which reverts the effective level without removing the permanent grant or any consumable already banked. The only non-levelled effect constants that remain are the **Magnet/Mineral Scoop field-pickup timed windows** (15 s): that window has no catalogue axis, so only the permanent stack cap (and hence attraction radius) levels. Game and every gym consume the same code, enforced by the duplicate-body guard.
+- **Deterministic expiry tests (AH-0MV6T0HU0001IS71).** The scene-level P5/Speed Boost expiry test (PlayScene: "P5 expired → fire-rate multiplier back to 1 (AC2)") derives its advance from the registry's **actual remaining timed window** (`EffectsRegistry.remaining`) plus a fixed safety margin, rather than a hard-coded tick count. The first-level resolved window is exactly 10 s, so a fixed 10.1 s advance left only ~0.1 s of margin and flaked under full-suite load; advancing to *just inside* the resolved window (asserting the effect is still active) and then *comfortably past* it (asserting expiry and the fallback to the un-boosted base) keeps the test deterministic regardless of catalogue tuning.
 - **Shield/Bomb level axes wired (AH-0MUVM9RAO004Y3LB).** The catalogue expresses Shield multi-hit absorption (`shieldAbsorptions`, 1 → 3) and the redesigned Bomb ranged periodic bomb (`bombRange` px and `bombFrequency` pulses/s) in place of the superseded stored-charge axis. The effect path consumes them (Shield absorbs its level-resolved hits; Bomb clears a level-resolved radius, pulsing at a level-resolved rate when permanent), so the `power-up-level` change summary no longer excludes any axis (`DEFERRED_POWER_UP_LEVEL_VARIABLES` is now empty).
 - **Mystery UFO level axes (AH-0MV1BIXFO006Z1I7 / AH-0MVBMPZ2C0008VAE / AH-0MV9G113S009B37I).** The Space Invaders-inspired Mystery UFO is a visible collector drone, so its axes are the drone's **lifetime** (`mysteryUfoLifetime`, 5 → 8 s), **capacity** (`mysteryUfoCapacity`, 10 → 20), **collector radius** (`mysteryUfoRadius`, 20 → 40 px) and **spawn interval** (`mysteryUfoSpawnInterval`, 30 → 12 s, descending; permanent reward only). The retired instant mineral/score axes are removed. As a consumable (parent AH-0MVTQMREN009DSFW) the drone adds a **charge-cap axis** (`mysteryUfoChargeCap`, **1 at level 0 → 3**): one drone spawn spends one charge and the spawn interval doubles as its regeneration interval, so a permanent UFO spawns a drone only while the pool holds a charge. The remaining axes are pure magnitudes consumed by the shared collector-drone pass; a field pickup's *temporary level* still reverts at that kind's per-upgrade TTL (15 s, §4.4.3), which is a property of the upgrade and not the drone's lifetime.
 - **Force Field level axes wired (AH-0MV1BIX1W006XF95).** The Gradius-inspired Force Field is a **charge pool**: its **reflect budget** (`forceFieldReflects`, 3 → 10) and recharge interval (`forceFieldRecharge`, 45 s → 20 s) resolve from the catalogue. The former level-scaled bubble window axis was retired with the absorbed-hit pickup model (AH-0MVVD8SXO004QLZW). The reflect budget is consumed by the shared reflect branch in `CombatScene._handleCollisions`: while armed (pool > 0) an enemy bullet inside `EffectsRegistry.forceFieldRadius()` is consumed and re-spawned through `CombatCoreScene.spawnPlayerBullet` with its velocity reversed, until the budget is spent. The reflect branch lives once in the shared core (`CombatScene._reflectEnemyBullet`), so the game and every gym reflect identically (enforced by the duplicate-body guard and a parity test).
@@ -1756,7 +1818,7 @@ Power-ups are **constantly upgradable**, exactly like weapons: every power-up ca
 |----------|----------------------------------|
 | **Shield** | Shield hits (1 → 3, k=0.5); Shield recharge (45 s → 20 s, −5 s/level; charges per second `1 / interval`) |
 | **Bomb** | Bomb range (120 px → 320 px, k=0.3); Bomb rate (0.33/s → 1/s, k=0.35) |
-| **Speed Boost** | Speed boost (1.5× → 2.5×, k=0.2); Boost time (10 s → 20 s, k=0.12) |
+| **Speed Boost** | Fire-rate boost (1.5× → 2.5×, k=0.2); Boost time (10 s → 20 s, k=0.12) |
 | **Phase Shift** | Phase time (1.5 s → 3 s, k=0.2); Phase recharge (1/30 → 1/10 charges/s ≈ 30 s → 10 s, k=0.3) — **single-use**, so the retired `phaseCharges` axis is gone and there is no activation-count axis |
 | **Teleport** | Arrival phase (1.5 s → 3 s, k=0.2); Teleport recharge (1/60 → 1/20 charges/s ≈ 60 s → 20 s, k=0.3) — **single-use**, so there is no warp-count axis |
 | **Extra Life** | Lives (1 → 3, k=0.5); Life cap (5, flat) |
@@ -1873,11 +1935,13 @@ the level advances once **after** the sweep.
 
 **Demo/attract auto-spin (AH-0MVJ8U79V0056I2F).** In demo mode the reward is
 not left waiting for a human: the launcher passes
-`autoSpinMs: BOT_MINERAL_CHOICE_DELAY_MS` (`src/ai/botHumanLike.ts`) to the
-wheel, which spins after that delay and applies the landed outcome, so the
-attract bot never stalls on the reward screen. The outcome is drawn from the
-run-seeded RNG, so a given seed reproduces the same reward. Outside demo mode
-the wheel waits for a real click/keyboard spin.
+`autoSpinMs: BOT_MINI_BOSS_WHEEL_SPIN_DELAY_MS` (`src/ai/botHumanLike.ts`) to
+the wheel, which spins after that delay and applies the landed outcome, so the
+attract bot never stalls on the reward screen. The wheel keeps its own faster
+(900 ms) demo pace, separate from the longer 2.5 s upgrade-selection dwell
+(`BOT_MINERAL_CHOICE_DELAY_MS`; AH-0MWL7SU2Q009GEJ2 · AC4). The outcome is
+drawn from the run-seeded RNG, so a given seed reproduces the same reward.
+Outside demo mode the wheel waits for a real click/keyboard spin.
 
 **Checkpoints (§6.6).** Defeating a mini-boss still auto-writes the run
 checkpoint. The checkpoint schema is **v3**; the wheel rework removed the
@@ -1912,6 +1976,7 @@ parity tests.
 | Graze (near miss) | 0 points — tier progress only |
 
 - **Score display**: Neon-styled numeric display in the top-right corner.
+- **Mineral pickups**: award no points of their own, but every **player** collection is confirmed audibly by the quiet pickup chime (`playMineralCollectChimeSound()`, §4.4.1 Collection) so a mineral run does not depend on reading the HUD bar.
 
 #### Danger multiplier (graze) — AH-0MWL7ORK8007LXJI
 
@@ -1975,11 +2040,19 @@ multiplied — a graze awards no score of its own, only tier progress.
   formation-gym divergence and the same-seed before/after bot-batch evidence
   live in [`docs/BALANCING.md`](./BALANCING.md) (AH-0MVHT1M6O003PU7P).
 
-  > **Proposed, not shipped (backlog §8.3):** a third, *content* axis —
-  > **anomaly (elite) variants** of counted archetypes, each with one bounded
-  > extra behaviour and a guaranteed reward, level-1 exempt — is proposed in
-  > §8.3 (Anomaly (elite) enemies and wave twists, AH-0MWL7P1AO003LKXT). The two
-  > axes above stay normative until that item lands.
+  - **A third, content axis — elite (anomaly) variants**
+    (AH-0MWL7P1AO003LKXT): at most **one counted spawn per wave** is elevated
+    to an elite — an existing archetype with one bounded extra behaviour
+    (`splitter` / `reinforced` / `volatile`) and 1–3 bonus hit points (§4.1).
+    A wave may author its elite; otherwise the seeded budget
+    `ELITE_WAVE_CHANCE` grants one on that share of eligible waves, derived
+    per wave from the run seed (`src/waves/eliteSpawn.ts`) so it is
+    deterministic and never perturbs the formation/variety draws.
+    **Level 1 never spawns an elite**, so onboarding and the experience-target
+    baseline keep their calibration. The axis changes no archetype *set*; it adds a
+    priority target and a guaranteed reward (§4.1), and its same-seed
+    before/after evidence is recorded in
+    [`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
 - If the player runs out of lives (3 starting; up to 5 with Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.
@@ -2454,7 +2527,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle), `shareTelemetryDev` (dev-build only), `controlScheme` (per-player ship control scheme: `asteroids` (default) or `fourDirectional`; a missing, non-string or out-of-union value falls back to `asteroids`; overrides the `ship-config.csv` `controlScheme` for the player and applies to the running game on resume from the in-game Settings and to every subsequent run — see §2.2). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_checkpoint` | **Run checkpoint** (AH-0MVCRBTNF000DK51): auto-written after every mini-boss defeat. Stores the resume level (the level after the defeated mini-boss) and wave 1, plus lives, score, minerals, the **ship's hold capacity** the run had earned, permanent weapon/power-up levels and the run seed. The main menu shows **Continue — Level N** only when a usable checkpoint exists; resuming starts that level at wave 1 with the saved stats and RNG seed and **replays every stored permanent grant through the same shared grant seam live play uses** (AH-0MVSHI07B003BZIP), so the HUD upgrade list and the permanent effect state (shield armed with its absorption budget, permanent Bomb/Smart Bomb/Strike pulses, permanently-open Frenzy/Chrono windows, regenerating consumable charge pools (Shield absorptions, Thorn Field rams, Force Field reflects and Mystery UFO drone spawns — one event per charge — plus the single-use Phase Shift activation and Teleport warp, §4.4.3), Magnet/Mineral Scoop stacks) match a live run that earned the same upgrades — the restored lives are never inflated by the Extra Life replay. **The consumable charge pools and their in-flight recharge timers are persisted as an additive `consumablePools` field** (AH-0MVY3IGRC00954UD, **no schema bump — version stays v3**): one row per permanently owned consumable stores the current charge count and the remaining seconds of every per-charge recharge timer, and the single-use Teleport's readiness clock rides the same mechanism (its one timer; an empty list = ready). On resume the pools and timers are **re-applied through the one shared `PowerUpLevelStore` snapshot/restore seam after the permanent-grant replay and before the lives restore**, so the saved pool is authoritative (the replay's per-level grant can never leak into a saved empty pool) and the resumed run keeps regenerating mid-wait exactly where it stopped — the checkpoint is only a serialiser, never a second charge counter. A legacy payload without the field resumes exactly as before: each owned consumable keeps its single replayed grant and no timers (the additive field is optional for this reason). The save-side six-slot gate also drops a gated-out kind's pool, so a resumed run can never hold charges for a kind it does not own. Temporary field-pickup windows are intentionally **not** persisted and never re-open on resume. **The hold is restored through the shared hold model** (schema **v3**, AH-0MVT1DYO5004UC4P / AH-0MVT1DZRG000Q1US): Continue applies the persisted capacity first, then clamps the saved mineral count into `[0, capacity]` and clears overflow, so a resumed hold is never over-capacity and the next hold-full choice needs a real collection. A payload with no capacity field resumes at the first-hold capacity (its over-capacity minerals are still clamped). Schema **v3** drops the run-scoped `unlockedWeapons` field with the mini-boss wheel rework (AH-0MVLISU03006WDOD AC5), so **any payload stamped with another schema version is rejected as "no checkpoint"** — a pre-wheel save can never resume a run whose reward surface has changed underneath it. **Play Game (New Game)** clears it. Corrupt/invalid payloads load as "no checkpoint" (defensive parse, same fallback discipline as the leaderboard) |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
-| `ai_hell_hangar_war` | **Hangar-war payload** (AH-0MVUXC0M5007LCGV, §8.1): one versioned payload (version `1`) holding the persistent hangar (banked minerals and mini-boss cores, owned hulls/starting weapons/modifiers, the active hull and loadout) **and** the hex ring (ring index, per-hex state and queued attacks) plus the war seed and best score. One key so a defence result can never be written without the hangar state it depends on and a partial ring is never discarded. Defensive parse follows §6.6: an unidentifiable or explicitly unknown-version payload loads as "no save", a usable shape is salvaged field by field, and **migration is decided by field presence** — a hangar-only (pre-ring) save loads as hangar-at-last-valid-state with an empty ring and is stamped with the current version. Slow/failed reads and writes degrade silently and never crash the hangar screen; the store is injectable, so a future backend can replace `localStorage` behind the same `HangarWarStorage` interface |
+| `ai_hell_hangar_war` | **Hangar-war payload** (AH-0MVUXC0M5007LCGV, §8.1): one versioned payload (version `1`) holding the persistent hangar (banked minerals and mini-boss cores, owned hulls/starting weapons/modifiers/level-bearing power-ups, the active hull and loadout — including the optional tri-state `activeLoadout.powerUps` install selection, AH-0MWOV8SMI006W52Z) **and** the hex ring (ring index, per-hex state and queued attacks) plus the war seed and best score. One key so a defence result can never be written without the hangar state it depends on and a partial ring is never discarded. Defensive parse follows §6.6: an unidentifiable or explicitly unknown-version payload loads as "no save", a usable shape is salvaged field by field, and **migration is decided by field presence** — a hangar-only (pre-ring) save loads as hangar-at-last-valid-state with an empty ring and is stamped with the current version. Slow/failed reads and writes degrade silently and never crash the hangar screen; the store is injectable, so a future backend can replace `localStorage` behind the same `HangarWarStorage` interface |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.
 
@@ -2589,6 +2662,7 @@ The former procedural Web Audio synthesis has been **removed**. The **one** runt
 | **Interactions** | Phase Shift activates (automatic) | Rising sci-fi chirp + noise whoosh (`playPhaseShiftSound()`: triangle sweep 320 → 1560 Hz over ~0.28 s + bandpass noise sweep 600 → 3200 Hz) | Medium | Immediate |
 | **Interactions** | Mystery UFO warble (continuous) | Classic "woo-woo-woo" square siren gliding A5 → F5 → D5 → B4, looping for the **whole sortie** (seek + collect) via `playMysteryUfoWarbleSound()` and released on return/payout/destruction/teardown by `stopMysteryUfoWarbleSound()` | Low-medium | Immediate (with spawn) |
 | **Interactions** | Mystery UFO mineral spill | Bright triangle E7 → A6 chime + sine shimmer + noise tick (`playMineralTinkleSound()`), once per spill alongside the scattered dropped minerals (silent when nothing drops) | Low-medium | Immediate |
+| **Interactions** | Mineral pickup (player) | Quiet bright chime (`playMineralCollectChimeSound()`, baked `aihell-mineral-chime`): one chime per collected mineral that climbs the A-minor ladder `MINERAL_CHIME_SEMITONES = [0, 2, 3, 5, 7, 8, 10]` one scale degree at a time (capped at one octave) and resets to base after `MINERAL_CHIME_RESET_GAP_MS` (1.5 s of **game time**) without a pickup; ≤ 0.2 peak so a dense field never masks an enemy-fire telegraph; enemy absorption is silent | Low (≤ 0.2 peak) | Immediate |
 | **Impacts** | Player hit (life lost) | Low, heavy layered "hull breach" boom (`playPlayerDestructionSound()`: impact thump + descending body + shrapnel hiss); replaces the generic enemy cue on the player-death paths | High | Next 16th note (accent) |
 | **Impacts** | Enemy destroyed | Sharp pop / crack (`playDestructionSound()` / `playDiverDestructionSound()`) | Medium | Next 16th note (accent) |
 | **Impacts** | Wave timeout — survivors carry over (no detonation) | No cue: survivors persist into the next wave as active threats (AH-0MUNS3ZQ1002DJ9S). `playMajorExplosionSound()` is retained but unused by the timeout path | — | — |
@@ -2910,11 +2984,19 @@ hexes) is targeted at 30–90 minutes** for a semi-skilled player (six
 5–15-minute deployments plus builds, salvage and a few losses), **ring 2 (12
 hexes) at 60–180 minutes**, and ring *n* holds 6*n* hexes, so later rings take
 progressively longer. The campaign is therefore extendable rather than finite.
-- **Boss and weapon strength are known ahead.** Before committing, the player sees
-each hex's boss, its strengths and weaknesses, its aggression and exactly which
-weapon or upgrade it grants, so the ring supports **strategy** ("take that hex for
-the weapon that counters the boss threatening my home hex") instead of being a
-checklist.
+- **Boss and weapon strength are known ahead — and it decides the fight.** Before
+committing, the player sees each hex's boss, its strengths and weaknesses, its
+aggression and exactly which weapon or upgrade it grants, so the ring supports
+**strategy** ("take that hex for the weapon that counters the boss threatening my
+home hex") instead of being a checklist. The lists are **rules, not labels**
+(AH-0MWL5376H001WJFZ): a weapon the boss is **weak** against lands **2 hit points
+per connected shot**, a weapon it is **strong** against lands **1 hit point per
+two connected shots** (resisted, never immune — a wrong loadout is slow and
+legible, not a wall), and everything else is neutral (1). The panel marks each
+listed weapon with the glyph it will show in combat (`▲ EFFECTIVE` /
+`▼ RESISTED`), and the in-run feedback carries the same vocabulary: an effective
+hit flashes a bright shard burst with a pitched-up cue and a boss flinch, while a
+resisted hit clangs off the armour rim as a dull spall ring with no flinch.
 - **Different playstyles are all viable.** Every hex has a boss, but **only one of
 the six grants the ring's new weapon and it is the hardest hex**: players may take
 it early and push into the next ring, risking losses and an exposed rear, or
@@ -2997,14 +3079,21 @@ while a **run** keeps the shipped middle loop in full (the six shared loadout
 slots plus the slot-free **Extra Life** and **Mystery UFO**). Scarcity lives in
 what the hangar owns between deployments, never in stripping the run.
 
-> **The default deployment loadout is empty** (AH-0MVZJ6V1J001DA9D, producer
-decision): a fresh hangar-war payload carries `activeLoadout.startingWeapons: []`,
-so a run starts with **only the ship's permanent cannon**. The `spread` starter
-is **owned** from the first deployment and stays selectable in the deployment
-selector; owning the **free starter** weapon never auto-equips it — equipping a
-starter is always a deliberate choice. This supersedes the earlier "one
-starting weapon" reading of Rule 1: the fleet still owns the starter, but the
-deployed loadout starts empty. **A *bought* part is different** (parent
+> **The stored deployment loadout defaults to empty** (AH-0MVZJ6V1J001DA9D,
+> producer decision): a fresh hangar-war payload carries
+> `activeLoadout.startingWeapons: []`, and an empty starting-weapon selection
+> is a legal loadout that round-trips as empty, so a payload that carries one
+> deploys with **only the ship's permanent cannon**. The hangar screen no
+> longer leaves that list empty for the player, though: opening the hangar on
+> exactly that empty list auto-fits a boss-aware suggestion
+> (AH-0MWOWEPO2004B0MR; § *The auto-fit loadout rule* below). The `spread`
+> starter is **owned** from the first deployment and stays selectable in the
+> deployment selector; owning the **free starter** weapon never auto-equips it
+> — equipping a starter is always a deliberate choice (the auto-fit is an
+> emptiness-triggered loadout rule, never an ownership one). This supersedes
+> the earlier "one starting weapon" reading of Rule 1: the fleet still owns
+> the starter, but the stored loadout starts empty. **A *bought* part is
+> different** (parent
 AH-0MWL5PAP2001XYYF, producer Q1 = C refined): a successful hangar purchase
 **auto-enables** the entry — a hull becomes the active hull, a starting weapon
 joins `activeLoadout.startingWeapons` and a modifier joins
@@ -3012,8 +3101,45 @@ joins `activeLoadout.startingWeapons` and a modifier joins
 toggles stay available, and a refused purchase changes neither ownership nor
 the loadout.
 
+> **Owned power-ups are installable, and only the selected ones deploy**
+> (AH-0MWOV8SMI006W52Z). A power-up is a permanent passive upgrade, not a
+> flown slot, so the deployment loadout gained an optional
+> `activeLoadout.powerUps: string[]` selection beside `startingWeapons` and
+> `modifiers`. It is **tri-state** and migrated by field presence (no schema
+> bump):
+>
+> - **absent** — a save written before the field, or one the player never
+>   curated — installs **every** owned level-bearing power-up, exactly as
+>   before, so an existing save keeps flying its old kit without a re-fit;
+> - **`[]`** — a deliberate empty selection installs none;
+> - **a list** — installs exactly its owned, catalogue-known, level-bearing
+>   ids (`resolveActiveLoadout` drops unowned, unknown and non-level-bearing
+>   ids, so a corrupt save can never install an unowned power-up).
+>
+> The hangar screen renders every owned level-bearing power-up (`POWER-UP`
+> rows beside the weapons) with the same equipped/off toggle as a weapon and a
+> `toggleHangarPowerUp` handler routed through the economy's `equipLoadout`.
+> The combined selected weapons **and** power-ups still pass through the one
+> shared six-slot trim (`capDropIdsToSlotPool`) at grant time, and the screen
+> model applies the **same** predicate, so the loadout the player sees is the
+> loadout the run flies: a selected kind trimmed by the cap renders `BLOCKED`
+> and non-actionable rather than silently differing. Installed power-ups are
+> **not** spent by `consumeDeployedShip` — they are permanent level purchases,
+> so the one-battle sortie still spends only the flown hull, weapons and
+> modifiers. The boss-aware auto-fit (§ *The auto-fit loadout rule*) installs
+> its granted power-ups through the same selection field.
+
 The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
-(`src/core/hangarWar/hangarEconomy.ts`):
+(`src/core/hangarWar/hangarEconomy.ts`). Weapon rows are **derived** from the
+shipped roster rather than hand-authored: the catalogue builds one entry per
+`src/data/weapons.csv` row bar the documented `cannon` exclusion, so a new CSV
+weapon appears in the tree with no code change. Price and ring gate stay
+authored — `WEAPON_UNLOCK_ECONOMY` promotes a derived entry to purchasable, and
+its absence means **grant-only** (zero price, never sold) — so retuning a weapon
+can never reprice the tree. The four purchasable weapon rows are listed below;
+the eleven further derived weapons ship grant-only, and a hex-granted weapon is
+owned, displayed and deployable the moment it is captured (AH-0MWWI3KIO001DY5C,
+AH-0MWWI3L3Z006LX3Z; their price ladder is AH-0MWWGFDE1001FW4J):
 
 | Entry | Kind | Price (minerals / cores) | Effect |
 |---|---|---|---|
@@ -3045,9 +3171,12 @@ toggles owned starting weapons — **every** owned weapon row is actionable,
 including the last equipped one — and modifiers; resolution drops unknown or
 unowned ids, so a corrupt save can never deploy an unowned ship or an unowned
 weapon. An empty
-starting-weapon selection is a legal loadout that round-trips as empty (never
-silently replaced by `spread`), and the deployment then equips nothing, so the
-run begins with only the permanent cannon. The attract bot's "cheapest useful
+starting-weapon selection is a legal loadout that round-trips as empty — never
+silently replaced by `spread` when a payload is saved or resolved — and a
+deployment that carries one equips nothing, so a run launched from it begins
+with only the permanent cannon; the hangar screen's documented auto-fit rule
+(§ *The auto-fit loadout rule*) is the one place that fills an empty list, and
+it does so on open, never on resolve. The attract bot's "cheapest useful
 unlock" rule (`purchaseWeight`,
 catalogue order as the deterministic tie-break) also lives here. It excludes
 the power-up kind through the one documented `isBotPurchaseCandidate` helper,
@@ -3079,6 +3208,67 @@ keeps a hex — and a hull-granted skill and a modifier-granted skill may sit on
 the same defending bot, where their bonuses **add**. Only modifiers on the
 **active loadout** contribute, so owning one never silently changes what the
 fleet's bots are trained against.
+
+#### The auto-fit loadout rule
+
+An empty loadout is **fitted for the player when the hangar opens**, and only
+then (AH-0MWOWEPO2004B0MR, parent AH-0MWOROJYT004WPSD, producer Q1 = B; this
+section is the design record — AH-0MWOWEYZQ006IR9T). The trigger is the raw
+persisted list, `isDefaultHangarLoadout` — exactly
+`activeLoadout.startingWeapons.length === 0` — never "the selector found no strong weapon". The rule therefore has three states:
+
+- **Empty is auto-fitted on open.** The screen asks the shared boss-aware
+  selector for a suggestion and equips it before the player sees the loadout,
+  persisting through the same single store write as every other change.
+- **A deliberate loadout is preserved.** Any non-empty starting-weapon list —
+  including one whose weapons are all neutral or resisted against the target
+  boss — is a player choice and is never silently rewritten.
+- **The explicit button applies on demand.** The
+  **⚡ APPLY SUGGESTED BUILDOUT** row (its label carries the suggested weapon
+  count, e.g. `⚡ APPLY SUGGESTED BUILDOUT — 3 weapons`) equips the published
+  suggestion as a full replacement whenever the player activates it, for any
+  loadout. It is the **only** path that replaces a hand-picked loadout, so a
+  suggestion can never overwrite a choice without a deliberate activation.
+
+This supersedes the bare "default-empty" reading of AH-0MVZJ6V1J001DA9D: the
+stored default is still empty and an empty selection remains a legal loadout,
+but the hangar screen no longer leaves the player with only the permanent
+cannon on open. The **starter-never-auto-equips** rule is unchanged and
+complementary: owning the free `spread` starter never auto-equips it —
+ownership stays inert until the player toggles a row, the auto-fit runs on an
+empty loadout, or the explicit button applies a suggestion. Under `demo` nothing is
+auto-fitted and the button is rendered non-actionable, so a demonstration can
+never overwrite the war.
+
+The suggestion is one shared, pure rule (`selectAutoLoadout` in
+`src/core/hangarWar/hangarAutoLoadout.ts`, applied through
+`applyAutoLoadout`) consumed by the game's hangar and by the read-only
+`GymHangar`, and never re-derived in scene code:
+
+1. **Strong weapons first** — owned weapons the target boss is weak to come
+   before every neutral one, in catalogue order.
+2. **Weak weapons are never selected** — a `resolveBossMatchup` verdict of
+   `weak` is dropped from every step, and the fill step never forces one back
+   in.
+3. **At most one weapon per behaviour family** — the variety cap keys on the
+   shipped weapon descriptors (`aoe`, `orbit`, `splits`, `bounce`, `hitscan`,
+   two or more distinct offset angles), with no second taxonomy.
+4. **Then at least one defensive power-up** — the owned level-bearing power-up
+   rows the deployment installs, defensives (the shipped
+   `UPGRADE_STAT_BUCKETS` `armour` classification) first. Applying the
+   suggestion writes those rows into the explicit `activeLoadout.powerUps`
+   selection, so the auto-loadout selector can install power-ups through the
+   same tri-state field a manual `POWER-UP` toggle writes
+   (AH-0MWOV8SMI006W52Z).
+5. **Then the highest permanent level** — the remaining neutral owned weapons
+   fill by descending permanent level, catalogue order breaking ties.
+6. **Bounded by the shared six-slot cap** — every granted power-up row consumes
+   a slot, so the weapon budget is `POWER_UP_SLOT_CAP - grantedPowerUps` and
+   the suggestion never presents more counted kinds than a run can hold.
+
+The rule is a full replacement derived only from ownership, permanent levels
+and the target hex — never from the current loadout — so re-applying it is
+idempotent and cannot duplicate or oscillate entries.
 
 #### Salvage banking at the existing checkpoint moments
 
@@ -3188,7 +3378,7 @@ a glance and by framing rather than by colour (AH-0MWL4QCVD007WOAM):
   | Section | Holds |
   |---|---|
   | `WAR STATUS` | ring progress, frontier strength / beatable ceiling / in-reach count, hangar hull and banked minerals/cores |
-  | `LAST SORTIE` | the transient "what just happened" news — run result, banked win bonus, hangar-assault outcome — **only** when the landing carries one, never an empty box |
+  | `LAST SORTIE` | the transient "what just happened" news — hangar-assault outcome and banked hex income, plus the thin run result / banked win bonus only on a landing with **no** sortie result (those two are folded into the results dialog when one is carried) — **only** when the landing carries news, never an empty box |
   | `HANGAR WAR — HEX MAP` (the map) | the ring tiles, attack arrows and the hangar marker |
   | `SELECTED HEX` | the focused hex's full intel **and** its `ATTACK — FOCUSED HEX` row (the attack row is hidden, never moved, when the hex is in no attack) |
   | `CONTROLS` | the `READ THE MAP` legend, the keyboard hint line and the `◀ HANGAR` row |
@@ -3209,7 +3399,11 @@ a glance and by framing rather than by colour (AH-0MWL4QCVD007WOAM):
   any queued attack (AH-0MW3VG6WJ004HRI9). Every line of that overview carries
 an explicit capitalised title (`ID:`, `STATE:`, `AGGRESSION:`, `BOSS:`,
 `STRENGTHS:`, `WEAKNESSES:`, `GRANT:`, `DEFENDER:`, `SKILL:`,
-`PENDING ATTACK:`) so the player never decodes an abbreviation, while the
+`PENDING ATTACK:`) so the player never decodes an abbreviation. Each listed
+weapon also carries the **combat glyph** it will show when it connects
+(`▲ EFFECTIVE` on the `WEAKNESSES:` line, `▼ RESISTED` on the `STRENGTHS:`
+line — one vocabulary, shape first, never colour alone; AH-0MWL5376H001WJFZ),
+while the
 already-headed SPECIAL MISSION / REWARD / PERSONALITY / MECHANIC / LANDMARK /
 CONTRACT / BONUS sections keep their titles (AH-0MWJ0XHWW009GTKK). It is also
 the **post-deployment surface**: a finished sortie hands over its frontier-tick
@@ -3221,7 +3415,41 @@ section (there is no separate report screen). Activating an
 hex** — its `▶ DEPLOY` row names the hex and launches the deployment there, so
 every hex battle is reached through the target-aware config screen
 (`map → config → deployment`) and none begins without it (AH-0MWMT4S5U001EGDF,
-parent AH-0MWMRWCY2001HWGR). The config screen repeats the known-ahead intel
+parent AH-0MWMRWCY2001HWGR).
+
+**The post-battle results dialog** (parent **AH-0MWMFGXD6005WTMN**). A landing
+that carries a **sortie result** — the target hex id, `won`, the run's final
+`score`, the win path's own capture record (`HexCaptureResult`: banked salvage,
+granted weapon/upgrade, special-mission reward, contract bonus, cache payout)
+and, on a defeat, the `forfeited` unbanked salvage — presents one modal dialog
+over the **paused** map before anything else happens on it. Its title and rows
+come from the single pure builder `buildSortieResultView`
+(`src/core/hangarWar/sortieResult.ts`): the scene derives no reward, score,
+weakness or rule of its own, so a reward kind added to the capture cycle reaches
+the dialog without a second copy edit. The overlay itself is
+`HexCombatResultScene` (launch → pause → optional `onDismiss` → resume, the
+same single-overlay contract as `MineralChoiceScene`), with one confirm input
+(`Enter`, `Space` or a pointer press) dismissing it.
+
+- **On a victory** the dialog states the outcome and the run's final score and
+  itemises every reward that was **actually paid** — salvage banked
+  (minerals/cores), any granted weapon/upgrade, any special-mission reward, any
+  contract and/or cache bonus and the banked win bonus — and draws **no** line
+  for a reward that was not paid (never a zero row).
+- **On a defeat** it states the outcome and score, the target hex's authored
+  **strengths** and **weaknesses** and the grant the player did not claim (from
+  `HEX_RING_DEFINITIONS`), and the unbanked salvage that was **forfeited**.
+- Because the dialog carries the outcome, score and win bonus, the thin
+  `RUN: VICTORY|DEFEAT · score N` line and the `WIN BONUS BANKED` line are
+  **folded into it** on a deployment landing rather than drawn twice (parent
+  assumption A1). The `RING WON` / `HANGAR FALLS` assault banner is a distinct
+  surface and is unchanged.
+- **Ordering is deterministic:** results dialog → any carried mini-boss reward
+  → the demo dwell. In attract/demo mode the dialog auto-dismisses after the
+  shared dwell, so the traversal cannot stall on it; a boot without the overlay
+  registered keeps the map live and still starts the dwell.
+- The sortie result is **transient launch data**: never persisted, so a later
+  menu/hangar re-entry shows no dialog. The config screen repeats the known-ahead intel
 where the player commits: a `TARGET INTEL` block names the chosen hex's boss
 and its authored strengths/weaknesses, and every weapon row carries an
 `▲ EFFECTIVE` / `▼ RESISTED` matchup mark against that boss — display only, with
@@ -3250,11 +3478,12 @@ it never advances to the next level
 and never spawns the final boss, so taking a hex is a bounded sortie rather than
 the rest of the campaign. The mini-boss victory runs the capture cycle
 (below) and ends the run as a **victory**. On a win the player sees, in order,
-the mini-boss defeat → **`HexMapScene`**, which announces the **banked win
-bonus** (`WIN BONUS BANKED: +N MINERALS`, drawn in the `LAST SORTIE` section)
-and carries the between-sortie report on the map itself: the newly held hex,
-the tick's attack arrows and the `SELECTED HEX` section's attack row are all
-one surface, and there is no separate screen to click through.
+the mini-boss defeat → **`HexMapScene`** with the **post-battle results dialog**
+open over the paused map (§ *The post-battle results dialog* below), and — once
+it is dismissed with one confirm — the map itself carrying the between-sortie
+report: the newly held hex, the tick's attack arrows and the `SELECTED HEX`
+section's attack row are all one surface, and there is no separate screen to
+click through.
 
 **No reward overlay on the win path** (parent **AH-0MWEVNBMM000QFO2**; producer
 decisions **Q1 = (c)**, **Q2 = (a)**, **Q3 = (b)**, recorded 2026-11-13 on
@@ -3313,12 +3542,45 @@ slice deferred:
 - **Granted entries.** A hex's authored `grants` id is resolved into the hangar's
   owned sets by one alias/catalogue mapping (`waveLaser` → `wave_laser`,
   `extra-life` → `hardened_plating`, shipped weapon ids, `hull-…` ids, and any
-  other id as an upgrade). Ring 1 grants the Bulwark hull, the Wave Laser and
-  Ricochet starting weapons, the `rapid` strength entry, Extra Life and —
-  through its special mission — the grant-only `hull-4`; ring 2 grants further
+  other id as an upgrade). Ring 1 grants the Bulwark hull, the Wave Laser,
+  Ricochet and Rapid starting weapons, Extra Life and — through its special
+  mission — the grant-only `hull-4`; ring 2 grants further
   hulls (`hull-2`, `hull-3`), weapons
   (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
   `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.
+
+#### Owned hexes provide minerals (per-tick income)
+
+Holding territory pays **every between-sortie frontier tick**, so the ring is an
+asset and not just a boss list (AH-0MWL8CDGN005878A). After each tick's
+aggression redistribution and after the AI's attacks resolve, every hex the
+player still **holds** pays into the persistent hangar balance
+(`hangar.bankedMinerals`) alongside the run's banked salvage and the fixed win
+bonus:
+
+```
+hexIncome = Σ over ring.hexes where held: 10 × that hex's aggression
+```
+
+The rule is a single pure, tunable arithmetic function (`hexIncome` in
+`src/core/hangarWar/hexDefence.ts`, called at the end of `runFrontierTick`) —
+**no simulated economy, no wall clock and no new RNG draw**, so the seeded
+frontier stream is byte-identical for the same payload/seed/tick and a replay
+reproduces the payout exactly. Because it reads the **post-tick** ring, a hex
+lost to an attack this tick pays nothing (producer **Q2 = b**); a `0` payout
+(no hex held) carries no announcement, and a non-zero one is announced on the
+landing map as `HEX INCOME BANKED: +N MINERALS` beside `WIN BONUS BANKED`
+(producer **Q3 = a**). No new persisted field is required: income is derived
+from the already-stored `held` and `aggression`, so older saves tick as soon as
+they load.
+
+**`10 × aggression` is a balance knob** (producer **Q1**, 2026-11-17). At that
+rate a fully held ring 1 (aggression total `18`) pays `180`/tick — well above
+the `WIN_BONUS_MINERALS` bonus and the measured ~24-minerals-per-deployment
+anchor (see *Measured per-deployment income* below). The multiplier is the
+single constant `HEX_INCOME_MINERALS_PER_AGGRESSION`; retuning it is a one-line
+balance change with no migration, and any re-baselining against the measured
+income is its own follow-up.
 
 #### Buying permanent levels (buy-to-upgrade)
 
@@ -3485,8 +3747,11 @@ write:
    `consumeDeployedShip` rule. Every owned item the player **did not fly**
    survives, and the free starter kit (`hull-1` + `spread`) is always owned, so
    a battle can never soft-lock the fleet. The hangar then resets to the starter
-   kit — `activeHull` is the starter hull and `activeLoadout` is empty, so the
-   next deployment carries only the permanent cannon until the player refits.
+   kit — `activeHull` is the starter hull and `activeLoadout` is empty — so an
+   unfitted deployment carries only the permanent cannon until the player
+   refits; the next hangar open auto-fits a suggestion from the weapons the
+   fleet still owns (GDD § *The auto-fit loadout rule*), and the explicit
+   **⚡ APPLY SUGGESTED BUILDOUT** row refits a hand-picked loadout on demand.
    The banked balances are untouched by consumption; a win's fixed bonus is what
    makes a win pay for the next ship. The ring-end fresh-campaign reset still
    wins over consumption, and a refused capture (`unknown-hex` /
@@ -3599,8 +3864,10 @@ known-ahead intel **before** the player commits a life.
   one `ai_hell_hangar_war` payload.
 - **Loud validation (AC3).** `validateRingDefinitions` rejects unknown
   personality or landmark ids, malformed contracts (no objective, or a bonus
-  that pays nothing), a cache on the weapon hex, and a second set-piece of the
-  same kind on one ring — mirroring `HexRingDefinitionError`.
+  that pays nothing), a cache on the weapon hex, a second set-piece of the
+  same kind on one ring, and (AH-0MWL5376H001WJFZ) a `strengths`/
+  `weaknesses` entry that resolves to no catalogue weapon id or a weapon named
+  in both lists of one hex — mirroring `HexRingDefinitionError`.
 - **One payload, field presence.** `contractFulfilled` and `capturePasses` are
   optional fields parsed by presence, so a save written before the axes landed
   loads safely with no version bump and no second storage key.
@@ -3864,24 +4131,25 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **15.4 min** (13.9–17.3) | 6.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | grind | **23.7 min** (23.5–23.9) | 3.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
 | 1 (6 hexes) | rush | **10.2 min** (9.4–10.9) | 1.0 | ring not secured |
-| 2 (12 hexes) | grind | **57.0 min** (46.0–70.8) | 12.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | grind | **51.7 min** (50.8–52.5) | 6.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
 | 2 (12 hexes) | rush | **21.5 min** (19.8–24.9) | 1.0 | ring not secured |
 
 The per-hex budget **5–15 minutes per deployment** (AH-0MWHU5AV800969NA)
 derives each ring's window from its hex count — ring 1, six hexes → **30–90 min**;
 ring 2, twelve → **60–180 min** — and the budget assertion states a **10 %
 tolerance** of each window's width: **±6 min** for ring 1 (30–90) and **±12 min**
-for ring 2 (60–180). The measured figures are **not** re-worded. With the
-one-level sortie the competent bot loses every sortie to enemy fire before the
-wave-5 clear: ring 1 grind **15.4 min** against its derived 30–90 window reads
-**`missed`**, and ring 2 grind **57.0 min** against 60–180 reads
-**`within-tolerance`** (57.0 is inside the 48-minute tolerance floor) —
+for ring 2 (60–180). The measured figures are **not** re-worded. The per-level
+arena honours each wave's `shootEnabled` gate (the levels 1–3
+"enemies are the bullets" opening) and each ring's deployments ramp in
+aggression with the ring's captures (AH-0MWFDQ9EY004NO4X), so the weaker hexes
+are captured and the firing tail is lost. Ring 1 grind **23.7 min** against its
+derived 30–90 window reads **`missed`** (0.3 min under the 24-minute tolerance
+floor), and ring 2 grind **51.7 min** against 60–180 reads
+**`within-tolerance`** (51.7 is inside the 48-minute tolerance floor) —
 verdicts computed by the harness from the producer's per-hex budget, never a
-re-word of the old window. Both figures were re-measured after the
-AH-0MWJ1680Z001QYV2 audit follow-up (the calmer, pass-through flying bot with a
-tighter aim hold). Each
+re-word of the old window. Each
 ruling is recorded with
 its measured figure and re-ruled by its linked rebalancing item
 (**AH-0MWFDQ9EY004NO4X** ring 1, **AH-0MWFDQCFV007BZE5** ring 2). The headless
@@ -3913,11 +4181,11 @@ and ~0.11 (ring 2, 1.33 of 12). The after-figures below are **measured**.
 | Ring · line | Captures | Deposit per deployment (minerals / cores) | At the mini-boss checkpoint (per captured) | Mineral-eq per deployment |
 |---|---|---|---|---|
 | 1 grind (before) | 1.33 of 6 (22.2 %) | 4.0 / 0.22* | 18.0 / 1* | 26.2 |
-| 1 grind (after) | 8 of 18 (44.4 %) | **7.4 / 0.4** | **16.8 / 1.0** | **51.9** |
+| 1 grind (after) | 9 of 18 (50.0 %) | **5.3 / 0.5** | **10.7 / 1.0** | **55.3** |
 | 1 rush (before) | 0 of 1 | 0 / 0 | — | 0 |
 | 1 rush (after) | 0 of 3 | 0 / 0 | — | 0 |
 | 2 grind (before) | 1.33 of 12 (11.1 %) | 1.86 / 0.11* | 16.75 / 1* | 13.0 |
-| 2 grind (after) | 12 of 36 (33.3 %) | **2.7 / 0.3** | **8.0 / 1.0** | **36.0** |
+| 2 grind (after) | 18 of 36 (50.0 %) | **3.1 / 0.5** | **6.1 / 1.0** | **53.1** |
 | 2 rush (before) | 0.33 of 1 | 6.0 / 0.33* | 18.0 / 1* | 39.3 |
 | 2 rush (after) | 0 of 3 | 0 / 0 | — | 0 |
 
@@ -3926,34 +4194,32 @@ weights each core at `CORE_MINERAL_EQUIVALENT` = 100 minerals for comparison
 only — the unlock tree spends **both** currencies.
 
 The **verdict**: capture rate still beats the campaign slice (ring-1 grind
-22.2 % → 44.4 %; ring-2 grind 11.1 % → 33.3 %), so per-deployment **cores** rose.
-Per-deployment **minerals** fell (ring 1 9.0 → 7.4, ring 2 6.0 → 2.7) after the
-AH-0MWJ1680Z001QYV2 audit follow-up made collection **pass-through** — the bot
-flies through a pickup instead of retro-braking onto it and sweeps fewer of
-them up — and a captured sortie now banks 16.8 (ring 1) / 8.0 (ring 2)
-minerals at its mini-boss checkpoint. The unlock pace therefore still
-**shortens** for every rings-1–2 entry versus the campaign slice, but it is
-longer than the pre-follow-up measurement:
+22.2 % → 50.0 %; ring-2 grind 11.1 % → 50.0 %), so per-deployment **cores** rose.
+Per-deployment **minerals** fell (ring 1 9.0 → 5.3, ring 2 6.0 → 3.1): the
+AH-0MWJ1680Z001QYV2 audit follow-up made collection **pass-through** (the bot
+flies through a pickup instead of retro-braking onto it and sweeps fewer of them
+up) and the ring's capture-progress aggression ramp (AH-0MWFDQ9EY004NO4X) makes
+the firing tail of each ring harder, so the lost sorties bank less; a captured
+sortie now banks 10.7 (ring 1) / 6.1 (ring 2) minerals at its mini-boss
+checkpoint. The unlock pace therefore still **shortens** for every rings-1–2
+entry versus the campaign slice, but it is longer than the pre-follow-up
+measurement:
 
 | Entry (price) | Before (ring-1 grind) | After (ring-1 grind) | After (ring-2 grind) |
 |---|---|---|---|
-| Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **30** | 83 |
-| Juggernaut Hull `hull-3` (320 / 4) | — | **43** | 120 |
-| Wave Laser `wave_laser` (120 / 1) | 30 | **17** | 45 |
-| Ricochet `ricochet` (90 / 2) | 23 | **13** | 34 |
-| Cluster Missile `cluster` (160 / 1) | 40 | **22** | 60 |
-| Hardened Plating `hardened_plating` (80 / 1) | 20 | **11** | 30 |
-| Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **15**† | 42† |
+| Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **42** | 72 |
+| Juggernaut Hull `hull-3` (320 / 4) | — | **60** | 105 |
+| Wave Laser `wave_laser` (120 / 1) | 30 | **23** | 40 |
+| Ricochet `ricochet` (90 / 2) | 23 | **17** | 30 |
+| Cluster Missile `cluster` (160 / 1) | 40 | **30** | 53 |
+| Hardened Plating `hardened_plating` (80 / 1) | 20 | **15** | 27 |
+| Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **21** | 36 |
+| Bomb Rack `bomb` (130 / 1) | — | **25** | 43 |
+| Salvage Magnet `magnet` (200 / 2) | — | **38** | 66 |
 
 The ring-1 reward `hull-4` Vanguard Hull is **grant-only** (no purchase path),
 so it has no unlock-pace row: the special mission pays it and the hangar never
 sells it (AH-0MWJ51KUS005WQK6).
-
-† The entry post-dates the original measurement, so it is **derived** from the
-rows above rather than re-measured: `hardened_plating`'s 9 (ring-1) and 14
-(ring-2) deployments for 80 minerals give ≈8.9 and ≈5.7 minerals per deployment,
-so 110 minerals needs ≈13 and ≈20. The core bound (2 cores at 0.5/1.0 per
-deployment) is never the binding one.
 
 (deployments to afford each entry from that line's measured per-deployment
 income — a purchase needs both currencies at once, so the pace is the slower
@@ -3977,6 +4243,16 @@ because every test reads the constant. No price, banking or ring change is
 implied by the measurement — the unlock tree reads faster, not harder; any
 rebalance nevertheless stays its own linked item.
 
+**A second, larger mineral stream: held-hex income.** The per-deployment figures
+above measure what a *single sortie's* salvage banks. On top of that, every hex
+the player **holds** pays `10 × aggression` on each between-sortie frontier tick
+(AH-0MWL8CDGN005878A, §8.2 *Owned hexes provide minerals*), announced on the
+landing map as `HEX INCOME BANKED: +N MINERALS` beside the win bonus. That income
+is the third persistent-mineral source (after checkpoint salvage and the win
+bonus); the `10 × aggression` rate is a balance knob well above this measured
+anchor, so re-baselining it against these numbers is tracked as its own item
+rather than folded in here.
+
 **Fidelity and reproducibility.** The numbers are the competent bot's headless
 arena runs — the same evidence standard as the timing baseline (a human
 playtest remains desirable but is not a gate). A sortie the bot neither wipes
@@ -3992,7 +4268,7 @@ hand-edited.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **15.4 min** for ring 1 and **57.0 min** for ring 2, banking salvage
+  secured: **23.7 min** for ring 1 and **51.7 min** for ring 2, banking salvage
   and ending with a held ring.
 - **Rush** — the weapon hex first, then straight into the next ring: **10.2 min**
   and **21.5 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
@@ -4004,8 +4280,8 @@ and banks the salvage. Both lines are playable in the shipped capture cycle —
 the captured weapon hex is the ring's capstone, so holding it opens the next
 ring (`isRingOpenable`) while the skipped hexes are carried with their own
 aggression and defenders for the frontier tick. The re-measured grind totals
-are re-rated against the per-hex budget's derived windows: ring 1 **15.4 min**
-vs 30–90 reads **`missed`**, ring 2 **57.0 min** vs 60–180 reads
+are re-rated against the per-hex budget's derived windows: ring 1 **23.7 min**
+vs 30–90 reads **`missed`**, ring 2 **51.7 min** vs 60–180 reads
 **`within-tolerance`** (inside the 48-minute floor) — each is recorded with its
 new measurement and re-ruled
 by its own linked rebalancing item (**AH-0MWFDQ9EY004NO4X** ring 1,
@@ -4121,10 +4397,15 @@ text below is the original proposal, retained as rationale.
   [`src/data/experience-targets.json`](../src/data/experience-targets.json)
   bands — the mechanic is score-only and must move no other metric.
 
-#### Weapon evolutions — ranked 8, Medium priority
+#### Weapon evolutions — ranked 8, Medium priority — **shipped**
 
 **Work item:** Weapon evolutions: fuse two active weapon kinds into an evolved
-weapon (AH-0MWL7OWPF003E4TP).
+weapon (AH-0MWL7OWPF003E4TP). **Landed:** the pairing table, the one pure
+resolver (`src/utils/weaponEvolutions.ts`) and the field/owned tiers are now
+§4.4 *Power-Ups* (the pairing table and the shipped note), the evolved cadences
+stay on the shared 16th-note lattice of §4.4.2, and `GymWeapons` fires every
+pairing through the shared fire path (`docs/GYM_PARITY.md`). The text below is
+retained as the original proposal.
 
 - **Tier:** middle loop (a run).
 - **Gap:** the weapon catalogue never interacts with itself, and a run takes
@@ -4153,6 +4434,14 @@ weapon (AH-0MWL7OWPF003E4TP).
 
 **Work item:** Anomaly (elite) enemies and wave twists (AH-0MWL7P1AO003LKXT).
 
+**Landed:** the normative rules are now §4.1 *Elite (anomaly) variants* (the
+authored variant axis and its three bounded behaviours) and §4.6 (the third
+difficulty axis, level-1 exempt); the shipped budget is
+`ELITE_WAVE_CHANCE = 0.15` and the measured same-seed before/after evidence plus
+the enable decision are recorded in
+[`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
+The text below is retained as the original proposal.
+
 - **Tier:** inner loop (a wave).
 - **Gap:** the campaign's 100 waves are built from one fixed archetype roster
   with difficulty rising on two axes only — enemy count and a falling per-kill
@@ -4170,8 +4459,10 @@ weapon (AH-0MWL7OWPF003E4TP).
 - **Legibility:** the wave's opening cue names the elite and a tag tracks its hull
   while it lives, so prioritising it is a decision the player can make.
 - **Gating measurement:** the same-seed bot batch inside the experience-target
-  bands, and a re-measured `docs/BALANCING.md` level-scaling table recorded on the
-  item before the shipped default rises above zero.
+  bands — **cleared** (survival, minerals and avoidable hits all in band with
+  elites on), so the shipped default rose to the proposed 15 %; the two
+  `--elite-chance` commands, the per-metric verdict and the enable decision are
+  recorded in [`docs/BALANCING.md`](./BALANCING.md#elite-anomaly-wave-budget--measured-beforeafter-evidence-ah-0mwu667og00287sy).
 
 #### Beat-locked soundtrack and intensity mix — ranked 6, already planned
 
@@ -4202,6 +4493,13 @@ weapon (AH-0MWL7OWPF003E4TP).
 
 **Work item:** Make hex strengths and weaknesses matter in combat
 (AH-0MWL5376H001WJFZ).
+
+**Status (shipped, AH-0MWL898RM009X9B8):** the rule below is live — the authored
+lists are resolved once per hex and applied at the shared player-damage seam,
+with the glyph vocabulary, the deflect/critical feedback and the gym toggle.
+Ring timing re-measured with the rule in play: ring 1 grind 23.74 min (window
+30–90, still the in-flight rebalance's scope) and ring 2 grind 51.68 min
+(within tolerance); the numbers live in `docs/BALANCING.md`.
 
 - **Tier:** middle loop / outer loop (a deployment, a ring).
 - **Gap:** the authored `strengths` / `weaknesses` lines on the ring's hexes are

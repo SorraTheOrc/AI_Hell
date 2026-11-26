@@ -34,6 +34,8 @@ export interface ParsedEvaluateArgs {
   level: number | null;
   /** Level-scaling curves for per-level mode (true = curves at the level, false = level-1 baseline). */
   scaleLevels: boolean;
+  /** Elite (anomaly) budget override for full-campaign mode; null → shipped default. */
+  eliteWaveChance: number | null;
   /** Full-campaign batch mode (true = default); false is the `--skirmish` opt-out. */
   campaign: boolean;
 }

@@ -131,4 +131,83 @@ describe('Bot framework is documented (AH-0MUY08WKB002N1N6)', () => {
     expect(doc).toMatch(/disabled-path guarantee/i);
     expect(doc).toMatch(/bit-for-bit/);
   });
+
+  it('documents the aim solve, the adaptive aim-error knobs and the accuracy harness (AH-0MWR05J320041SAA · AC7)', () => {
+    // Section 9.8 must describe the shipped solve: the tracked-estimate
+    // precedence, the class-sampled intercept and the adaptive aim error.
+    expect(doc).toContain('### 9.8 Rotation skills (AH-0MV1DUSM2005HL98)');
+    for (const symbol of [
+      'interceptPoint',
+      'aimLeadFromTracker',
+      'advanceHazardMotion',
+      'aimErrorRad',
+      'aimErrorDecay',
+      'aimErrorResetDistance',
+      'aimErrorRad = 0',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    // The tracked → snapshot → current-position precedence is named.
+    expect(doc).toMatch(/bot-side tracker/i);
+    expect(doc).toMatch(/repositioning move/i);
+    // The accuracy harness is documented with its location, seeds and metrics.
+    for (const symbol of [
+      'src/ai/eval/aimAccuracy.test.ts',
+      'src/ai/eval/aimAccuracy.baseline.json',
+      'aimErrorRad = 0',
+      'mean miss distance',
+      'aimLeadFromTracker: false',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    // The recorded before/after pooled numbers are in the document.
+    expect(doc).toContain('0.5624');
+    expect(doc).toContain('0.5099');
+  });
+
+  it('documents the reverse reflex-vs-cadence split (AH-0MWPD1IH8005GHSK)', () => {
+    // Section 9.7 records that the reverse *request* is a per-tick reflex (like
+    // forward thrust) while the press duration and the committed bearing are
+    // the human-like elements. A cadence assertion therefore projects out both
+    // fast-reflex fields, not just `thrust`.
+    expect(doc).toContain('### 9.7 Reverse thrust');
+    expect(doc).toMatch(/Reflex vs\. cadence/);
+    expect(doc).toMatch(/reverse \*request\* is a fast/i);
+    expect(doc).toMatch(/same `else if \(typeof/i);
+    for (const symbol of ['`thrust`', '`reverse`', '`reactionTimeMs`', '`dirX`/`dirY`']) {
+      expect(doc).toContain(symbol);
+    }
+  });
+
+  it('documents the oscillation damping and its harnesses (AH-0MWT4BBYO0085CN8 · RAC5)', () => {
+    // The three damping controls and what `0`/off restores.
+    for (const symbol of [
+      'aimDampingEnabled',
+      'aimTurnHoldMs',
+      'engagementRangeHysteresis',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    // The producer's symptom and the two mechanisms are named.
+    expect(doc).toMatch(/oscillat/i);
+    expect(doc).toMatch(/left\/right/i);
+    expect(doc).toMatch(/forward\/reverse|forward and reverse|forward\/backward/i);
+    // Both harnesses, their fixtures and the folded metrics are documented.
+    for (const symbol of [
+      'src/ai/eval/oscillation.ts',
+      'src/ai/eval/oscillation.test.ts',
+      'src/ai/eval/oscillation.baseline.json',
+      'runAimOscillation',
+      'measureControlInputs',
+      'liveControlContext',
+      'aimOscillation.baseline.json',
+      'drive sign flips',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+    // The shipped preset carries the damping; the factory defaults stay off so
+    // pre-change harness baselines remain byte-identical.
+    expect(doc).toMatch(/shipped `Default` preset/i);
+    expect(doc).toMatch(/factory defaults\s+stay off/i);
+  });
 });

@@ -23,6 +23,16 @@ import {
   nextTick,
   shotTimeFor,
 } from './beat';
+import { euclidPattern } from './euclid';
+import {
+  EVOLVED_WEAPON_IDS,
+  resolveEvolvedWeaponPattern,
+} from './weaponEvolutions';
+import {
+  CADENCE_STEPS_PER_BAR,
+  isBarDownbeat,
+  nextBarDownbeat,
+} from '../test/weaponEvolutionHarness';
 
 describe('beatPeriodMs — BPM → beat period (AC1, AC4)', () => {
   test('default tempo is 80 BPM → 750 ms per beat', () => {
@@ -305,5 +315,67 @@ describe('createBeatClock — shared, configurable instance (AC2, AC3, AC4)', ()
       nextSubdivisionDelayMs(800, SIXTEENTH_NOTE_SUBDIVISIONS),
     );
     expect(clock.nextSixteenthDelayMs()).toBe(nextSixteenthDelayMs(800));
+  });
+});
+
+// ── Evolved cadence on the shared lattice (AH-0MWU7BAA0009X1MN) ─────
+
+describe('evolved cadence on the shared 16th-note lattice (AH-0MWU7BAA0009X1MN)', () => {
+  /** Evolution levels spanning every authored rung of every evolved weapon. */
+  const LEVELS = [0, 1, 3, 6, 10] as const;
+  /** Tempos including the default `beatBpm` and a faster/lower pair. */
+  const TEMPOS = [DEFAULT_BPM, 120, 160] as const;
+
+  test('every evolved rung resolves to whole 16th-note onsets at beatBpm', () => {
+    for (const evolvedId of EVOLVED_WEAPON_IDS) {
+      for (const bpm of TEMPOS) {
+        const sixteenthStepMs = beatSubdivisionMs(
+          SIXTEENTH_NOTE_SUBDIVISIONS,
+          bpm,
+        );
+        for (const level of LEVELS) {
+          const pattern = resolveEvolvedWeaponPattern(evolvedId, level, bpm);
+          // The cadence plays on the shared 16th-note step for this tempo…
+          expect(pattern.stepMs).toBeCloseTo(sixteenthStepMs, 9);
+          // …so every onset is a whole 16th-note tick of the lattice.
+          for (const step of euclidPattern(
+            pattern.k,
+            pattern.n,
+            pattern.rotation,
+          ).onsets) {
+            const onsetMs = step * pattern.stepMs;
+            expect(isOnGrid(onsetMs, sixteenthStepMs)).toBe(true);
+            expect(onsetMs / sixteenthStepMs).toBe(
+              Math.round(onsetMs / sixteenthStepMs),
+            );
+          }
+        }
+      }
+    }
+  });
+
+  test('every evolved rung tiles whole bars, so a morph can only land on a downbeat', () => {
+    for (const evolvedId of EVOLVED_WEAPON_IDS) {
+      for (const level of LEVELS) {
+        const pattern = resolveEvolvedWeaponPattern(evolvedId, level);
+        expect(pattern.n % CADENCE_STEPS_PER_BAR).toBe(0);
+      }
+    }
+  });
+
+  test('a mid-bar pattern morph waits for the next bar downbeat', () => {
+    const stepMs = beatSubdivisionMs(SIXTEENTH_NOTE_SUBDIVISIONS);
+    const barMs = CADENCE_STEPS_PER_BAR * stepMs;
+
+    for (const nowMs of [0, 1, 187, 1125, 2999]) {
+      const morphAtMs = nextBarDownbeat(nowMs, stepMs);
+      // The morph is at/after the request, on the bar grid, and inside the
+      // next bar — never mid-bar.
+      expect(morphAtMs).toBeGreaterThanOrEqual(nowMs);
+      expect(isBarDownbeat(morphAtMs, stepMs)).toBe(true);
+      expect(morphAtMs - nowMs).toBeLessThanOrEqual(barMs);
+    }
+    expect(nextBarDownbeat(1125, stepMs)).toBe(barMs);
+    expect(isBarDownbeat(1125, stepMs)).toBe(false);
   });
 });

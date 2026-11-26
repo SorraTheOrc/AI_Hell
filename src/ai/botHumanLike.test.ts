@@ -1184,6 +1184,281 @@ describe('BotInputGovernor — skill aim error (AH-0MV1DUSM2005HL98 AC3)', () =>
   });
 });
 
+// ── Adaptive aim error (AH-0MWR057Q8004PBOD · AC4) ───────────────────
+
+describe('BotInputGovernor — adaptive aim error (AH-0MWR057Q8004PBOD AC4)', () => {
+  const WORLD = { width: 960, height: 540 };
+
+  /** A precise aim intent at `bearing`, optionally engaging `targetId`. */
+  function aimIntent(bearing: number, targetId?: number) {
+    const intent = {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust: false,
+      aim: true,
+    };
+    return targetId === undefined ? intent : { ...intent, targetId };
+  }
+
+  /** The bearing of the governor's committed intent. */
+  function committedBearing(governor: BotInputGovernor): number {
+    const intent = governor.currentIntent();
+    return Math.atan2(intent.dirY ?? 0, intent.dirX ?? 0);
+  }
+
+  /** Shortest signed angular difference, normalised to (-π, π]. */
+  function angleDiff(a: number, b: number): number {
+    return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+  }
+
+  function contextAt(x: number, y: number) {
+    return {
+      scheme: 'asteroids' as const,
+      facing: 0,
+      position: { x, y },
+      world: WORLD,
+    };
+  }
+
+  it('ships documented defaults: aimErrorRad 0.02, aimErrorDecay 0.5, aimErrorResetDistance 60', () => {
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimErrorRad).toBeCloseTo(0.02, 12);
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimErrorDecay).toBe(0.5);
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimErrorResetDistance).toBe(60);
+  });
+
+  it('perturbs aim intents that carry a target id, and only those', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4 },
+      3,
+    );
+    let sawNonZero = false;
+    for (let i = 0; i < 12; i += 1) {
+      governor.update(aimIntent(0, 7), 1 / 60, contextAt(100, 100));
+      const error = committedBearing(governor);
+      expect(Math.abs(error)).toBeLessThanOrEqual(0.4 + 1e-9);
+      if (Math.abs(error) > 1e-9) sawNonZero = true;
+    }
+    expect(sawNonZero).toBe(true);
+
+    // An aim intent with no engaged-target identity keeps no adaptive error:
+    // there is nothing to compare a confirmed hit against.
+    const untargeted = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4 },
+      3,
+    );
+    for (let i = 0; i < 12; i += 1) {
+      untargeted.update(aimIntent(0), 1 / 60, contextAt(100, 100));
+      expect(committedBearing(untargeted)).toBeCloseTo(0, 12);
+    }
+
+    // A non-aim (evade/survival) intent is never perturbed even when it carries
+    // an id.
+    const evade = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4 },
+      3,
+    );
+    const evadeIntent = {
+      ...input('left'),
+      dirX: -1,
+      dirY: 0,
+      thrust: true,
+      aim: false,
+      targetId: 7,
+    };
+    for (let i = 0; i < 6; i += 1) {
+      evade.update(evadeIntent, 1 / 60, contextAt(100, 100));
+      expect(evade.currentIntent().dirX).toBe(-1);
+      expect(evade.currentIntent().dirY).toBe(0);
+    }
+  });
+
+  it('decays by aimErrorDecay on every confirmed hit on the engaged target, floored at 0', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4, aimErrorDecay: 0.5 },
+      11,
+    );
+    governor.update(aimIntent(0, 7), 1 / 60, contextAt(100, 100));
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.4, 12);
+
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.1, 12);
+
+    // Enough consecutive hits drive the error to (effectively) zero.
+    for (let i = 0; i < 40; i += 1) governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeLessThan(1e-6);
+
+    // A decay of 0 floors the error at exactly 0 on the first hit, after
+    // which no draw is consumed and the bearing is exact.
+    const floored = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4, aimErrorDecay: 0 },
+      11,
+    );
+    floored.update(aimIntent(0, 7), 1 / 60, contextAt(100, 100));
+    floored.noteAimHit(7);
+    expect(floored.currentAimErrorRad()).toBe(0);
+    floored.update(aimIntent(0, 7), 1 / 60, contextAt(100, 100));
+    expect(committedBearing(floored)).toBeCloseTo(0, 12);
+  });
+
+  it('ignores a hit on any enemy other than the engaged target', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4, aimErrorDecay: 0.5 },
+      5,
+    );
+    governor.update(aimIntent(0, 7), 1 / 60, contextAt(100, 100));
+    governor.noteAimHit(8);
+    governor.noteAimHit(0);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.4, 12);
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+  });
+
+  it('restores aimErrorRad after moving aimErrorResetDistance px, torus-aware', () => {
+    const governor = new BotInputGovernor(
+      {
+        reactionTimeMs: 0,
+        aimErrorRad: 0.4,
+        aimErrorDecay: 0.5,
+        aimErrorResetDistance: 60,
+      },
+      13,
+    );
+    // Origin at x = 10; a hit decays the error to 0.2.
+    governor.update(aimIntent(0, 7), 1 / 60, contextAt(10, 270));
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+
+    // Raw move of 945 px, but only 15 px on the torus: not a reposition.
+    governor.update(aimIntent(0, 7), 1 / 60, contextAt(955, 270));
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+
+    // A 60 px move across the seam (raw 900 px) is a reposition: restored.
+    governor.update(aimIntent(0, 7), 1 / 60, contextAt(910, 270));
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.4, 12);
+  });
+
+  it('restores aimErrorRad when the engagement target changes', () => {
+    const governor = new BotInputGovernor(
+      {
+        reactionTimeMs: 0,
+        aimErrorRad: 0.4,
+        aimErrorDecay: 0.5,
+        aimErrorResetDistance: 1000,
+      },
+      17,
+    );
+    governor.update(aimIntent(0, 7), 1 / 60, contextAt(100, 100));
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+
+    // The same target keeps the decayed error.
+    governor.update(aimIntent(0, 7), 1 / 60, contextAt(100, 100));
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+
+    // A new target is a fresh aiming problem: the full error comes back.
+    governor.update(aimIntent(0, 8), 1 / 60, contextAt(100, 100));
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.4, 12);
+
+    // A late hit for the old target no longer matches.
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.4, 12);
+  });
+
+  it('at aimErrorRad = 0 consumes no draw and leaves the full input stream byte-for-byte unchanged', () => {
+    const stream = (targetId: number | undefined): FourDirectionalInput[] => {
+      const governor = new BotInputGovernor(
+        { reactionTimeMs: 0, skill: 0, maxAimErrorRad: 0.3, aimErrorRad: 0 },
+        21,
+      );
+      const out: FourDirectionalInput[] = [];
+      for (let i = 0; i < 20; i += 1) {
+        const bearing = 0.2 + (i % 5) * 0.1;
+        const decided = governor.update(
+          aimIntent(bearing, targetId),
+          1 / 60,
+          contextAt(100 + i, 270),
+        );
+        out.push(decided as FourDirectionalInput);
+      }
+      return out;
+    };
+    // The engaged-target identity must not change a disabled adaptive error:
+    // the adaptive path is off, so the whole stream is identical.
+    expect(stream(7)).toEqual(stream(undefined));
+
+    // With both aim errors off the bearing is exactly the requested one.
+    const exact = new BotInputGovernor(
+      { reactionTimeMs: 0, skill: 1, maxAimErrorRad: 0.3, aimErrorRad: 0 },
+      21,
+    );
+    for (let i = 0; i < 6; i += 1) {
+      exact.update(aimIntent(0.4, 7), 1 / 60, contextAt(100, 100));
+      expect(committedBearing(exact)).toBeCloseTo(0.4, 12);
+    }
+  });
+
+  it('is independent of the skill error and composes additively', () => {
+    const base = 0.3;
+    const run = (config: {
+      skill: number;
+      maxAimErrorRad: number;
+      aimErrorRad: number;
+    }): number[] => {
+      const governor = new BotInputGovernor(
+        { reactionTimeMs: 0, ...config },
+        31,
+      );
+      const bearings: number[] = [];
+      for (let i = 0; i < 10; i += 1) {
+        governor.update(aimIntent(base, 7), 1 / 60, contextAt(100, 100));
+        bearings.push(committedBearing(governor));
+      }
+      return bearings;
+    };
+
+    const skillOnly = run({ skill: 0.5, maxAimErrorRad: 0.4, aimErrorRad: 0 });
+    const adaptiveOnly = run({ skill: 1, maxAimErrorRad: 0.4, aimErrorRad: 0.1 });
+    const both = run({ skill: 0.5, maxAimErrorRad: 0.4, aimErrorRad: 0.1 });
+
+    for (let i = 0; i < both.length; i += 1) {
+      // The combined bearing is the skill-only bearing rotated by exactly the
+      // adaptive-only offset: the two errors are drawn independently and
+      // compose additively on the bearing.
+      const adaptiveOffset = angleDiff(adaptiveOnly[i], base);
+      expect(angleDiff(both[i], skillOnly[i])).toBeCloseTo(adaptiveOffset, 12);
+      // Each contribution stays within its own bound; the sum within theirs.
+      expect(Math.abs(angleDiff(skillOnly[i], base))).toBeLessThanOrEqual(
+        0.4 * 0.5 + 1e-9,
+      );
+      expect(Math.abs(adaptiveOffset)).toBeLessThanOrEqual(0.1 + 1e-9);
+      expect(Math.abs(angleDiff(both[i], base))).toBeLessThanOrEqual(
+        0.4 * 0.5 + 0.1 + 1e-9,
+      );
+    }
+  });
+
+  it('is deterministic per run seed and differs across seeds', () => {
+    const run = (seed: number): Array<number | undefined> => {
+      const governor = new BotInputGovernor(
+        { reactionTimeMs: 0, aimErrorRad: 0.3, aimErrorDecay: 0.5 },
+        seed,
+      );
+      const timeline: number[] = [];
+      for (let i = 0; i < 12; i += 1) {
+        governor.update(aimIntent(0.1 * i, 7), 1 / 60, contextAt(100, 100));
+        if (i % 3 === 0) governor.noteAimHit(7);
+        timeline.push(governor.currentAimErrorRad(), committedBearing(governor));
+      }
+      return timeline;
+    };
+    expect(run(42)).toEqual(run(42));
+    expect(run(42)).not.toEqual(run(43));
+  });
+});
+
 // ── Smooth turning (AH-0MWJ1680Z001QYV2 audit rejection) ────────────
 
 describe('smooth turning — deadband, hysteresis and flip hold (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
@@ -1314,5 +1589,123 @@ describe('smooth turning — deadband, hysteresis and flip hold (AH-0MWJ1680Z001
     }
     expect(out.turnLeft).toBe(true);
     expect(out.turnRight).toBe(false);
+  });
+});
+
+// ── Aim damping (AH-0MWT4BBYO0085CN8 · RAC1) ────────────────────────
+
+describe('aim damping — reversal hold and stable aim bias (AH-0MWT4BBYO0085CN8 RAC1)', () => {
+  const CONTEXT = { scheme: 'asteroids' as const, facing: 0 };
+
+  /** A precise aim intent at `bearing`, engaged with target `7`. */
+  function aimAt(bearing: number) {
+    return {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust: false,
+      aim: true,
+      targetId: 7,
+    };
+  }
+
+  function turnOf(governor: BotInputGovernor, bearing: number): -1 | 0 | 1 {
+    const out = governor.update(aimAt(bearing), 1 / 60, CONTEXT) as AsteroidsInput;
+    return out.turnLeft ? -1 : out.turnRight ? 1 : 0;
+  }
+
+  it('ships the damping off in the compiled factory defaults', () => {
+    // Off in the factory defaults so every pre-existing harness that flies them
+    // stays byte-identical; the shipped `Default` preset turns it on (see
+    // src/data/bot-tuning.test.ts).
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimDampingEnabled).toBe(false);
+    expect(BOT_HUMAN_INPUT_TUNABLES.aimTurnHoldMs).toBeGreaterThan(0);
+  });
+
+  it('releases, rather than flips, an established aim turn inside aimTurnHoldMs', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimDampingEnabled: true, aimTurnHoldMs: 120 },
+      1,
+    );
+    // Establish a right turn.
+    expect(turnOf(governor, Math.PI / 2)).toBe(1);
+    // The very next tick asks for the opposite turn: released, not flipped.
+    expect(turnOf(governor, -Math.PI / 2)).toBe(0);
+    expect(turnOf(governor, -Math.PI / 2)).toBe(0);
+    // Once the hold has elapsed the live request is followed again.
+    let direction: -1 | 0 | 1 = 0;
+    for (let i = 0; i < 10; i += 1) {
+      direction = turnOf(governor, -Math.PI / 2);
+    }
+    expect(direction).toBe(-1);
+  });
+
+  it('flips immediately when the damping is off (pre-change behaviour)', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimDampingEnabled: false, aimTurnHoldMs: 120 },
+      1,
+    );
+    expect(turnOf(governor, Math.PI / 2)).toBe(1);
+    expect(turnOf(governor, -Math.PI / 2)).toBe(-1);
+  });
+
+  it('honours an immediate release inside the hold, so aim precision is kept', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimDampingEnabled: true, aimTurnHoldMs: 120 },
+      1,
+    );
+    expect(turnOf(governor, Math.PI / 2)).toBe(1);
+    // The ship is now aligned: the turn key must be released at once, not held
+    // for the rest of the window.
+    const aligned = governor.update(aimAt(0), 1 / 60, {
+      scheme: 'asteroids',
+      facing: Math.PI / 2,
+    }) as AsteroidsInput;
+    expect(aligned.turnLeft).toBe(false);
+    expect(aligned.turnRight).toBe(false);
+  });
+
+  it('holds the adaptive aim-error angle between commits and redraws it on a hit', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4, aimDampingEnabled: true },
+      3,
+    );
+    const bearing = (): number => {
+      const intent = governor.currentIntent();
+      return Math.atan2(intent.dirY ?? 0, intent.dirX ?? 0);
+    };
+    for (let i = 0; i < 5; i += 1) {
+      governor.update(aimAt(0), 1 / 60, CONTEXT);
+    }
+    const held = bearing();
+    // Same magnitude, same angle: the error is a bias, not per-reaction jitter.
+    for (let i = 0; i < 5; i += 1) {
+      governor.update(aimAt(0), 1 / 60, CONTEXT);
+      expect(bearing()).toBeCloseTo(held, 12);
+    }
+    expect(Math.abs(held)).toBeGreaterThan(0);
+
+    // A confirmed hit halves the magnitude and draws a fresh angle.
+    governor.noteAimHit(7);
+    expect(governor.currentAimErrorRad()).toBeCloseTo(0.2, 12);
+    governor.update(aimAt(0), 1 / 60, CONTEXT);
+    expect(Math.abs(bearing())).toBeLessThanOrEqual(0.2 + 1e-9);
+    const afterHit = bearing();
+    governor.update(aimAt(0), 1 / 60, CONTEXT);
+    expect(bearing()).toBeCloseTo(afterHit, 12);
+  });
+
+  it('redraws the adaptive error every reaction when the damping is off', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, aimErrorRad: 0.4, aimDampingEnabled: false },
+      3,
+    );
+    const bearings: number[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      governor.update(aimAt(0), 1 / 60, CONTEXT);
+      const intent = governor.currentIntent();
+      bearings.push(Math.atan2(intent.dirY ?? 0, intent.dirX ?? 0));
+    }
+    expect(new Set(bearings.map((b) => b.toFixed(9))).size).toBeGreaterThan(1);
   });
 });

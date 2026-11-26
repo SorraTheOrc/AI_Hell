@@ -167,6 +167,9 @@ class BareCoreScene extends CombatCoreScene {
   runPlayerFireSuppressed(): boolean {
     return this.playerFireSuppressed();
   }
+  runBotFireAllowed(): boolean {
+    return this.botFireAllowed();
+  }
   runUpdateDroneSpawning(dt: number): void {
     this._updateDroneSpawning(dt);
   }
@@ -936,7 +939,7 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getPlayerBullets()).toEqual([]);
   });
 
-  it('AC1 — _tickPlayer applies the live P5 multipliers and advances physics from dt', async () => {
+  it('AC1 — _tickPlayer applies the live P5 fire-rate (movement untouched) and advances physics from dt', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });
     const baseMaxSpeed = player.getMovementConfig().maxSpeed;
@@ -946,12 +949,10 @@ describe('CombatCoreScene — shared base class', () => {
     scene.runTickPlayer(0.5);
     scene.pressRight(false);
 
-    // Speed Boost is 1.5× speed and fire rate, applied live by the shared step.
+    // Speed Boost is a weapons-only 1.5× fire-rate boost applied live by the
+    // shared step; ship movement never scales (AH-0MWLU8A7P001O391 AC1/AC2).
     expect(player.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
-    expect(player.getMovementConfig().maxSpeed).toBeCloseTo(
-      baseMaxSpeed * 1.5,
-      5,
-    );
+    expect(player.getMovementConfig().maxSpeed).toBeCloseTo(baseMaxSpeed, 5);
     // Physics advanced from the supplied dt and auto-fire produced a volley.
     expect(player.x).toBeGreaterThan(beforeX);
     expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
@@ -1026,6 +1027,42 @@ describe('CombatCoreScene — shared base class', () => {
     // The clock is shared with the player from the first suppressed frame, so
     // the beat-modulated thruster hum / explosion grid stay on the run's grid.
     expect(player.getBeatClock()).toBe(scene.getBeatClock());
+  });
+
+  // ── Bot fire discipline (AH-0MWPOET5A002IPTP) ───────────────────
+
+  /** Runs the shared player step on a scene whose bot has no firing line. */
+  class BotHoldingFireScene extends StubCoreScene {
+    protected override botFireAllowed(): boolean {
+      return false;
+    }
+  }
+
+  it('the shared bot fire-gate hook defaults to true (non-bot scenes fire)', async () => {
+    const scene = await boot<BareCoreScene>(BareCoreScene);
+    expect(scene.runBotFireAllowed()).toBe(true);
+  });
+
+  it('_tickPlayer spawns no bullets and no fire cues while the bot holds fire', async () => {
+    const scene = await boot<BotHoldingFireScene>(BotHoldingFireScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    // Control: the same stub with the default gate fires on the same step.
+    const control = await boot<StubCoreScene>(StubCoreScene);
+    control.addPlayer({ x: 100, y: 100 });
+    control.runTickPlayer(1);
+    expect(control.getPlayerBullets().length).toBeGreaterThan(0);
+    expect(control.hooks).toContain('onWeaponFired:cannon');
+
+    scene.runTickPlayer(1);
+    expect(scene.getPlayerBullets()).toEqual([]);
+    expect(scene.hooks).not.toContain('onWeaponFired:cannon');
+  });
+
+  it('the shared beat clock keeps advancing while the bot holds fire', async () => {
+    const scene = await boot<BotHoldingFireScene>(BotHoldingFireScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.runTickPlayer(0.5);
+    expect(scene.getBeatClock().now()).toBeCloseTo(500, 5);
   });
 
   // ── AC4 — drop collection ─────────────────────────────────────────

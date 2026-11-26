@@ -24,7 +24,23 @@ describe('ring-timing CLI arguments', () => {
     expect(options.seeds).toEqual(DEFAULT_SEEDS);
     expect(options.json).toBe(false);
     expect(options.out).toBeNull();
+    expect(options.aggressionRamp).toBeNull();
     expect(options.help).toBe(false);
+  });
+
+  it('accepts an explicit aggression ramp for the evidence sweep', () => {
+    // The productivity/ramp sweep knob (AH-0MWFDQ9EY004NO4X): a ring's
+    // capture-progress aggression ramp can be overridden for a measured
+    // before/after, and an unusable step is rejected rather than silently
+    // substituted.
+    expect(parseRingTimingArgs(['--aggression-ramp', '0']).aggressionRamp).toBe(0);
+    expect(parseRingTimingArgs(['--aggression-ramp', '2.5']).aggressionRamp).toBe(2.5);
+    expect(() => parseRingTimingArgs(['--aggression-ramp', '-1'])).toThrow(
+      /--aggression-ramp/,
+    );
+    expect(() => parseRingTimingArgs(['--aggression-ramp', 'nope'])).toThrow(
+      /--aggression-ramp/,
+    );
   });
 
   it('accepts repeated rings, seeds and a single line', () => {

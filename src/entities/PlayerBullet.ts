@@ -115,6 +115,19 @@ export class PlayerBullet extends Phaser.GameObjects.Image {
   impactFx?: ImpactFxSpec;
 
   /**
+   * The catalogue id of the weapon that fired this shot, set by the shared
+   * spawn path alongside {@link impactFx}. It carries the shot's identity into
+   * the hit seam so the hex matchup rule (`core/hangarWar/hexMatchup`) can
+   * resolve the weapon's verdict against the fought hex — `undefined` for a
+   * shot with no weapon identity (which the hit seam reads as neutral).
+   *
+   * Set on every spawn path (the ordinary bullet, the split warhead and the
+   * damage-budget beam — all ordinary `PlayerBullet`s); never read by flight
+   * logic.
+   */
+  weaponId?: string;
+
+  /**
    * Bullet lifetime in seconds. The bullet wraps across all four screen
    * edges while alive and is destroyed once this elapses.
    */

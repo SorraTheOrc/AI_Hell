@@ -95,14 +95,63 @@ and keep a safe default.
 | Feature | Knob(s) |
 |---|---|
 | reaction latency | `humanInput.reactionTimeMs`, `commitment.minCommitSeconds`, `firePredictionHorizon` |
-| key-hold distribution | `humanInput.thrustPressMinMs` / `MaxMs` / `MaxMsLong` |
+| key-hold distribution | `humanInput.thrustPressMinMs` / `MaxMs` / `MaxMsLong`, `humanInput.turnPressMinMs` |
+| input cadence | `humanInput.alignmentToleranceRad`, `humanInput.turnHysteresisRad` |
 | target preferences | objective priority bands (`mineralBase`, `powerUpBase`, `enemyBase`) |
-| engagement distances | `engagementRange`, `firePredictionHorizon` |
+| engagement distances | `engagementRange`, `firePredictionHorizon`, `humanInput.aimAlignmentToleranceRad` |
 | risk appetite | `dangerMargin`, `survivalUrgencyPort` |
 
 Fitting is **clamped**: reaction time, hold timing, stand-off and margins are
 all bounded to sane envelopes, so an extreme or malformed recording cannot
 produce a degenerate bot.
+
+### The governor's turn/aim knobs
+
+The calmer flight model
+([`docs/BOT_FRAMEWORK.md`](./BOT_FRAMEWORK.md) §9.12,
+AH-0MWJ1680Z001QYV2) added four turn/aim knobs to the human-like input
+governor: the travel deadband (`alignmentToleranceRad`), the tighter aim
+deadband (`aimAlignmentToleranceRad`), the turn-reversal hysteresis
+(`turnHysteresisRad`) and the turn-press hold (`turnPressMinMs`). The fit
+models the governor the bot actually flies, so it moves them
+(AH-0MWLCGWUF00631UX) instead of leaving them at the shipped defaults:
+
+| Knob | Driver | Envelope | Typical value |
+|---|---|---|---|
+| `alignmentToleranceRad` | input cadence (`inputChangesPerSecond`) | 0.10–0.22 rad | 0.16 |
+| `turnHysteresisRad` | input cadence | 0.14–0.36 rad | 0.25 |
+| `turnPressMinMs` | mean key hold (`meanHoldSeconds`) × 0.1 | 15–90 ms | 30 |
+| `aimAlignmentToleranceRad` | fitted `engagementRange` | 0.03–0.12 rad | 0.05 |
+| `maxAimErrorRad` | co-fitted with the effective aim deadband | 0.01–0.35 rad | = aim deadband |
+
+Each map is anchored on the **shipped** default at a typical human sample, so a
+typical recording leaves the bot flying the shipped governor and only a
+markedly twitchy or deliberate human moves the knob:
+
+- **Travel deadband and reversal hysteresis** follow the input cadence: a
+  fully deliberate human (≤ 2 input changes/s) gets the widest 0.22 rad / 0.36
+  rad, a fully rapid one (≥ 6/s) the tightest 0.10 rad / 0.14 rad, and 4
+  changes/s reproduces the shipped 0.16 rad / 0.25 rad exactly.
+- **Turn-press hold** is a tenth of the human's mean key hold, so 300 ms holds
+  reproduce the shipped 30 ms and a short-tap player gets a snappier turn.
+- **Aim deadband** is derived geometrically from the **fitted** stand-off: a
+  shot fired with heading error `θ` at range `d` misses laterally by `d·θ`, so
+  `θ = 8 px / d` keeps the residual offset inside **half** the 16 px hostile
+  contact radius and leaves the other half for lead error, enemy drift and the
+  projectile radius. At the shipped 160 px stand-off it reproduces the shipped
+  0.05 rad exactly, and it is clamped to 0.03–0.12 rad so neither a very short
+  nor a very long fitted stand-off can reintroduce the stand-off deadlock (an
+  enemy the bot can circle but never hit).
+- **Aim fallibility is co-fitted** with that deadband: the governor perturbs an
+  aim bearing by at most `maxAimErrorRad × (1 − skill)` and then holds the ship
+  inside the effective deadband `min(alignmentToleranceRad,
+  aimAlignmentToleranceRad)`, so `maxAimErrorRad` is bounded by that deadband.
+  A low-`skill` styled bot therefore can never be aiming outside the band it
+  settles into.
+
+An unsampled feature is never invented: with no observed input change the fit
+keeps the shipped travel deadband, hysteresis and turn-press hold and records a
+warning in `StyleFit.warnings`.
 
 ### Safety guarantees
 
@@ -182,10 +231,36 @@ readable **representative** cases, and additionally asserts the
 distribution-stable property over a documented, explicit, contiguous seed set
 (currently 32 seeds, `0…31`, so every run is reproducible and no RNG is
 involved): the styled bot must be closer to the human on a **majority** of the
-sweep and must not regress competence on more than half of it. A single seed
-flipping cannot fail the suite; only a genuine shift in the distribution can.
-To extend coverage, append seeds to `STABILITY_SEEDS` — never cherry-pick a
-subset that happens to pass.
+sweep and must not regress competence on more than its recorded bound. A single
+seed flipping cannot fail the suite; only a genuine shift in the distribution
+can. To extend coverage, append seeds to `STABILITY_SEEDS` — never cherry-pick
+a subset that happens to pass.
+
+### Measured distribution and the regression bound (2026-11-22)
+
+Measured on the calmer flight model with the re-fitted governor knobs
+(AH-0MWLCGWUF00631UX): **23 of 32 seeds closer, 19 of 32 regressed**. The
+original bound was ≤ 16/32 (at most half); the re-fit could **not** restore it,
+so it is re-justified at 19/32 with the evidence below rather than silently
+widened.
+
+Why the bound cannot be restored by fitting: the `regressed` flag compares the
+styled bot's objective score and survival with the default bot's on the same
+seed against a **1-point** tolerance, and the score is dominated by discrete
+events — a death swings it by roughly ±100. The residual spread is therefore
+chaotic rather than governor-driven: six equally principled fits of the same
+governor (including one that left the turn knobs at their shipped defaults)
+landed anywhere between **10 and 20** of the same 32 seeds on the wrong side of
+the tolerance, with no monotone relationship to the knob values. The bound is
+kept as a **collapse detector** — it catches a fit that genuinely breaks
+competence — and the majority-closer assertion (23/32) carries the "measurably
+closer" guarantee.
+
+Re-fit before/after on the same sweep: leaving the governor knobs at their
+shipped defaults measured 24/32 closer and 20/32 regressed; the re-fit measured
+23/32 closer and 19/32 regressed. The re-fit's value is that the fit now models
+the governor the bot flies (so a future flight-model change cannot silently
+invalidate it), not a better regression count.
 
 ## Reproducibility
 

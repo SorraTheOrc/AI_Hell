@@ -26,6 +26,8 @@ import type {
   FormationOffset,
   FormationReanchorRequest,
 } from '../utils/formations';
+import { eliteBonusHealth } from '../scenes/core/eliteMechanics';
+import type { EliteBehaviour } from '../core/eliteVocabulary';
 import type { Mineral } from './Mineral';
 import type { EnemyConfig } from '../core/enemyConfig';
 import { SWARM_CLUSTER_COUNT } from './Swarm';
@@ -73,6 +75,19 @@ export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroi
   };
 
 /**
+ * The elite elevation a spawn carries (AH-0MWU665XK000ZT4S). Present only for
+ * the wave's elite, so ordinary spawns of an elite-capable archetype stay
+ * neutral. The spawn seam resolves it from the plan's `elite` flag plus the
+ * authored archetype config.
+ */
+export interface EliteSpawnModifiers {
+  /** The elite's one bounded behaviour. */
+  readonly behaviour: EliteBehaviour;
+  /** Authored bonus hit points on top of the archetype's `health` (1–3). */
+  readonly bonusHp?: number;
+}
+
+/**
  * Build one entity of the right type from the config key / formationKind.
  *
  * @param rng — optional seeded random source threaded into every archetype
@@ -83,10 +98,14 @@ export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroi
  *   determinism).
  * @param forceFieldHits — optional resolved enemy force-field hits
  *   (epic AH-0MVJ8W4GE007OMNT AC2; AH-0MVM8GUZG008AWSU). The spawn path
- *   resolves the count once — game: `enemyForceFieldHits(waveManager.level,
- *   cfg)`; gym editor: a direct slider value — and threads it here; the
- *   factory never evaluates the level curve itself (`undefined`/`0` =
- *   unshielded, byte-for-byte today's behaviour).
+ *   resolves the count once — game: `eliteForceFieldHits(behaviour,
+ *   waveManager.level, cfg)`; gym editor: a direct slider value — and threads
+ *   it here; the factory never evaluates the level curve itself
+ *   (`undefined`/`0` = unshielded, byte-for-byte today's behaviour).
+ * @param elite — optional elite elevation (AH-0MWU665XK000ZT4S). When present
+ *   the entity's hit pool gains the authored bonus and the entity carries the
+ *   behaviour the shared kill finalisation dispatches. Absent = an ordinary
+ *   spawn, byte-for-byte today's behaviour.
  */
 export function createEnemyFromConfig(
   scene: Phaser.Scene,
@@ -96,6 +115,32 @@ export function createEnemyFromConfig(
   offset: FormationOffset,
   rng?: () => number,
   forceFieldHits?: number,
+  elite?: EliteSpawnModifiers,
+): EnemyEntity {
+  const entity = buildEnemyEntity(
+    scene,
+    config,
+    x,
+    y,
+    offset,
+    rng,
+    forceFieldHits,
+    elite,
+  );
+  if (elite) entity.setEliteBehaviour(elite.behaviour);
+  return entity;
+}
+
+/** Constructs the archetype entity (the factory's one switch). */
+function buildEnemyEntity(
+  scene: Phaser.Scene,
+  config: EnemyConfig,
+  x: number,
+  y: number,
+  offset: FormationOffset,
+  rng?: () => number,
+  forceFieldHits?: number,
+  elite?: EliteSpawnModifiers,
 ): EnemyEntity {
   const opts = {
     size: config.size,
@@ -107,7 +152,7 @@ export function createEnemyFromConfig(
     fireInterval: config.fireInterval,
     burstCount: config.burstCount,
     shotProbability: config.shotProbability,
-    health: config.health,
+    health: elite ? eliteBonusHealth(config.health, elite.bonusHp) : config.health,
     rng,
     forceFieldHits,
     // Seam-awareness (AH-0MV9G3DZ9003P7P8): thread the single data-driven

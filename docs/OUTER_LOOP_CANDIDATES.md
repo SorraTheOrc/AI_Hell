@@ -481,7 +481,14 @@ backend):
   "unlockedStartingWeapons": ["spread", "waveLaser"],
   "ownedModifiers": ["extra-life", "fast-recharge"],
   "activeHull": "hull-2",
-  "activeLoadout": { "startingWeapons": ["spread"], "modifiers": ["extra-life"] },
+  // `powerUps` is optional and tri-state (AH-0MWOV8SMI006W52Z): absent means
+  // "install every owned level-bearing power-up" (the pre-feature behaviour),
+  // `[]` installs none, a list installs exactly those owned level-bearing ids.
+  "activeLoadout": {
+    "startingWeapons": ["spread"],
+    "modifiers": ["extra-life"],
+    "powerUps": ["bomb", "magnet"]
+  },
   "threatTierCleared": 2,          // progress toward the final assault
   "bestScore": 18200
 }
@@ -546,7 +553,9 @@ upgrade.
 
 ### Minimal first slice
 
-**One** extra hull, **three** unlockable starting weapons, **one** bankable
+**One** extra hull, the **shipped weapon roster derived into the unlock tree**
+(one entry per `src/data/weapons.csv` row bar the documented `cannon`
+exclusion — a small purchasable set plus grant-only entries), **one** bankable
 currency (minerals banked at checkpoint moments) and **one** threat tier for a
 final assault. If "lose the run, keep the salvage, buy a better ship" already
 feels like progress, the tree can grow; if it does not, more unlocks will not
@@ -556,10 +565,14 @@ fix it.
 
 - **Rule 1 — reduced starting kit.** The hangar starts with **one basic hull and
   one starting weapon** and no modifiers; every other hull, weapon and modifier
-  is earned. The starting weapon is **owned**, not equipped: the default
-  deployment loadout is empty, so a run starts with only the ship's permanent
-  cannon and equipping the starter is the player's choice (producer decision,
-  AH-0MVZJ6V1J001DA9D). The shipped 10-level campaign therefore opens with a
+  is earned. The starting weapon is **owned**, not equipped: the stored
+  deployment loadout is empty, so an unfitted deployment carries only the
+  ship's permanent cannon and equipping the starter is the player's choice
+  (producer decision, AH-0MVZJ6V1J001DA9D) — the shipped hangar now auto-fits a
+  boss-aware suggestion when it opens on exactly that empty list and offers the
+  explicit **⚡ APPLY SUGGESTED BUILDOUT** row for every other case
+  (AH-0MWOWEPO2004B0MR; GDD § *The auto-fit loadout rule*). The shipped 10-level
+  campaign therefore opens with a
   deliberately thin loadout, and the run's own mineral/power-up economy does the
   rest.
 - **Rule 2 — the boss wields it first.** A new weapon or upgrade is **not** in
@@ -936,6 +949,30 @@ hangar survives — that is what winning this hell looks like.
 > kinds are sold; the hex boss still grants hulls/weapons/modifiers only (the
 > hex-grant and run-carry-over routes were deliberately not taken).
 
+### Held-hex income — the per-tick economy rule
+
+The between-run economy stays **algorithmic over stored numbers**, exactly as
+Candidate A's *Stationed-ship mineral accrual* requires ("a per-tick arithmetic
+rule over the region's holdings"): every between-sortie frontier tick pays the
+player for the hexes they still **hold**:
+
+```
+hexIncome = Σ over ring.hexes where held: 10 × that hex's aggression
+```
+
+(AH-0MWL8CDGN005878A.) The payout is read from the ring **after** the tick's
+redistribution and attacks, so a hex lost that tick pays nothing, and it banks
+into the same `hangar.bankedMinerals` balance as checkpoint salvage and the fixed
+win bonus — the third persistent-mineral source. It is a single pure function
+(`hexIncome`, called at the end of `runFrontierTick`) with **no simulated
+economy, no wall clock and no new RNG draw**, so a replay reproduces it exactly
+and no new persisted field is needed (it derives from the already-stored `held`
+and `aggression`). The landing map announces a non-zero payout as
+`HEX INCOME BANKED: +N MINERALS` beside the win bonus. **`10 × aggression` is a
+balance knob**: at `10` a fully held ring 1 (`Σ aggression = 18`) pays `180`/tick,
+well above the win bonus and the measured ~24-minerals-per-deployment anchor, so
+retuning it (a one-line change) is a separate balance follow-up.
+
 ### Reuse of existing systems
 
 - **Checkpoint store (`src/core/checkpointStore.ts`)** — one payload holds the
@@ -1018,14 +1055,17 @@ replace storage behind the same injectable interface (§6.6).
   a few lost attempts — and **ring 2 (12 hexes) lands at 60–180 minutes**.
   Measured with the ring-timing harness on the shipped one-level **five-wave
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
-  grants entering ring 2; AH-0MW9QA2YC009PSF5) the ring-2 grind is **57.0
-  minutes** — 4.1 of measured deployments, 24 between sorties and 4.1 of
-  modelled retries (it moved 46.8 → 48.7 → 39.4 → 57.0 as the bot's control was
-  tuned; the last move is the AH-0MWJ1680Z001QYV2 audit follow-up) — so ring 2
-  plays retry-dominated and reads **within-tolerance** of its derived 60–180
-  window (±12 min, floor 48) with its rebalancing ruling live on
-  AH-0MWFDQCFV007BZE5; ring 1's **15.4 min** still **misses** the derived 30–90
-  window (AH-0MWFDQ9EY004NO4X).
+  grants entering ring 2; AH-0MW9QA2YC009PSF5), each ring's deployments ramp in
+  aggression as the ring's hexes are captured and the no-fire levels 1–3 play
+  as authored. The ring-2 grind is **51.7 minutes** — 22.2 of measured
+  deployments, 24 between sorties, 5.5 of modelled retries (the six lost
+  attempts replaying their own measured length) and 0.0 of re-capture
+  (22.2 + 24 + 5.5 + 0.0 = 51.7) — so ring 2 reads **within-tolerance** of its
+  derived 60–180 window (±12 min, floor 48) with its rebalancing ruling live on
+  AH-0MWFDQCFV007BZE5; ring 1 measures **23.7 minutes** (10.4 of measured
+  deployments + 12 between sorties + 1.3 of modelled retries + 0.0 of
+  re-capture) and still **misses** the derived 30–90 window, 0.3 minutes under
+  its 24-minute tolerance floor (AH-0MWFDQ9EY004NO4X).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.
@@ -1038,7 +1078,12 @@ The loop must reward different ways of playing rather than one correct route:
   hex grants are **known ahead** of a deployment (see *Known-ahead intel and
   anti-checklist mitigations*), so the player can plan "take that hex → I get the
   weapon that counters the boss threatening my home hex" instead of learning the
-  map by losing to it.
+  map by losing to it. The intel is **mechanically load-bearing**
+  (AH-0MWL5376H001WJFZ): a weakness weapon lands **2 hit points per connected
+  shot**, a strength weapon **1 per two shots** (resisted, never immune), neutral
+  1 — resolved once per hex and applied at the shared player-damage seam, with
+  the hex panel, the loadout selector and the in-run feedback sharing one glyph
+  vocabulary (`▲ EFFECTIVE` / `▼ RESISTED`).
 - **The grinder.** Five of the six hexes grant strength — salvage, hull
   upgrades, better bots — so grinding the weaker hexes first makes the ring's
   hard hex safer. A player can spend as long as they like growing the fleet
@@ -1077,6 +1122,21 @@ trade has to stay live; see *Effort and risk*).
   and a **left-hand attack panel** with that attack's numbers — which hexes
   were attacked, which held, which fell, and what it would take to retake them
   — from the frontier-tick record the finished deployment hands over.
+- A **post-battle results dialog** over the paused map on every deployment
+  landing (parent AH-0MWMFGXD6005WTMN): it names the outcome
+  (`VICTORY`/`DEFEAT`) and the run's final score and, on a victory, itemises
+  every reward that was **actually paid** — salvage banked, any granted
+  weapon/upgrade, any special-mission reward, any contract and/or cache bonus
+  and the banked win bonus, each only when paid; on a defeat it summarises the
+  target hex boss's authored **strengths and weaknesses**, the grant the player
+  did not claim and the unbanked salvage that was **forfeited**. The single
+  source of the dialog text is the pure builder `buildSortieResultView`
+  (`src/core/hangarWar/sortieResult.ts`) and the overlay that draws it is
+  `HexCombatResultScene` (launch → pause → `onDismiss` → resume, the shipped
+  `MineralChoiceScene` contract): no scene derives a reward or a weakness. One
+  confirm dismisses it, the attract traversal auto-dismisses it after the
+  shared dwell, and the thin run result / banked win-bonus lines are folded
+  into it on a deployment landing (parent assumption A1).
 - In-run play reuses `PlayScene` and every existing in-run screen unchanged.
 
 ### Gym testability and the bot
@@ -1092,7 +1152,9 @@ trade has to stay live; see *Effort and risk*).
   auto-picks the **weakest** adjacent hex and, after a sortie, lands back on the
   map where the rolled-in report (arrows plus the left-hand attack panel) is
   read in place; in the hangar it auto-buys the cheapest useful unlock (seeded).
-  There is no report step to auto-advance because there is no report screen.
+  There is no report step to auto-advance because there is no report screen,
+  and the post-battle **results dialog** auto-confirms after the shared dwell,
+  so the traversal cannot stall on it either.
   Because defence is **resolved algorithmically**, there is no live defence
   battle for the demo to stall in — the defending bot never needs to be flown.
 
@@ -1302,8 +1364,8 @@ shipped build:
 ### Minimal first slice
 
 **Candidate B's MVP plus one ring of hexes**: the hangar from B (one extra hull,
-three unlockable starting weapons, one banked currency, one threat tier) plus a
-**single ring of six hexes** around the hangar, with the algorithmic defence
+the shipped weapon roster derived into the unlock tree, one banked currency,
+one threat tier) plus a **single ring of six hexes** around the hangar, with the algorithmic defence
 resolver, one frontier tick that can retake a hex, known-ahead boss/weapon intel
 for the ring, and **one boss-granted weapon on the ring's hardest hex**. The
 slice is budgeted at **5–15 minutes per hex deployment** (six hexes →

@@ -27,7 +27,10 @@
  */
 
 import type { CommitmentTunables } from '../commitment';
+import type { BotRotationConfig } from '../../botSnapshot';
 import type { BotWorldTunables } from '../worldModel';
+import { PLAYER_BULLET_SPEED } from '../../../core/constants';
+import { angularStopDisplacement } from '../../../utils/movementModel';
 
 /**
  * Per-movement-class multiplier applied to `hazardPredictionHorizon` by the
@@ -192,6 +195,18 @@ export interface CompetentBotTunables {
    * holds its fire axis (aims and coasts) rather than closing further.
    */
   engagementRange: number;
+  /**
+   * Hysteresis band (px) around {@link engagementRange}
+   * (AH-0MWT4BBYO0085CN8 · RAC2).
+   *
+   * Once the engage behaviour is inside its standoff it stays inside until the
+   * target is `engagementRange + engagementRangeHysteresis` away; once outside
+   * it keeps closing until it is back inside `engagementRange`. A `0` band is
+   * the pre-change single-boundary rule — thrust and reverse toggle every time
+   * the distance crosses the boundary, which is the forward/backward lunge the
+   * producer saw.
+   */
+  engagementRangeHysteresis: number;
   /** Distance within which a collection target counts as reached. */
   collectArrivalRadius: number;
   /**
@@ -240,9 +255,31 @@ export interface CompetentBotTunables {
    * Precedence: explicit override > live ship config > compiled default.
    */
   playerSpeed: number;
+  /**
+   * The ship's **primary travelling-shot** speed (px/s) used as the projectile
+   * speed in the aim intercept's time of flight (AH-0MWR04ZDU0005O8J · AC2).
+   *
+   * A **default/override**, never the ship's truth, mirroring
+   * {@link playerSpeed}: the snapshot's live shot speed
+   * (`BotPlayer.shotSpeed`, sourced from `Player.getProjectileSpeed()`) wins
+   * while this stays at its compiled default, and an explicit override wins
+   * over the live value. Precedence: explicit override > live ship config >
+   * compiled default (`PLAYER_BULLET_SPEED`, 350 px/s). It replaces the
+   * enemy-bullet tell constant (`assumedBulletSpeed`, 200 px/s) that was
+   * previously misused as the ship's time of flight; that constant still
+   * models enemy fire tells (see {@link assumedBulletSpeed}).
+   */
+  shotSpeed: number;
   /** Look-ahead window (seconds) for incoming-fire prediction. */
   firePredictionHorizon: number;
-  /** Assumed enemy-bullet speed (px/s) for fire-tell shots. */
+  /**
+   * Assumed **enemy-bullet** speed (px/s) for fire-tell shots.
+   *
+   * This models the shot an enemy inside an advance cue is about to fire — the
+   * world model's fire-tell prediction and the legacy risk solve. It is **not**
+   * the ship's aim time-of-flight input: that is the ship's own live projectile
+   * speed ({@link shotSpeed}) since AH-0MWR04ZDU0005O8J · AC2.
+   */
   assumedBulletSpeed: number;
   /**
    * The ship's coasting deceleration (px/s²) for the forward model.
@@ -319,12 +356,79 @@ export interface CompetentBotTunables {
    */
   aimLeadEnabled: boolean;
   /**
+   * Whether the lead velocity comes from the bot-side hazard tracker
+   * (AH-0MWR04X10002VNDG · AC1).
+   *
+   * On (the default), `engage` resolves its target's velocity from the tracked
+   * hazard estimate (`BotWorld.hazards[].vx/vy`, matched by the target's stable
+   * `id`) — the same estimate the hazard predictor consumes — before the raw
+   * snapshot velocity. That is the only motion a scripted formation/`chaser`/
+   * `diver`/`patroller` target exposes, so those targets are led.
+   *
+   * Off reproduces the pre-change snapshot-velocity-only lead bit-for-bit: the
+   * aim-accuracy harness's pinned baseline is measured that way, so the fixture
+   * remains a recorded observation of the pre-change solve even after this
+   * feature ships. It is a control, not a designer knob.
+   */
+  aimLeadFromTracker: boolean;
+  /**
    * Estimated time (seconds) for the ship to finish its turn onto the target
    * bearing, used as the alignment term in the intercept solve (AC2).
+   *
+   * A **default/override**, never the ship's truth (AH-0MWR04ZDU0005O8J · AC2):
+   * while it stays at its compiled default the alignment term is **derived**
+   * from the ship's live rotation model ({@link deriveTurnAlignSeconds} over
+   * the snapshot's `BotPlayer.rotation`), and this constant is used only when
+   * the snapshot carries no rotation config (the no-config fallback). An
+   * explicit override (a value differing from the compiled default) wins over
+   * the live derivation. Precedence: explicit override > live ship config >
+   * compiled default.
    */
   aimLeadAlignSeconds: number;
   /** Iteration count for the intercept solve (AC2); ≥1. */
   aimLeadIterations: number;
+
+  // ── Hold-station posture (AH-0MWW2PFU8001J0PM · RAC2–RAC4) ───────
+  /**
+   * Whether the engage behaviour holds station while it has a firing solution
+   * (AH-0MWW2PFU8001J0PM · RAC2).
+   *
+   * On, the ship stops driving around the standoff: while it is calm (nothing
+   * threatening the hull) and a shot from where it is would connect with a
+   * hazard inside {@link holdFireHorizonSeconds}, `engage` requests **no**
+   * forward or reverse thrust — it only rotates onto the solved aim bearing.
+   * It moves again only when it has no firing solution (RAC3) or when a threat
+   * overrides the posture.
+   *
+   * Off in the compiled factory defaults, so every pre-change measurement
+   * (aim-accuracy, oscillation, arena and gym parity fixtures) is byte-for-byte
+   * unchanged; the shipped `Default` preset turns it on. It is the posture
+   * counterpart of the damping toggle, deliberately opt-in for the same
+   * baseline-preservation reason.
+   */
+  holdFireEnabled: boolean;
+  /**
+   * Horizon (seconds) inside which a shot must connect for the bot to hold
+   * station (AH-0MWW2PFU8001J0PM · RAC2).
+   *
+   * The producer's rule: "only move if there is no likely hit within the next
+   * 1 s". The comparison covers the time to finish the turn (derived from the
+   * live rotation model) plus the shot's time of flight to the class-sampled
+   * intercept point, so a distant or fast target that the shot would reach too
+   * late does not justify holding.
+   */
+  holdFireHorizonSeconds: number;
+  /**
+   * Corridor half-width (px) of the shot line used for the line-of-fire target
+   * preference (AH-0MWW2PFU8001J0PM · RAC4).
+   *
+   * A hazard whose centre comes within this distance of the solved shot line is
+   * "on the line": among hittable candidates the behaviour prefers the line
+   * that covers more hazards, so a shot that sweeps a formation is valued over
+   * a shot at a single nearer body. `0` disables the preference (hittability
+   * only).
+   */
+  holdFireLineRadiusPx: number;
 
   // ── Reverse thruster (AH-0MV1J0OHP0072XA5) ──────────────────────
   /** Whether the bot may use reverse thrust to brake (AC1). */
@@ -431,6 +535,10 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   enemySeekRange: 800,
   asteroidSeekRange: 400,
   engagementRange: 140,
+  // Factory default is off; the shipped `Default` bot-tuning preset enables it
+  // (AH-0MWT4BBYO0085CN8), so pre-existing arena/harness baselines that fly the
+  // compiled defaults stay byte-identical while the game gets the damping.
+  engagementRangeHysteresis: 0,
   collectArrivalRadius: 18,
   collectReverseBrake: false,
   collectOvershootMargin: 0,
@@ -440,6 +548,10 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   repositionRadius: 90,
 
   playerSpeed: 175,
+  // The ship's primary travelling shot flies at PLAYER_BULLET_SPEED; imported
+  // rather than duplicated so the bot layer carries no physics constant
+  // (AH-0MWR04ZDU0005O8J · AC2).
+  shotSpeed: PLAYER_BULLET_SPEED,
   firePredictionHorizon: 0.9,
   assumedBulletSpeed: 200,
   frictionDeceleration: 100,
@@ -480,8 +592,16 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   }),
 
   aimLeadEnabled: true,
+  aimLeadFromTracker: true,
   aimLeadAlignSeconds: 0.25,
   aimLeadIterations: 3,
+
+  // Off in the compiled defaults so every pre-change measurement stays
+  // byte-identical; the shipped `Default` preset enables the posture
+  // (AH-0MWW2PFU8001J0PM · RAC2/RAC7).
+  holdFireEnabled: false,
+  holdFireHorizonSeconds: 1,
+  holdFireLineRadiusPx: 14,
 
   reverseBrakeEnabled: true,
   reverseImminentOvershootGap: 36, // 2 × collectArrivalRadius (18)
@@ -557,6 +677,109 @@ export function resolvePlayerSpeed(
     return liveMaxSpeed;
   }
   return t.playerSpeed;
+}
+
+/**
+ * Resolves the ship's projectile speed (px/s) for the aim intercept's time of
+ * flight, honouring the physics precedence **explicit tuning override > live
+ * ship config > compiled default** (AH-0MWR04ZDU0005O8J · AC2), mirroring
+ * {@link resolvePlayerSpeed}.
+ *
+ * `shotSpeed` is a default/override, not the ship's truth: a value that
+ * differs from the compiled default is an explicit override and wins;
+ * otherwise the snapshot's live shot speed is used when present, falling back
+ * to the compiled `PLAYER_BULLET_SPEED`. This replaces the pre-change reuse of
+ * `assumedBulletSpeed` (200 px/s, an **enemy**-bullet tell constant) as the
+ * ship's time of flight, which over-estimated the lead by 75 % at the shipped
+ * 350 px/s shot.
+ *
+ * @param t - the resolved competent tunables.
+ * @param liveShotSpeed - the snapshot player's live shot speed, when exposed.
+ */
+export function resolveShotSpeed(
+  t: CompetentBotTunables,
+  liveShotSpeed?: number,
+): number {
+  if (t.shotSpeed !== COMPETENT_BOT_TUNABLES.shotSpeed) {
+    return t.shotSpeed;
+  }
+  if (
+    liveShotSpeed !== undefined &&
+    Number.isFinite(liveShotSpeed) &&
+    liveShotSpeed > 0
+  ) {
+    return liveShotSpeed;
+  }
+  return t.shotSpeed;
+}
+
+/**
+ * Derives the aim solve's alignment term (seconds) from the ship's **live
+ * rotation model** (AH-0MWR04ZDU0005O8J · AC2).
+ *
+ * The term is the rotation model's characteristic re-orientation time: spin the
+ * hull up from rest to its live top rate at `rotationAcceleration`, then coast
+ * that spin back to rest at `rotationDeceleration`. The coast half is the
+ * existing closed-form {@link angularStopDisplacement} primitive (the same one
+ * the inertia-aware turn release uses), converted to time at the average rate
+ * of a constant deceleration:
+ *
+ * ```text
+ * alignSeconds = rotationSpeed / rotationAcceleration
+ *              + 2 · |angularStopDisplacement(rotationSpeed, rotationDeceleration)|
+ *                / rotationSpeed
+ * ```
+ *
+ * A slower-accelerating ship therefore waits longer before its shot leaves on
+ * the solved bearing, and a crisper stop shortens the wait. The shipped
+ * defaults (`rotationSpeed` 3 rad/s, `rotationAcceleration` 12 rad/s²,
+ * `rotationDeceleration` 60 rad/s²) give 0.30 s.
+ *
+ * Pure and deterministic: a function of the supplied config only. An
+ * incomplete or non-physical config (non-finite, zero or negative rate) falls
+ * back to the compiled `aimLeadAlignSeconds` constant — the documented
+ * no-config fallback.
+ *
+ * @param rotation - the ship's live rotation tuning from the snapshot seam.
+ */
+export function deriveTurnAlignSeconds(rotation: BotRotationConfig): number {
+  const fallback = COMPETENT_BOT_TUNABLES.aimLeadAlignSeconds;
+  const topSpeed = Math.abs(rotation.rotationSpeed);
+  const accel = rotation.rotationAcceleration;
+  const decel = rotation.rotationDeceleration;
+  if (!Number.isFinite(topSpeed) || topSpeed <= 0) return fallback;
+  if (!Number.isFinite(accel) || accel <= 0) return fallback;
+  if (!Number.isFinite(decel) || decel <= 0) return fallback;
+  const spinUpSeconds = topSpeed / accel;
+  const coastSeconds =
+    (2 * Math.abs(angularStopDisplacement(topSpeed, decel))) / topSpeed;
+  return spinUpSeconds + coastSeconds;
+}
+
+/**
+ * Resolves the aim solve's alignment term (seconds), honouring the same
+ * physics precedence as {@link resolveShotSpeed}: **explicit tuning override >
+ * live ship config > compiled default** (AH-0MWR04ZDU0005O8J · AC2).
+ *
+ * `aimLeadAlignSeconds` is a default/override, not the ship's truth: a value
+ * that differs from the compiled default is an explicit override and wins;
+ * otherwise the ship's live rotation config is used to derive the turn time
+ * ({@link deriveTurnAlignSeconds}), falling back to the compiled constant when
+ * the snapshot carries no rotation config. At the shipped defaults the derived
+ * term (0.30 s) replaces the previously hard-coded 0.25 s constant.
+ *
+ * @param t - the resolved competent tunables.
+ * @param rotation - the snapshot player's live rotation tuning, when exposed.
+ */
+export function resolveAimAlignSeconds(
+  t: CompetentBotTunables,
+  rotation?: BotRotationConfig,
+): number {
+  if (t.aimLeadAlignSeconds !== COMPETENT_BOT_TUNABLES.aimLeadAlignSeconds) {
+    return t.aimLeadAlignSeconds;
+  }
+  if (rotation !== undefined) return deriveTurnAlignSeconds(rotation);
+  return t.aimLeadAlignSeconds;
 }
 
 /**

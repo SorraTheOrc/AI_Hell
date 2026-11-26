@@ -42,7 +42,9 @@
  */
 
 import { findHangarEntry } from './hangarEconomy';
+import { normaliseMatchupWeaponId } from './hexMatchup';
 import type { HexRingState, HexState } from './types';
+import { WEAPON_IDS } from '../../utils/weapons';
 
 /** A point in axial hex coordinates, relative to the hangar at `(0, 0)`. */
 export interface AxialCoordinate {
@@ -214,7 +216,9 @@ export type RingValidationIssueKind =
   | 'invalid-contract'
   | 'invalid-landmark'
   | 'landmark-weapon-hex'
-  | 'duplicate-landmark';
+  | 'duplicate-landmark'
+  | 'unknown-matchup-weapon'
+  | 'overlapping-matchup-weapon';
 
 /** One problem found in a ring's authored definitions. */
 export interface RingValidationIssue {
@@ -603,6 +607,80 @@ function landmarkIssues(
 }
 
 /**
+ * Whether `id` (already normalised) names a weapon in the shipped catalogue.
+ *
+ * @param id — a canonical weapon id.
+ * @returns true when the id is a catalogue weapon.
+ */
+function isCatalogueWeapon(id: string): boolean {
+  return (WEAPON_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * Matchup-list issues for one authored hex (parent AC3, Q5).
+ *
+ * The authored `strengths`/`weaknesses` are mechanically load-bearing once the
+ * matchup rule reads them (`resolveHexMatchup`), so a hand-authored list that
+ * cannot mean anything must fail at load rather than be silently ignored:
+ *
+ * - an entry that does not resolve to a **catalogue weapon id** (after the
+ *   shared `waveLaser` → `wave_laser` normalisation) is reported as
+ *   `unknown-matchup-weapon` — the rule could never match it, so the intel
+ *   would promise a matchup that does not exist;
+ * - a weapon named in **both** lists of the **same** hex is reported as
+ *   `overlapping-matchup-weapon` — the rule cannot say unambiguously whether
+ *   the boss resists or is weak to it.
+ *
+ * Every message names the hex id **and** the offending entry, so a bad edit is
+ * actionable without re-reading the data. Entries are compared after
+ * normalisation, so `waveLaser` and `wave_laser` in opposite lists still count
+ * as one weapon.
+ *
+ * @param definition — one authored hex definition.
+ * @returns the matchup-list issues found (empty when the lists are sound).
+ */
+function matchupIssues(definition: HexRingDefinition): RingValidationIssue[] {
+  const issues: RingValidationIssue[] = [];
+  const coordinate = { q: definition.q, r: definition.r };
+  /** Canonical weapon id → the first list that named it. */
+  const firstList = new Map<string, 'strengths' | 'weaknesses'>();
+
+  const check = (field: 'strengths' | 'weaknesses'): void => {
+    const list: unknown = definition[field];
+    // A missing/malformed list is `definitionShapeIssues`' report, not ours.
+    if (!Array.isArray(list)) return;
+    for (const entry of list as readonly unknown[]) {
+      if (typeof entry !== 'string' || entry.trim() === '') continue;
+      const weapon = normaliseMatchupWeaponId(entry);
+      if (weapon === null || !isCatalogueWeapon(weapon)) {
+        issues.push({
+          kind: 'unknown-matchup-weapon',
+          hexId: definition.id,
+          coordinate,
+          message: `${definition.id} lists ${entry} in ${field}, which resolves to no catalogue weapon id`,
+        });
+        continue;
+      }
+      const seen = firstList.get(weapon);
+      if (seen === undefined) {
+        firstList.set(weapon, field);
+      } else if (seen !== field) {
+        issues.push({
+          kind: 'overlapping-matchup-weapon',
+          hexId: definition.id,
+          coordinate,
+          message: `${definition.id} lists ${weapon} in both ${seen} and ${field}, so its matchup verdict is ambiguous`,
+        });
+      }
+    }
+  };
+
+  check('strengths');
+  check('weaknesses');
+  return issues;
+}
+
+/**
  * Validates a set of authored definitions against the generated shape of
  * ring `ringIndex`.
  *
@@ -620,7 +698,12 @@ function landmarkIssues(
  * - every authored **variety** field is well formed (AH-0MWEW4ANW009GGX7): an
  *   authored personality/landmark id, a contract that carries a readable
  *   objective and pays something, no cache landmark on the weapon hex, and at
- *   most one set-piece of each kind per ring.
+ *   most one set-piece of each kind per ring,
+ * - every authored **matchup** entry (`strengths`/`weaknesses`) resolves
+ *   through the shared alias to a **catalogue weapon id**, and no weapon is
+ *   named in both lists of the same hex (AH-0MWL88JJM004ORZS, Q5) — the
+ *   `unknown-matchup-weapon`/`overlapping-matchup-weapon` kinds, since the
+ *   matchup rule makes those lists mechanically load-bearing.
  *
  * @param ringIndex — the ring to validate (1 = the first ring).
  * @param definitions — the authored definitions (all rings, or just this one).
@@ -659,6 +742,11 @@ export function validateRingDefinitions(
     // The variety vocabulary is validated for this ring's hexes only: an
     // authored id outside the vocabulary is rejected, never repaired (AC3).
     issues.push(...varietyIssues(definition));
+
+    // The authored matchup lists are load-bearing once the matchup rule reads
+    // them, so an entry naming no catalogue weapon — or a weapon named in both
+    // lists of this hex — fails at load, naming the hex and the entry (AC3).
+    issues.push(...matchupIssues(definition));
 
     // A special mission's reward must be a hull catalogue entry: the hex is an
     // ordinary one-level capture (Q1 = a), so the only thing that can make it

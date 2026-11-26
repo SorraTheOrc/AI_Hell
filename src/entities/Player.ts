@@ -124,6 +124,14 @@ import {
   type EuclidPattern,
 } from '../utils/euclid';
 import {
+  resolveEvolvedWeaponDefinition,
+  resolveEvolvedWeaponPattern,
+  resolveWeaponEvolution,
+  type EvolvedWeaponId,
+  type EvolutionTransition,
+  type WeaponEvolutionReason,
+} from '../utils/weaponEvolutions';
+import {
   BeatClock,
   SIXTEENTH_NOTE_SUBDIVISIONS,
   beatSubdivisionMs,
@@ -131,7 +139,7 @@ import {
   nextTick,
 } from '../utils/beat';
 import { loadRules, type GameRules } from '../core/rules';
-import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { PLAYER_BULLET_SPEED, WEAPON_TIMEOUT_MS } from '../core/constants';
 import { type PowerUpId } from '../powerups/types';
 import { PowerUpLevelStore } from '../powerups/powerUpLevels';
 
@@ -165,6 +173,36 @@ interface PendingFirePattern {
   /** The pattern to activate. */
   readonly pattern: EuclideanPattern;
   /** Bar-downbeat tick (ms, absolute beat time) the morph lands on. */
+  readonly effectiveAtMs: number;
+}
+
+/**
+ * The live evolution one player sounds (epic AH-0MWL7OWPF003E4TP, field tier
+ * AH-0MWU7BAXI003HBP3): the resolved evolved weapon, the two base ids it
+ * consumes, why it is live and the cadence it plays.
+ */
+interface EvolutionSchedule {
+  /** The evolved weapon the one resolver reported live. */
+  readonly evolvedId: EvolvedWeaponId;
+  /** The two catalogue halves the evolved weapon replaces. */
+  readonly baseIds: readonly WeaponId[];
+  /** Why it is live: a timed field overlap or a permanently owned pair. */
+  readonly reason: Exclude<WeaponEvolutionReason, 'none'>;
+  /** Evolution level the cadence was resolved at. */
+  readonly level: number;
+  /** The evolved pattern on the live lattice. */
+  readonly pattern: EuclideanPattern;
+}
+
+/**
+ * A pending evolution change — a stop, a swap between pairings or a level
+ * morph — queued for the next bar downbeat so the pattern never changes shape
+ * mid-bar (epic AC6). A `null` target means the fusion stops.
+ */
+interface PendingEvolution {
+  /** The evolution to adopt, or `null` to stop it. */
+  readonly target: EvolutionSchedule | null;
+  /** Bar-downbeat tick (ms, absolute beat time) the change lands on. */
   readonly effectiveAtMs: number;
 }
 
@@ -293,13 +331,12 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _config: PlayerMovementConfig;
 
   /**
-   * Nominal movement config (pre-multiplier). Speed Boost scales
-   * thrust + max-speed about these values via {@link setSpeedMultiplier}.
+   * Nominal movement config (the ship's tuned physics). The live `_config`
+   * mirrors these values; there is no run-time movement scaling any more
+   * (Speed Boost is weapons-only — AH-0MWLU8A7P001O391).
    */
   private _baseConfig: PlayerMovementConfig;
 
-  /** Current live speed multiplier (1 = normal, 1.5 = Speed Boost boosted). */
-  private _speedMultiplier = 1;
   /** Current live fire-rate multiplier (1 = normal, 1.5 = Speed Boost boosted). */
   private _fireRateMultiplier = 1;
 
@@ -353,6 +390,40 @@ export class Player extends Phaser.GameObjects.Graphics {
    */
   private _weaponPendingPatterns: Map<WeaponId, PendingFirePattern> =
     new Map();
+
+  // ── Weapon evolutions (epic AH-0MWL7OWPF003E4TP, field tier) ─────
+  // The one resolver (`utils/weaponEvolutions.ts`) decides whether a pairing
+  // is live. While it is, the two halves do **not** fire their own patterns;
+  // the evolved cadence fires instead on the same shared lattice.
+
+  /** The evolution currently sounding (`null` when no pairing is live). */
+  private _evolutionSounding: EvolutionSchedule | null = null;
+  /** The sounding evolution's active pattern and precomputed onset tile. */
+  private _evolutionActive: ActiveFirePattern | null = null;
+  /** Absolute beat time (ms, an evolved onset tick) of the next evolved shot. */
+  private _evolutionNextShot = Number.POSITIVE_INFINITY;
+  /** Beat-clock time (ms) of the most recent evolved shot. */
+  private _evolutionLastShot: number | undefined = undefined;
+  /**
+   * A stop/swap/morph waiting for the next bar downbeat. A fusion never
+   * changes shape mid-bar, and an expiry stops only on the boundary so the
+   * halves revert in time (epic AC3/AC6).
+   */
+  private _evolutionPending: PendingEvolution | null = null;
+  /** The evolved weapon that fired during the most recent `tryFire` call. */
+  private _evolutionFiredThisFrame: EvolvedWeaponId | null = null;
+  /**
+   * Latched fusion event (an evolved weapon became live), consumed once by
+   * {@link Player.consumeEvolutionTransition}. Latched — never reset by
+   * `tryFire` — so a fusion completed by a weapon collection (`_readyFire`)
+   * survives until the shared fire path reads it.
+   */
+  private _evolutionFused: EvolvedWeaponId | null = null;
+  /**
+   * Latched expiry event (a field-tier fusion reverted on the bar downbeat),
+   * consumed once by {@link Player.consumeEvolutionTransition}.
+   */
+  private _evolutionExpired: EvolvedWeaponId | null = null;
   /**
    * Live game rules — the tempo of the shared beat grid (defaults to the
    * persisted rules) and the legacy per-weapon subdivisions. The Euclidean
@@ -682,7 +753,7 @@ export class Player extends Phaser.GameObjects.Graphics {
       reverseAcceleration: config.asteroidsReverseThrustAcceleration,
       reverseMaxSpeed: config.asteroidsReverseMaxSpeed,
     };
-    this._applySpeedMultiplier();
+    this._applyBaseConfig();
     // Loading a saved config restores its control scheme (AC4). If the
     // scheme changed, setScheme already redrew with the new engine
     // layout; otherwise we redraw here for the tuning changes.
@@ -691,17 +762,6 @@ export class Player extends Phaser.GameObjects.Graphics {
     if (!schemeChanged) {
       this._redraw();
     }
-  }
-
-  /**
-   * Applies a live movement multiplier (Speed Boost: +50%): thrust and
-   * max-speed scale by `multiplier` about the nominal config; friction and
-   * rendering are untouched. 1 = normal speed. Applied to physics only.
-   */
-  setSpeedMultiplier(multiplier: number): void {
-    if (this._speedMultiplier === multiplier) return;
-    this._speedMultiplier = multiplier;
-    this._applySpeedMultiplier();
   }
 
   /**
@@ -722,6 +782,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     for (const weaponId of this.getActiveWeapons()) {
       this._refreshPattern(weaponId, now);
     }
+    this._refreshEvolution(now);
   }
 
   /**
@@ -740,6 +801,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     for (const weaponId of this.getActiveWeapons()) {
       this._refreshPattern(weaponId, now);
     }
+    this._refreshEvolution(now);
   }
 
   /**
@@ -752,7 +814,7 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Current effective movement config (multiplier applied). Exposed for
+   * Current effective movement config (the nominal ship tuning). Exposed for
    * tests and the scene's magnet/speed integrations.
    */
   getMovementConfig(): MovementConfig {
@@ -791,7 +853,7 @@ export class Player extends Phaser.GameObjects.Graphics {
    * (`reverseEnabled` / `reverseAcceleration` / `reverseMaxSpeed`). Exposed so
    * the demo-bot snapshot can carry the player's actual tuning instead of
    * hard-coded physics (AH-0MV85WFWD0029DL7 · AC1). Reads the live/effective
-   * `_config` (speed multiplier applied) like {@link getRotationConfig}, and
+   * `_config` like {@link getRotationConfig}, and
    * uses the `ShipConfig`-term field names so the snapshot shape matches the
    * player's tuning UI.
    */
@@ -821,20 +883,67 @@ export class Player extends Phaser.GameObjects.Graphics {
     };
   }
 
-  private _applySpeedMultiplier(): void {
-    this._config = {
-      thrust: this._baseConfig.thrust * this._speedMultiplier,
-      maxSpeed: this._baseConfig.maxSpeed * this._speedMultiplier,
-      friction: this._baseConfig.friction,
-      rotationSpeed: this._baseConfig.rotationSpeed,
-      rotationAcceleration: this._baseConfig.rotationAcceleration,
-      rotationDeceleration: this._baseConfig.rotationDeceleration,
-      // Reverse tunables are carried through unscaled: they are the
-      // player's independent reverse settings (AH-0MV13LY0R006ZO6D).
-      reverseEnabled: this._baseConfig.reverseEnabled,
-      reverseAcceleration: this._baseConfig.reverseAcceleration,
-      reverseMaxSpeed: this._baseConfig.reverseMaxSpeed,
-    };
+  /**
+   * The speed (px/s) of the ship's **primary travelling shot** — the shared
+   * `PLAYER_BULLET_SPEED` every travelling player projectile flies at. Exposed
+   * so the demo-bot snapshot can carry the ship's live projectile speed into
+   * the aim solve's time of flight instead of the bot's enemy-bullet
+   * assumption (AH-0MWR04ZDU0005O8J · AC2). Pod (orbit) weapons fire slower
+   * (300 px/s) and are accepted as within the aim error of this primary shot.
+   */
+  getProjectileSpeed(): number {
+    return PLAYER_BULLET_SPEED;
+  }
+
+  /**
+   * The ship's **effective weapon reach** (px) — the farthest a shot from the
+   * current active loadout can still connect (AH-0MWPOET5A002IPTP ·
+   * fire-discipline remediation).
+   *
+   * The demo bot uses it to be aware of the range of its weapons: a target
+   * beyond this reach cannot be hit, so holding station and firing at it is
+   * firing at nothing. The value is the **maximum** reach among the active
+   * weapons, because the ship auto-fires every active weapon together:
+   *
+   * - a travelling shot reaches `PLAYER_BULLET_SPEED × bulletLifetime`
+   *   (every travelling player projectile flies at the shared speed);
+   * - a hitscan beam reaches its authored `hitscan.length`;
+   * - a random-detonation AOE (mortar) reaches
+   *   `aoe.projectileSpeed × bulletLifetime`;
+   * - an instant `'onFire'` AOE (nova/arc) resolves at the ship, so its reach
+   *   is its effect radius.
+   *
+   * A level-resolved definition already carries the level multipliers through
+   * {@link getWeaponDef}, so levelling a weapon extends its reach here too.
+   * Exposed through the structural `BotPlayerSource` seam so `src/ai` never
+   * hard-codes a weapon constant.
+   */
+  getEffectiveWeaponRange(): number {
+    let reach = 0;
+    for (const weaponId of this.getActiveWeapons()) {
+      const def = this.getWeaponDef(weaponId);
+      const weaponReach = def.hitscan
+        ? def.hitscan.length
+        : def.aoe
+          ? def.aoe.trigger === 'onRandom'
+            ? (def.aoe.projectileSpeed ?? PLAYER_BULLET_SPEED) *
+              def.bulletLifetime
+            : def.aoe.radius
+          : PLAYER_BULLET_SPEED * def.bulletLifetime;
+      if (Number.isFinite(weaponReach) && weaponReach > reach) {
+        reach = weaponReach;
+      }
+    }
+    return reach;
+  }
+
+  /**
+   * Copies the nominal config into the live config. There is no run-time
+   * movement scaling any more (Speed Boost is weapons-only), so this is a
+   * plain assignment rather than a multiplier application.
+   */
+  private _applyBaseConfig(): void {
+    this._config = { ...this._baseConfig };
   }
 
   // ── Heading ──────────────────────────────────────────────────────
@@ -1043,6 +1152,8 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._weaponLastShot.clear();
     this._weaponPatterns.clear();
     this._weaponPendingPatterns.clear();
+    // A Reset ends every active timed window, so a field fusion ends with it.
+    this._clearEvolution();
     // A Reset ends every active timed window, so the temporary levels tied to
     // those windows go with them; the permanent levels are retained (AC6).
     this._tempWeaponStacks.clear();
@@ -1122,6 +1233,9 @@ export class Player extends Phaser.GameObjects.Graphics {
   resetWeaponLevels(): void {
     this._permanentWeaponGrants.clear();
     this._tempWeaponStacks.clear();
+    // A run restart clears a permanently owned fusion exactly as it clears the
+    // other owned weapons (epic AC4).
+    this._clearEvolution();
   }
 
   /**
@@ -1264,6 +1378,10 @@ export class Player extends Phaser.GameObjects.Graphics {
         this._weaponTimers.set(id, next);
       }
     }
+    // A half expiring can end a field fusion: re-read the resolver so the
+    // evolved weapon stops on the next bar downbeat and the surviving half
+    // reverts to its own pattern (epic AC3).
+    this._refreshEvolution(this._beatClock.now());
   }
 
   // ── Auto-fire emission (AC1–AC3) ─────────────────────────────────
@@ -1354,6 +1472,124 @@ export class Player extends Phaser.GameObjects.Graphics {
     };
   }
 
+  // ── Weapon evolution observables (field tier) ───────────────────
+
+  /**
+   * The evolution **currently sounding**: the evolved weapon the one resolver
+   * reported live, the two catalogue halves it consumes and why it is live
+   * (`'field'` overlap or `'owned'` pair). `null` when no pairing is live.
+   *
+   * During the bar-downbeat wait after an expiry this still reports the
+   * **sounding** evolution (the evolved weapon keeps firing until the
+   * boundary), so {@link Player.getPendingEvolution} carries the queued stop.
+   */
+  getActiveEvolution(): {
+    evolvedId: EvolvedWeaponId;
+    baseIds: WeaponId[];
+    reason: Exclude<WeaponEvolutionReason, 'none'>;
+  } | null {
+    const sounding = this._evolutionSounding;
+    if (!sounding) return null;
+    return {
+      evolvedId: sounding.evolvedId,
+      baseIds: [...sounding.baseIds],
+      reason: sounding.reason,
+    };
+  }
+
+  /**
+   * The evolution change queued for the next bar downbeat, if any. A `null`
+   * `evolvedId` means the fusion is stopping; the sounding evolution is still
+   * {@link Player.getActiveEvolution} until `effectiveAtMs`.
+   */
+  getPendingEvolution(): {
+    evolvedId: EvolvedWeaponId | null;
+    effectiveAtMs: number;
+  } | undefined {
+    const pending = this._evolutionPending;
+    if (!pending) return undefined;
+    return {
+      evolvedId: pending.target?.evolvedId ?? null,
+      effectiveAtMs: pending.effectiveAtMs,
+    };
+  }
+
+  /**
+   * The evolved cadence currently sounding, on the live lattice (tempo and
+   * Speed Boost applied). `undefined` when no evolution is sounding.
+   */
+  getEvolutionFirePattern(): EuclideanPattern | undefined {
+    return this._evolutionActive?.pattern;
+  }
+
+  /**
+   * Beat-clock time (ms) of the most recent evolved shot — always an exact
+   * onset tick of the evolved pattern on the shared lattice.
+   */
+  getEvolutionLastShotTime(): number | undefined {
+    return this._evolutionLastShot;
+  }
+
+  /**
+   * Beat-clock time (ms) of the next scheduled evolved shot — always an exact
+   * onset tick of the evolved pattern.
+   */
+  getEvolutionNextShotTime(): number | undefined {
+    return Number.isFinite(this._evolutionNextShot)
+      ? this._evolutionNextShot
+      : undefined;
+  }
+
+  /**
+   * The evolved weapon that fired during the most recent {@link Player.tryFire}
+   * call, or `null`. The shared fire path reads this to spawn the fused
+   * projectile through exactly the same dispatch as a catalogue weapon.
+   */
+  getEvolutionFired(): EvolvedWeaponId | null {
+    return this._evolutionFiredThisFrame;
+  }
+
+  /**
+   * Consumes and clears one latched fusion/expiry transition, if any. The
+   * shared fire path calls this after {@link Player.tryFire} to deliver each
+   * transition exactly once (epic AC7): a `'fusion'` when an evolved weapon
+   * became live, an `'expiry'` when a field-tier fusion reverted on the bar
+   * downbeat. A fusion latched by a weapon collection survives until this is
+   * read, so no transition is lost to `tryFire`'s per-frame reset.
+   *
+   * The fusion slot is consumed before the expiry slot, so a same-frame
+   * revert-then-fuse reports the new weapon first.
+   */
+  consumeEvolutionTransition(): EvolutionTransition | null {
+    if (this._evolutionFused !== null) {
+      const evolvedId = this._evolutionFused;
+      this._evolutionFused = null;
+      return { kind: 'fusion', evolvedId };
+    }
+    if (this._evolutionExpired !== null) {
+      const evolvedId = this._evolutionExpired;
+      this._evolutionExpired = null;
+      return { kind: 'expiry', evolvedId };
+    }
+    return null;
+  }
+
+  /**
+   * The catalogue definition an evolved weapon fires through the shared fire
+   * path: the primary half's projectile with the evolved name/colour and a
+   * **single** forward shot, so a fusion never raises damage instances per
+   * cadence tick (epic AC5).
+   *
+   * @param evolvedId - The evolved weapon to resolve.
+   */
+  getEvolvedWeaponDef(evolvedId: EvolvedWeaponId): WeaponDefinition {
+    const level =
+      this._evolutionSounding?.evolvedId === evolvedId
+        ? this._evolutionSounding.level
+        : 0;
+    return resolveEvolvedWeaponDefinition(evolvedId, level, this._rules.beatBpm);
+  }
+
   /**
    * Advances the shared beat clock by `dt` seconds and returns the ids of
    * the weapons that fired this frame — i.e. whose next scheduled **onset**
@@ -1377,9 +1613,18 @@ export class Player extends Phaser.GameObjects.Graphics {
    * @returns The ids of the weapons that fired this frame.
    */
   tryFire(dt: number): WeaponId[] {
+    this._evolutionFiredThisFrame = null;
     const now = this._beatClock.advance(dt * 1000);
+    // Reconcile the evolved weapon first: a fusion starting suppresses the two
+    // halves on this same frame, and a stop/swap lands only on a bar downbeat.
+    this._refreshEvolution(now);
     const fired: WeaponId[] = [];
+    // The sounding evolution consumes both halves: they do not also fire their
+    // own patterns while the evolved weapon is live (epic AC3).
+    const fusedBases = this._evolutionSounding?.baseIds;
+    const suppressed = fusedBases ? new Set(fusedBases) : null;
     for (const weaponId of this.getActiveWeapons()) {
+      if (suppressed?.has(weaponId)) continue;
       // Apply any morph whose bar downbeat has arrived, and adopt a changed
       // tempo, before deciding whether an onset is due this frame.
       this._refreshPattern(weaponId, now);
@@ -1403,6 +1648,17 @@ export class Player extends Phaser.GameObjects.Graphics {
         );
       }
     }
+    // Fire the evolved weapon on its own onsets when one is sounding.
+    if (this._evolutionActive && this._evolutionSounding) {
+      const next = this._evolutionNextShot;
+      if (next <= now + BEAT_EPSILON_MS) {
+        this._evolutionFiredThisFrame = this._evolutionSounding.evolvedId;
+        this._evolutionLastShot = next;
+        this._evolutionNextShot = this._nextEvolutionOnsetStrictlyAfter(
+          Math.max(now, next),
+        );
+      }
+    }
     return fired;
   }
 
@@ -1420,6 +1676,9 @@ export class Player extends Phaser.GameObjects.Graphics {
         this._nextOnsetAtOrAfter(weaponId, now),
       );
     }
+    // A collection can complete a pairing: re-read the one resolver so the
+    // evolved rhythm starts (or a half's expiry is queued) at once.
+    this._refreshEvolution(now);
   }
 
   // ── Euclidean fire-pattern scheduling (AH-0MVYA1V8Z009SHMR) ─────
@@ -1616,6 +1875,269 @@ export class Player extends Phaser.GameObjects.Graphics {
     );
   }
 
+  // ── Evolution scheduling (field tier, AH-0MWU7BAXI003HBP3) ───────
+
+  /**
+   * Reads the **one** evolution resolver for the player's current active /
+   * permanent weapon set and resolves the cadence a live fusion plays on the
+   * live lattice. `null` when no pairing is live.
+   *
+   * The evolution level is the **minimum upgrade index** of the two halves, so
+   * a fusion is never richer than the weaker half that earned it.
+   */
+  private _resolveEvolutionSchedule(): EvolutionSchedule | null {
+    const resolution = resolveWeaponEvolution({
+      activeWeaponIds: this.getActiveWeapons(),
+      permanentWeaponLevels: this.getWeaponLevels(),
+    });
+    if (!resolution.evolvedId || resolution.reason === 'none') return null;
+    const level = this._evolutionLevelFor(resolution.baseIds);
+    const authored = resolveEvolvedWeaponPattern(
+      resolution.evolvedId,
+      level,
+      this._rules.beatBpm,
+    );
+    return {
+      evolvedId: resolution.evolvedId,
+      baseIds: [...resolution.baseIds],
+      reason: resolution.reason,
+      level,
+      pattern: this._scaleEvolutionStep(authored),
+    };
+  }
+
+  /** The evolution level: the weaker half's upgrade index (`collections − 1`). */
+  private _evolutionLevelFor(baseIds: readonly WeaponId[]): number {
+    if (baseIds.length === 0) return 0;
+    return Math.min(
+      ...baseIds.map((weaponId) => this._weaponUpgradeIndex(weaponId)),
+    );
+  }
+
+  /** Scales the evolved step by the live fire-rate multiplier (Speed Boost). */
+  private _scaleEvolutionStep(
+    pattern: EuclideanPattern,
+  ): EuclideanPattern {
+    const multiplier =
+      Number.isFinite(this._fireRateMultiplier) &&
+      this._fireRateMultiplier > 0
+        ? this._fireRateMultiplier
+        : 1;
+    return { ...pattern, stepMs: pattern.stepMs / multiplier };
+  }
+
+  /** True when two schedules are the same evolution of the same shape. */
+  private _sameEvolution(
+    first: EvolutionSchedule | null,
+    second: EvolutionSchedule | null,
+  ): boolean {
+    const firstId = first?.evolvedId ?? null;
+    const secondId = second?.evolvedId ?? null;
+    if (firstId !== secondId) return false;
+    if (!first || !second) return true;
+    return this._shapeKey(first.pattern) === this._shapeKey(second.pattern);
+  }
+
+  /**
+   * Reconciles the sounding evolution with the resolver's answer.
+   *
+   * - **Start** (none → live) happens at once, like a freshly collected weapon:
+   *   the fusion sounds from its next onset and the halves stop firing that
+   *   same frame.
+   * - **Stop / swap / shape morph** is queued for the next **bar downbeat**, so
+   *   a pattern never changes shape mid-bar and an expiry stops in time with
+   *   the lattice; the sounding pattern keeps firing until then (epic AC3/AC6).
+   * - A **tempo / Speed Boost** change only rescales the step and re-anchors
+   *   immediately — a tempo change is not a morph.
+   * - A **stronger claim on the same rhythm** (a second hold-full grant turns a
+   *   field overlap into an owned pair, or a run restart hands the owned pair
+   *   back to the field tier) is adopted in place: the pattern does not morph,
+   *   so there is nothing to wait a bar downbeat for, and the reported `reason`
+   *   never lags the ownership that earned it (epic AC4).
+   */
+  private _refreshEvolution(now: number): void {
+    const due = this._evolutionPending;
+    if (due && now + BEAT_EPSILON_MS >= due.effectiveAtMs) {
+      this._evolutionPending = null;
+      const wasSounding = this._evolutionSounding;
+      this._commitEvolution(due.target, due.effectiveAtMs);
+      if (due.target === null) {
+        // A field-tier fusion reverted to its halves on the bar downbeat:
+        // latch the expiry for the shared fire path (epic AC7).
+        if (wasSounding) this._evolutionExpired = wasSounding.evolvedId;
+      } else if (wasSounding?.evolvedId !== due.target.evolvedId) {
+        // A different evolved weapon became live (a swap): latch the new
+        // fusion so the old one is never reported as a plain revert.
+        this._evolutionFused = due.target.evolvedId;
+      }
+    }
+
+    const desired = this._resolveEvolutionSchedule();
+    const current = this._evolutionSounding;
+
+    const pending = this._evolutionPending;
+    if (pending) {
+      if (!this._sameEvolution(pending.target, desired)) {
+        // The world moved on again before the boundary: re-target the change
+        // (still on a bar downbeat).
+        const stepMs =
+          (desired ?? current)?.pattern.stepMs ??
+          beatSubdivisionMs(
+            SIXTEENTH_NOTE_SUBDIVISIONS,
+            this._rules.beatBpm,
+          );
+        this._evolutionPending = {
+          target: desired,
+          effectiveAtMs: this._nextBarDownbeat(now, stepMs),
+        };
+      } else if (
+        desired &&
+        pending.target &&
+        pending.target.pattern.stepMs !== desired.pattern.stepMs
+      ) {
+        // The lattice changed before the boundary: re-anchor the queued change
+        // on the new grid rather than firing it early.
+        this._evolutionPending = {
+          target: desired,
+          effectiveAtMs: this._nextBarDownbeat(now, desired.pattern.stepMs),
+        };
+      }
+      if (current && desired) this._adoptLiveEvolutionStep(desired, now);
+      return;
+    }
+
+    if (this._sameEvolution(current, desired)) {
+      if (current && desired) {
+        // Same evolved weapon and same rhythm: keep firing, but adopt the
+        // schedule so `reason` / `level` track the ownership in force now.
+        this._evolutionSounding = desired;
+        if (current.pattern.stepMs !== desired.pattern.stepMs) {
+          this._setEvolutionActive(desired, now);
+        }
+      }
+      return;
+    }
+
+    if (current === null && desired !== null) {
+      // A fusion became live this frame (not waiting for a downbeat): latch
+      // it so the shared fire path can fire the distinct fusion cue.
+      this._evolutionFused = desired.evolvedId;
+      this._setEvolutionActive(desired, now);
+      return;
+    }
+
+    const stepMs =
+      (desired ?? current)?.pattern.stepMs ??
+      beatSubdivisionMs(SIXTEENTH_NOTE_SUBDIVISIONS, this._rules.beatBpm);
+    this._evolutionPending = {
+      target: desired,
+      effectiveAtMs: this._nextBarDownbeat(now, stepMs),
+    };
+  }
+
+  /** Makes `schedule` the sounding evolution and anchors its next onset. */
+  private _setEvolutionActive(
+    schedule: EvolutionSchedule,
+    fromMs: number,
+  ): void {
+    this._evolutionSounding = schedule;
+    this._evolutionActive = {
+      pattern: schedule.pattern,
+      tile: euclidPattern(
+        schedule.pattern.k,
+        schedule.pattern.n,
+        schedule.pattern.rotation,
+      ),
+    };
+    this._evolutionNextShot = nextOnsetTick(
+      fromMs,
+      this._evolutionActive.tile,
+      schedule.pattern.stepMs,
+      this._beatClock.anchorMs,
+    );
+  }
+
+  /** Re-anchors the sounding evolved pattern on a changed lattice. */
+  private _adoptLiveEvolutionStep(
+    desired: EvolutionSchedule,
+    now: number,
+  ): void {
+    if (
+      !this._evolutionActive ||
+      this._evolutionActive.pattern.stepMs === desired.pattern.stepMs
+    ) {
+      return;
+    }
+    this._setEvolutionActive(desired, now);
+  }
+
+  /**
+   * Commits a pending change: stop the fusion and revert the halves that are
+   * still active, or adopt the new evolved schedule. A half that is still live
+   * but no longer consumed by the fusion is re-anchored on the boundary tick so
+   * it reverts to its own pattern in time (epic AC3).
+   */
+  private _commitEvolution(
+    target: EvolutionSchedule | null,
+    atMs: number,
+  ): void {
+    const previous = this._evolutionSounding;
+    const nextBases = new Set<WeaponId>(target?.baseIds ?? []);
+    for (const baseId of previous?.baseIds ?? []) {
+      if (nextBases.has(baseId)) continue;
+      if (this.hasWeapon(baseId)) {
+        this._setActivePattern(
+          baseId,
+          this._resolveFirePattern(baseId),
+          atMs,
+        );
+      }
+    }
+    if (target) {
+      this._setEvolutionActive(target, atMs);
+    } else {
+      this._evolutionSounding = null;
+      this._evolutionActive = null;
+      this._evolutionNextShot = Number.POSITIVE_INFINITY;
+    }
+  }
+
+  /**
+   * The evolved weapon's next onset tick **strictly after** `timeMs`, so the
+   * onset that just fired is never repeated (mirrors the per-weapon helper).
+   */
+  private _nextEvolutionOnsetStrictlyAfter(timeMs: number): number {
+    const active = this._evolutionActive;
+    if (!active) return Number.POSITIVE_INFINITY;
+    const onset = nextOnsetTick(
+      timeMs,
+      active.tile,
+      active.pattern.stepMs,
+      this._beatClock.anchorMs,
+    );
+    if (onset > timeMs) return onset;
+    return nextOnsetTick(
+      timeMs + active.pattern.stepMs / 2,
+      active.tile,
+      active.pattern.stepMs,
+      this._beatClock.anchorMs,
+    );
+  }
+
+  /** Clears every evolution field (run restart, Reset, grid swap). */
+  private _clearEvolution(): void {
+    this._evolutionSounding = null;
+    this._evolutionActive = null;
+    this._evolutionNextShot = Number.POSITIVE_INFINITY;
+    this._evolutionLastShot = undefined;
+    this._evolutionPending = null;
+    this._evolutionFiredThisFrame = null;
+    // Drop any latched fusion/expiry transition too: a grid swap / run
+    // restart must never deliver a stale cue to the new run (epic AC7).
+    this._evolutionFused = null;
+    this._evolutionExpired = null;
+  }
+
   /**
    * The shared beat clock driving phase-locked auto-fire
    * (AH-0MUAYB8EH005RJ8B). Scenes read/share this single instance so player
@@ -1636,6 +2158,9 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._weaponLastShot.clear();
     this._weaponPatterns.clear();
     this._weaponPendingPatterns.clear();
+    // Re-anchor the evolution on the new grid too — a grid swap is not a
+    // morph and must not wait for a bar downbeat on the grid it is leaving.
+    this._clearEvolution();
     for (const weaponId of this.getActiveWeapons()) {
       this._readyFire(weaponId);
     }

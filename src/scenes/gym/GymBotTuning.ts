@@ -60,10 +60,12 @@
  * @module src/scenes/gym/GymBotTuning
  */
 
+import { notifyAimHit } from '../../ai/aimHit';
 import { BotInputGovernor } from '../../ai/botHumanLike';
 import { buildBotSnapshot, type BotSnapshot, type BotSnapshotScene } from '../../ai/botSnapshot';
 import {
   createCompetentBotBrain,
+  hasFireLine,
   resolveCompetentTunables,
   type BotBrain,
   type CompetentBotTunables,
@@ -96,7 +98,9 @@ import { makeCollapsible } from '../../utils/gymPanel';
 import { attachTooltip } from '../../utils/gymTooltip';
 import { generateRandomLevel } from '../../utils/randomLevel';
 import type { ControlInput } from '../../utils/movementModel';
+import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import type { SceneSetupState } from '../core/sceneSetup';
+import type { EnemyEntity } from '../../entities/enemyFactory';
 import type { LevelDefinition } from '../../waves/Formations';
 import { GymLevel } from './GymLevel';
 
@@ -234,6 +238,35 @@ export class GymBotTuning extends GymLevel {
     return this.botGovernor.current();
   }
 
+  /**
+   * Fire discipline for the tuning gym's bot (AH-0MWPOET5A002IPTP ·
+   * fire-discipline remediation): the **same** shared {@link hasFireLine}
+   * predicate and target set `PlayScene` uses, so the gym shows the shipped
+   * demo bot's weapon discipline and cannot diverge from the game.
+   */
+  protected override botFireAllowed(): boolean {
+    const player = this.getPlayer();
+    if (!player) return true;
+    return hasFireLine({
+      origin: { x: player.x, y: player.y },
+      heading: player.getHeading(),
+      weaponRange: player.getEffectiveWeaponRange(),
+      targets: this.getHitscanTargets(),
+      world: { width: GAME_WIDTH, height: GAME_HEIGHT },
+    });
+  }
+
+  /**
+   * A player-damage point landed on an enemy (AH-0MWR054VE006YSLN): forward
+   * the struck entity's bot-side id to this gym's governor through the shared
+   * aim-hit helper. The gym always runs the bot, so it always forwards — the
+   * identical helper `PlayScene` uses, so the game and the gym resolve the
+   * same id and cannot diverge.
+   */
+  protected override onPlayerBulletHitEnemy(enemy: EnemyEntity): void {
+    notifyAimHit(this.botGovernor, enemy);
+  }
+
   /** Rebuilds the brain and governor from the current panel values. */
   private _applyTuning(): void {
     this.botBrain = createCompetentBotBrain({
@@ -277,6 +310,11 @@ export class GymBotTuning extends GymLevel {
         rotationAcceleration: rotation.rotationAcceleration,
         rotationDeceleration: rotation.rotationDeceleration,
         reverseEnabled: player.isReverseEnabled() ?? true,
+        // The adaptive aim error re-arms after a repositioning move
+        // (AH-0MWR057Q8004PBOD · AC4): the same live position and arena the
+        // shipped demo feeds, so the gym and the game decay/re-arm identically.
+        position: { x: movement.x, y: movement.y },
+        world: { width: GAME_WIDTH, height: GAME_HEIGHT },
       },
     );
   }

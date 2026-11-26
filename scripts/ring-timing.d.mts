@@ -17,6 +17,15 @@ export interface ParsedRingTimingArgs {
   json: boolean;
   /** Optional JSON artifact path (relative to the repo root). */
   out: string | null;
+  /** Measure the one-level income view (full-campaign sortie) instead. */
+  oneLevel: boolean;
+  /** Optional per-deployment income artifact path. */
+  incomeOut: string | null;
+  /**
+   * Aggression a ring gains across all its captures (the capture-progress
+   * ramp override; `null` keeps the authored `HEX_AGGRESSION_RAMP_PER_RING`).
+   */
+  aggressionRamp: number | null;
   /** Show usage instead of measuring. */
   help: boolean;
 }

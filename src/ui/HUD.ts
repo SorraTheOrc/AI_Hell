@@ -97,6 +97,8 @@ import {
 } from '../powerups/powerUpLevels';
 import {
   drawCountdownRing,
+  drawEvolutionBadgeGlyph,
+  drawEvolvedWeaponIcon,
   drawPowerUpIcon,
   drawWeaponIcon,
   ICON_COLORS,
@@ -105,6 +107,11 @@ import {
   weaponIconColour,
 } from '../powerups/icons';
 import type { WeaponDropIconId } from '../powerups/icons';
+import {
+  getEvolvedWeaponDefinition,
+  type EvolutionTransitionKind,
+  type EvolvedWeaponId,
+} from '../utils/weaponEvolutions';
 import { resolveCountdownSweep } from './hudCountdown';
 import { HUD_DEPTH, POWER_UP_SLOT_CAP } from '../core/constants';
 import {
@@ -328,6 +335,22 @@ export function buildHUDLabel(
 }
 
 /**
+ * The transient badge the HUD renders for a weapon evolution (epic AC7): the
+ * evolved weapon that fused (`'fusion'`) or reverted (`'expiry'`), resolved
+ * from the shared weapon-evolution definitions. The badge names the evolved
+ * weapon plus its icon, and the `kind` selects the merge/split glyph and the
+ * `'expired'` text suffix so the two read differently without relying on
+ * colour alone.
+ */
+export interface EvolutionBadgeState {
+  readonly kind: EvolutionTransitionKind;
+  readonly evolvedId: EvolvedWeaponId;
+}
+
+/** Name of the badge Text object (test/debug access). */
+export const EVOLUTION_BADGE_NAME = 'hud-evolution-badge';
+
+/**
  * Standalone Phaser HUD class. Cast `scene` explicitly when the scene is
  * untyped: the class is intentionally a plain `Phaser.Container` so it
  * binds to any scene without importing scene-specific types.
@@ -351,6 +374,13 @@ export interface HUDOptions {
    * (AH-0MVVJRRN10038VFR). Without a provider the HUD is unchanged.
    */
   getSlotState?: () => PowerUpSlotState | null;
+  /**
+   * Reads the current evolution badge to render (or `null` to hide it). The
+   * scene owns the badge lifecycle (persistent while fused, a short hold on
+   * expiry); the HUD only renders what it is given, so the badge is
+   * unit-testable with a plain function double.
+   */
+  getEvolutionBadge?: () => EvolutionBadgeState | null;
 }
 
 /**
@@ -397,6 +427,7 @@ export class HUD extends Phaser.GameObjects.Container {
   private _showLives: boolean;
   private _getWeaponLevel?: (weaponId: string) => number;
   private _getSlotState?: () => PowerUpSlotState | null;
+  private _getEvolutionBadge?: () => EvolutionBadgeState | null;
   /** Weapon rows rendered this frame (id + label), for the loadout read-out. */
   private _weaponRows: Array<{
     id: string;
@@ -420,6 +451,20 @@ export class HUD extends Phaser.GameObjects.Container {
   private _minerals = 0;
   private _mineralCapacity = 0;
   /**
+   * The evolution badge currently rendered (name + icon + kind glyph), or
+   * `null` when hidden. Resolved each `refresh()` from the scene-provided
+   * `getEvolutionBadge` option.
+   */
+  private _badgeState: EvolutionBadgeState | null = null;
+  /** Icon glyph of the badge (evolved weapon icon). */
+  private _badgeIcon: Phaser.GameObjects.Graphics;
+  /** Fusion/expiry shape glyph drawn beside the badge icon. */
+  private _badgeGlyph: Phaser.GameObjects.Graphics;
+  /** Badge name text (evolved name, suffixed with `' expired'` on expiry). */
+  private _badgeText: Phaser.GameObjects.Text;
+  /** Signature of the badge currently drawn (`null` = never). */
+  private _drawnBadgeSignature: string | null = null;
+  /**
    * Signature of the row list currently on screen; `null` before the first
    * render. `refresh()` rebuilds only when this changes (AH-0MVXV0FFJ0066EC8):
    * the previous code destroyed and re-created every row's `Text`/`Graphics`
@@ -438,6 +483,7 @@ export class HUD extends Phaser.GameObjects.Container {
     this._showLives = options?.showLives ?? true;
     this._getWeaponLevel = options?.getWeaponLevel;
     this._getSlotState = options?.getSlotState;
+    this._getEvolutionBadge = options?.getEvolutionBadge;
 
     this._iconGraphics = new Phaser.GameObjects.Graphics(scene);
     this._livesLabel = new Phaser.GameObjects.Text(
@@ -460,11 +506,24 @@ export class HUD extends Phaser.GameObjects.Container {
     );
     this._budgetLabel.name = SLOT_BUDGET_NAME;
     this._budgetLabel.setVisible(false);
+    // Evolution badge: icon + name + fusion/expiry glyph, hidden until a
+    // badge state is provided. Drawn on top of the permanent children so a
+    // transient expiry badge reads over the row column (epic AC7).
+    this._badgeIcon = new Phaser.GameObjects.Graphics(scene);
+    this._badgeGlyph = new Phaser.GameObjects.Graphics(scene);
+    this._badgeText = new Phaser.GameObjects.Text(scene, ICON_X, 0, '', TEXT_STYLE);
+    this._badgeText.name = EVOLUTION_BADGE_NAME;
+    this._badgeIcon.setVisible(false);
+    this._badgeGlyph.setVisible(false);
+    this._badgeText.setVisible(false);
     this.add([
       this._iconGraphics,
       this._livesLabel,
       this._mineralBar,
       this._budgetLabel,
+      this._badgeIcon,
+      this._badgeGlyph,
+      this._badgeText,
     ]);
 
     this._registry = registry;
@@ -512,6 +571,11 @@ export class HUD extends Phaser.GameObjects.Container {
     return this._registry;
   }
 
+  /** The evolution badge currently rendered (name + icon source), or null. */
+  getEvolutionBadgeState(): EvolutionBadgeState | null {
+    return this._badgeState;
+  }
+
   /**
    * Brings the display rows, slot budget, lives label and mineral hold bar in
    * line with the current registry state. Call after the registry ticks or
@@ -522,6 +586,10 @@ export class HUD extends Phaser.GameObjects.Container {
    * unchanged does no GameObject churn (AH-0MVXV0FFJ0066EC8).
    */
   refresh(): void {
+    // Resolve the evolution badge first: its visibility shifts the whole
+    // column down one band, so the lives label, slot budget, mineral bar and
+    // every row must read the same badge offset (epic AC7).
+    this._refreshBadgeState();
     this._drawSlotBudget();
 
     // Resolve the row plan, then rebuild the row objects **only when the
@@ -566,6 +634,9 @@ export class HUD extends Phaser.GameObjects.Container {
 
     // Mineral hold bar row (drawn only when a capacity is configured).
     this._drawMineralBar();
+    // Evolution badge (name + icon + kind glyph), drawn last so it always
+    // sits above the row column it reserves (epic AC7).
+    this._drawEvolutionBadge();
   }
 
   /**
@@ -632,13 +703,15 @@ export class HUD extends Phaser.GameObjects.Container {
       livesVisibility = 'hide';
     }
 
-    // Layout inputs `_rowY()` reads: a lives row, a mineral bar row and a
-    // slot-budget row each shift every row down by one band, so a change to
-    // any of them must force a rebuild even when the row text is identical.
+    // Layout inputs `_rowY()` reads: a lives row, a mineral bar row, a
+    // slot-budget row and the evolution badge each shift every row down by
+    // one band, so a change to any of them must force a rebuild even when the
+    // row text is identical.
     const layoutKey = [
       this._showLives ? 1 : 0,
       this._mineralCapacity > 0 ? 1 : 0,
       this._budgetOffset() > 0 ? 1 : 0,
+      this._badgeOffset() > 0 ? 1 : 0,
     ].join('/');
     const signature = [
       layoutKey,
@@ -791,8 +864,18 @@ export class HUD extends Phaser.GameObjects.Container {
       livesOffset +
       mineralOffset +
       this._budgetOffset() +
+      this._badgeOffset() +
       row * ROW_HEIGHT
     );
+  }
+
+  /**
+   * Extra offset reserved for the evolution badge. A visible badge owns the
+   * top band of the column, so the lives label, slot budget, mineral bar and
+   * every row shift down by one row while it is shown (epic AC7).
+   */
+  private _badgeOffset(): number {
+    return this._badgeState !== null ? ROW_HEIGHT : 0;
   }
 
   /**
@@ -811,6 +894,69 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   /**
+   * Resolves the current evolution badge and re-anchors the lives label for
+   * the badge's reserved top band. Called at the top of {@link HUD.refresh}
+   * so every other layout read (slot budget, mineral bar, rows) sees the same
+   * badge offset.
+   */
+  private _refreshBadgeState(): void {
+    this._badgeState = this._getEvolutionBadge?.() ?? null;
+    // The lives label is a permanent child (positioned once in the
+    // constructor), so it must move down while the badge owns the top band.
+    this._livesLabel.setPosition(
+      ICON_X,
+      this._badgeOffset() + ROW_HEIGHT * 0.5,
+    );
+  }
+
+  /**
+   * Draws the evolution badge: the evolved weapon's icon, its name and the
+   * fusion/expiry shape glyph. Fusion reads as the bare name; expiry appends
+   * `' expired'` and switches the glyph to the split chevron, so the two never
+   * rely on colour alone (epic AC7). Hidden when no badge is provided.
+   */
+  private _drawEvolutionBadge(): void {
+    const state = this._badgeState;
+    if (!state) {
+      this._badgeIcon.setVisible(false);
+      this._badgeGlyph.setVisible(false);
+      this._badgeText.setVisible(false);
+      this._drawnBadgeSignature = null;
+      return;
+    }
+
+    const definition = getEvolvedWeaponDefinition(state.evolvedId);
+    const label =
+      state.kind === 'expiry'
+        ? `${definition.name} expired`
+        : definition.name;
+    const signature = `${state.kind}|${state.evolvedId}`;
+
+    // Rebuild the badge content only when its kind/evolved id actually moves.
+    if (signature !== this._drawnBadgeSignature) {
+      this._drawnBadgeSignature = signature;
+      const iconY = ROW_HEIGHT / 2;
+      this._badgeIcon.clear();
+      this._badgeGlyph.clear();
+      drawEvolvedWeaponIcon(this._badgeIcon, state.evolvedId, ICON_X, iconY, 8);
+      drawEvolutionBadgeGlyph(
+        this._badgeGlyph,
+        state.kind,
+        ICON_X + 12,
+        iconY,
+        5,
+        definition.colour,
+      );
+      this._badgeText.setPosition(ICON_X + 24, ROW_HEIGHT * 0.25);
+      this._badgeText.setText(label);
+    }
+
+    this._badgeIcon.setVisible(true);
+    this._badgeGlyph.setVisible(true);
+    this._badgeText.setVisible(true);
+  }
+
+  /**
    * Draws the `Loadout n/6` slot-budget read-out from the shared model.
    * Inert (invisible, empty) when no provider is wired or no player exists
    * yet, so a scene before the ship spawns never shows a false occupancy.
@@ -826,7 +972,7 @@ export class HUD extends Phaser.GameObjects.Container {
     const mineralOffset = this._mineralCapacity > 0 ? ROW_HEIGHT : 0;
     this._budgetLabel.setPosition(
       ICON_X,
-      livesOffset + mineralOffset + ROW_HEIGHT * 0.25,
+      this._badgeOffset() + livesOffset + mineralOffset + ROW_HEIGHT * 0.25,
     );
     this._budgetLabel.setText(`Loadout ${state.used}/${POWER_UP_SLOT_CAP}`);
     this._budgetLabel.setVisible(true);
@@ -848,6 +994,7 @@ export class HUD extends Phaser.GameObjects.Container {
       visible ? 1 : 0,
       visible ? this._mineralFillWidth() : 0,
       this._showLives ? 1 : 0,
+      this._badgeOffset() > 0 ? 1 : 0,
     ].join('|');
     if (signature === this._drawnMineralBarSignature) return;
     this._drawnMineralBarSignature = signature;
@@ -862,7 +1009,7 @@ export class HUD extends Phaser.GameObjects.Container {
 
     bar.setVisible(true);
     const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
-    const y = livesOffset + (ROW_HEIGHT - MINERAL_BAR_HEIGHT) / 2;
+    const y = this._badgeOffset() + livesOffset + (ROW_HEIGHT - MINERAL_BAR_HEIGHT) / 2;
 
     bar.lineStyle(MINERAL_BAR_STROKE, MINERAL_BAR_OUTLINE_COLOR, 1);
     bar.strokeRect(ICON_X, y, MINERAL_BAR_WIDTH, MINERAL_BAR_HEIGHT);

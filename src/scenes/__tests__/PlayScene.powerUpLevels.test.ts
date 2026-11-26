@@ -57,7 +57,7 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     // the field pickup levels the power-up exactly once.
     expect(player.getPowerUpLevel('speed_boost')).toBe(1);
     expect(effects.isActive('speed_boost')).toBe(true);
-    expect(effects.speedMultiplier()).toBeGreaterThan(1);
+    expect(effects.fireRateMultiplier()).toBeGreaterThan(1);
   });
 
   it('a hold-full level-up raises the level by exactly one, no double-count (AC1/AC3)', async () => {
@@ -126,7 +126,7 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     // The level rose and the immediate effect is applied permanently.
     expect(player.getPowerUpLevel('speed_boost')).toBe(2);
     expect(effects.isActive('speed_boost')).toBe(true);
-    expect(effects.speedMultiplier()).toBeGreaterThan(1);
+    expect(effects.fireRateMultiplier()).toBeGreaterThan(1);
     // Permanent — it never times out.
     effects.tick(120);
     expect(effects.isActive('speed_boost')).toBe(true);

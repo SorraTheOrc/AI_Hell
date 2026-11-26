@@ -34,12 +34,14 @@ import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import { createRingState } from '../core/hangarWar/hexRing';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import type { HangarEntry } from '../data/hangarCatalogue';
-import { HANGAR_CATALOGUE } from '../data/hangarCatalogue';
+import { HANGAR_CATALOGUE, isPurchasableEntry } from '../data/hangarCatalogue';
 import { MAX_PERMANENT_LEVEL } from '../core/hangarWar/hangarEconomy';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
 import {
+  BUILDOUT_ROW_KEY,
+  HANGAR_BUILDOUT_ROW_Y,
   HANGAR_SCREEN_TITLE,
   HANGAR_DEPLOY_ROW_Y,
   HANGAR_INTEL_FIRST_LINE_Y,
@@ -47,11 +49,16 @@ import {
   HANGAR_MAP_ROW_Y,
   HANGAR_RESTART_ROW_Y,
   HANGAR_ROW_STEP,
+  HANGAR_NEUTRAL_MARKER,
   HANGAR_STRONG_BACKGROUND,
   HANGAR_STRONG_COLOR,
   HANGAR_STRONG_MARKER,
   HANGAR_UNLOCKS_HEADING_Y,
   HANGAR_UNLOCK_ROW_START_Y,
+  HANGAR_UNLOCK_SCROLL_INDICATOR_Y,
+  HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+  HANGAR_UNLOCK_VIEWPORT_TOP_Y,
+  HANGAR_UNLOCK_VISIBLE_ROWS,
   HANGAR_WEAK_BACKGROUND,
   HANGAR_WEAK_COLOR,
   HANGAR_WEAK_MARKER,
@@ -63,10 +70,13 @@ import {
   buildHangarRestartRow,
   buildHangarScreenModel,
   buildHangarUnlockRows,
+  buildHangarWeaponOptions,
   equipHangarHull,
   formatRingLine,
   hangarAttractDecision,
   hangarLowestRowY,
+  hangarRightColumnLayout,
+  hangarUnlockMaxScroll,
   purchaseHangarEntry,
   renderHangarScreen,
   restartHangarWar,
@@ -167,15 +177,18 @@ describe('hangar screen model (pure)', () => {
       'hull-1',
       'hull-2',
       'hull-3',
-      'spread',
-      'wave_laser',
-      'ricochet',
-      'cluster',
       'hardened_plating',
       'anti_maw_plating',
       // The authored level-bearing power-ups (AH-0MWKT12BT001106T).
       'bomb',
       'magnet',
+      // The purchasable weapon entries, derived from the runtime catalogue and
+      // appended after the authored set (AH-0MWWI3KIO001DY5C). The eleven
+      // grant-only derived weapons are absent until granted.
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
     ]);
     // Owned by the payload's unlocked hull (even though it is affordable).
     const ownedHull = rows.find((row) => row.id === 'hull-2')!;
@@ -282,20 +295,25 @@ describe('hangar screen model (pure)', () => {
     expect(model.weaponOptions[0].actionable).toBe(true);
 
     expect(model.focusOrder).toEqual([
-      // The owned starter weapon is an affordable upgrade, so it is the first
-      // actionable row (it sits fourth in catalogue order).
-      'buy:spread',
-      'buy:wave_laser',
-      'buy:ricochet',
-      'buy:cluster',
+      // The purchasable weapons are derived entries appended after the
+      // authored hulls/modifiers/power-ups, so the affordable weapon upgrades
+      // now follow them (AH-0MWWI3KIO001DY5C). The owned starter weapon is an
+      // affordable upgrade, so it stays in the actionable rows.
       'buy:hardened_plating',
       'buy:anti_maw_plating',
       // `bomb` is affordable at ring 1; `magnet` is ring-2 gated, so it is not
       // an actionable row here (AH-0MWKT12BT001106T).
       'buy:bomb',
+      'buy:spread',
+      'buy:wave_laser',
+      'buy:ricochet',
+      'buy:cluster',
       'hull:hull-2',
       'weapon:spread',
       'save-build',
+      // The apply-suggested-buildout row sits directly above the deployment
+      // it feeds (AH-0MWOWEF3Q008BO5J).
+      'buildout',
       'deploy',
       'map',
       'restart',
@@ -320,7 +338,13 @@ describe('hangar screen model (pure)', () => {
     const model = buildHangarScreenModel(UNARMED_PAYLOAD);
     // A fleet can always deploy, even with nothing affordable, and the map is
     // always reachable. The restart row is always actionable too.
-    expect(model.focusOrder).toEqual(['save-build', 'deploy', 'map', 'restart']);
+    expect(model.focusOrder).toEqual([
+      'save-build',
+      'buildout',
+      'deploy',
+      'map',
+      'restart',
+    ]);
     expect(model.deployRow.actionable).toBe(true);
     expect(model.unlockRows.every((row) => !row.actionable)).toBe(true);
     expect(model.modifierOptions).toEqual([]);
@@ -328,18 +352,20 @@ describe('hangar screen model (pure)', () => {
 
   it('builds the deployment row from the pure deployment payload', () => {
     const model = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
-    // hex-1 is held; the weakest *unheld* hex is hex-2 (aggression 3), which
-    // selects campaign level 4 through the shipped difficulty curves.
+    // hex-1 is held; the weakest *unheld* hex is hex-2 (authored aggression 3).
+    // The ring's capture-progress ramp raises it (one of two hexes held = one
+    // of the two-point ramp, AH-0MWFDQ9EY004NO4X), so the row shows aggression
+    // 4 and campaign level 5 — the number the deployment actually launches at.
     expect(model.deployRow).toMatchObject({
       key: 'deploy',
       hexId: 'hex-2',
-      aggression: 3,
-      startLevel: 4,
+      aggression: 4,
+      startLevel: 5,
       actionable: true,
     });
     expect(model.deployRow.label).toContain('hex hex-2');
-    expect(model.deployRow.label).toContain('aggression 3');
-    expect(model.deployRow.label).toContain('level 4');
+    expect(model.deployRow.label).toContain('aggression 4');
+    expect(model.deployRow.label).toContain('level 5');
   });
 
   it('lists owned modifiers in the deployment selector', () => {
@@ -362,6 +388,7 @@ describe('hangar screen model (pure)', () => {
       'weapon:spread',
       'modifier:hardened_plating',
       'save-build',
+      'buildout',
       'deploy',
       'map',
       'restart',
@@ -392,6 +419,79 @@ describe('hangar screen model (pure)', () => {
       expect(broke.hullId).toBe('hull-1');
       expect(broke.loadout.startingWeapons).toEqual(['spread']);
     }
+  });
+});
+
+// ── Hex-granted weapons are visible and equippable ───────────────
+// (AH-0MWWI3O2S0015GHM, parent AH-0MWW6PNA5008NC91 AC4)
+//
+// A captured hex records its award in `unlockedWeapons`; the derivation makes
+// every hex-granted weapon a catalogue entry, so the unlock tree shows a named
+// owned row and the deployment selector offers a real loadout slot. These
+// payloads hold the ids exactly as an **existing save** written before the fix
+// does, proving the save lights up without a migration.
+
+describe('hex-granted weapons appear in the hangar (AH-0MWWI3O2S0015GHM)', () => {
+  /** The five weapons an authored hex awards by id (grant-only in the tree). */
+  const HEX_GRANTED_WEAPON_IDS = [
+    'rapid',
+    'arc',
+    'broadside',
+    'dual',
+    'nova',
+  ];
+
+  /** A payload whose fleet already holds every hex-granted weapon id. */
+  function payloadHoldingHexWeapons(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.unlockedWeapons = [
+      ...payload.hangar.unlockedWeapons,
+      ...HEX_GRANTED_WEAPON_IDS,
+    ];
+    return payload;
+  }
+
+  it('renders a named owned unlock row for every hex-granted weapon', () => {
+    const rows = buildHangarUnlockRows(payloadHoldingHexWeapons());
+    for (const id of HEX_GRANTED_WEAPON_IDS) {
+      const row = rows.find((candidate) => candidate.id === id);
+      expect(row, `unlock row for ${id}`).toBeDefined();
+      expect(row!.kind).toBe('weapon');
+      expect(row!.name.trim().length).toBeGreaterThan(0);
+      expect(row!.label).toContain(row!.name);
+      // An owned level-bearing weapon is an upgrade affordance, never a
+      // purchase row (`buyable`/`gated`/`unaffordable`).
+      expect([
+        'owned',
+        'upgradable',
+        'upgrade-unaffordable',
+        'capped',
+      ]).toContain(row!.state);
+    }
+  });
+
+  it('offers every hex-granted weapon as a loadout slot', () => {
+    const options = buildHangarWeaponOptions(payloadHoldingHexWeapons());
+    for (const id of HEX_GRANTED_WEAPON_IDS) {
+      const option = options.find((candidate) => candidate.id === id);
+      expect(option, `weapon option for ${id}`).toBeDefined();
+      expect(option!.name.trim().length).toBeGreaterThan(0);
+      expect(option!.actionable).toBe(true);
+    }
+  });
+
+  it('equips a hex-granted weapon through the shared toggle', () => {
+    const payload = payloadHoldingHexWeapons();
+    const result = toggleHangarWeapon(payload, 'rapid');
+    expect(result.ok).toBe(true);
+    expect(result.payload.hangar.activeLoadout.startingWeapons).toContain(
+      'rapid',
+    );
+    expect(
+      buildHangarWeaponOptions(result.payload).find(
+        (candidate) => candidate.id === 'rapid',
+      )!.equipped,
+    ).toBe(true);
   });
 });
 
@@ -510,7 +610,8 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
       (option) => option.id === 'ricochet',
     )!;
     expect(ricochet.matchup).toBe('neutral');
-    expect(ricochet.label).toBe('LOADOUT Ricochet');
+    expect(ricochet.label).toBe(`LOADOUT Ricochet — ${HANGAR_NEUTRAL_MARKER}`);
+    expect(ricochet.matchupGlyph.glyph).toBe('●');
 
     // The unlock tree's weapon entries carry the same verdicts, including the
     // owned `spread` upgrade row and the `wave_laser` purchase row.
@@ -678,7 +779,9 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
       targetHexId: 'hex-r1-6',
     });
 
-    // The single-sourced geometry fits the worst-case (full catalogue) model.
+    // This authored ring owns four weapons, so its tree fits one window. The
+    // full 23-row roster that overflows is covered by the scrolling spec below;
+    // either way the window geometry stays above the fixed block.
     expect(hangarLowestRowY(model)).toBeLessThan(HANGAR_RESTART_ROW_Y);
     expect(HANGAR_ROW_STEP).toBeGreaterThan(0);
     expect(HANGAR_INTEL_FIRST_LINE_Y + 2 * HANGAR_INTEL_LINE_STEP).toBeLessThan(
@@ -686,12 +789,22 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
     );
     expect(HANGAR_UNLOCKS_HEADING_Y).toBeLessThan(HANGAR_UNLOCK_ROW_START_Y);
     expect(HANGAR_UNLOCK_ROW_START_Y).toBeLessThan(HANGAR_RESTART_ROW_Y);
+    expect(HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y).toBeLessThan(HANGAR_BUILDOUT_ROW_Y);
+    expect(HANGAR_UNLOCK_SCROLL_INDICATOR_Y).toBeLessThan(
+      HANGAR_BUILDOUT_ROW_Y,
+    );
 
     const scene = await bootHangarForRender(payload);
     const view = renderHangarScreen(scene, model);
     try {
+      // The fixed bottom-row block (buildout/deploy/map/restart) is excluded:
+      // those rows are pinned by their own geometry, not the column layout.
       const regular = view.rows.filter(
-        (row) => row.key !== 'deploy' && row.key !== 'map' && row.key !== 'restart',
+        (row) =>
+          row.key !== 'deploy'
+          && row.key !== 'map'
+          && row.key !== 'restart'
+          && row.key !== 'buildout',
       );
       const lowest = Math.max(...regular.map((row) => row.text.y));
       expect(lowest).toBe(hangarLowestRowY(model));
@@ -699,6 +812,201 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
     } finally {
       view.destroy();
     }
+  });
+});
+
+// ── The grown unlock tree scrolls (AH-0MWWI3ONJ004QRR9) ──────────
+//
+// The full derived roster is 23 unlock rows, which is taller than the space
+// above the fixed bottom block. These specs pin the scrolling window, the
+// pointer affordances and the keyboard auto-scroll, and prove the last row is
+// reachable without any row colliding with the buildout/deploy/map/restart
+// block. The catalogue is injected with every weapon purchasable so the tree
+// holds 23 rows while the right-hand loadout stays at the four owned weapons:
+// this isolates the unlock geometry the item is about.
+describe('hangar unlock tree scrolling (AH-0MWWI3ONJ004QRR9)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** A catalogue where every weapon is for sale, so the tree holds 23 rows. */
+  function fullRosterCatalogue(): HangarEntry[] {
+    return HANGAR_CATALOGUE.map((entry) =>
+      entry.kind === 'weapon' && !isPurchasableEntry(entry)
+        ? { ...entry, minRing: 1, price: { minerals: 1, cores: 0 } }
+        : entry,
+    );
+  }
+
+  /** Ring 1 with every non-weapon collectible, funded so rows are activatable. */
+  function fullRosterPayload(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['spread'],
+      modifiers: [],
+    };
+    payload.hangar.bankedMinerals = 10_000;
+    payload.hangar.bankedCores = 100;
+    return payload;
+  }
+
+  /** Boots the scene with the injected payload and catalogue. */
+  async function bootWithRoster(): Promise<HangarScene> {
+    booted = await bootScene([HangarScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: fullRosterPayload(),
+      storage: null,
+      catalogue: fullRosterCatalogue(),
+    });
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: HangarScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('fits the 23-row tree into a scrolling window above the fixed block', async () => {
+    const payload = fullRosterPayload();
+    const catalogue = fullRosterCatalogue();
+    const model = buildHangarScreenModel(payload, catalogue, {
+      targetHexId: 'hex-r1-6',
+    });
+
+    expect(model.unlockRows).toHaveLength(23);
+    // The **unscrolled** geometry overflows — that is why the tree scrolls —
+    // but the visible window, its pointer cue and the right column stay clear
+    // of the fixed block.
+    expect(hangarLowestRowY(model)).toBeGreaterThan(HANGAR_BUILDOUT_ROW_Y);
+    expect(HANGAR_UNLOCK_VIEWPORT_TOP_Y).toBe(HANGAR_UNLOCK_ROW_START_Y);
+    expect(HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y).toBeLessThan(HANGAR_BUILDOUT_ROW_Y);
+    expect(HANGAR_UNLOCK_SCROLL_INDICATOR_Y).toBeGreaterThan(
+      HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+    );
+    expect(HANGAR_UNLOCK_SCROLL_INDICATOR_Y).toBeLessThan(HANGAR_BUILDOUT_ROW_Y);
+    const right = hangarRightColumnLayout(model);
+    const rightLowest = Math.max(
+      ...right.hullRowY,
+      ...right.weaponRowY,
+      ...right.powerUpRowY,
+      ...right.modifierRowY,
+      ...right.savedBuildRowY,
+    );
+    expect(rightLowest).toBeLessThan(HANGAR_RESTART_ROW_Y);
+
+    const scene = await bootWithRoster();
+    // A read-only render of the same model (the gym's path) exercises the
+    // pointer affordances without the scene's handlers.
+    const view = renderHangarScreen(scene, model);
+    try {
+      const unlockRows = model.unlockRows.map(
+        (row) => view.rows.find((candidate) => candidate.key === row.key)!,
+      );
+      // Only the first window is visible; the rest is hidden, not drawn over
+      // the fixed block.
+      const visibleRows = unlockRows.filter((row) => row.text.visible);
+      expect(visibleRows).toHaveLength(HANGAR_UNLOCK_VISIBLE_ROWS);
+      for (const row of visibleRows) {
+        expect(row.text.y).toBeGreaterThanOrEqual(HANGAR_UNLOCK_VIEWPORT_TOP_Y);
+        expect(row.text.y).toBeLessThanOrEqual(HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y);
+      }
+      expect(Math.max(...visibleRows.map((row) => row.text.y))).toBeLessThan(
+        HANGAR_BUILDOUT_ROW_Y,
+      );
+
+      // A pointer click pages the window to the end, revealing the last row.
+      expect(view.scrollControls.up.visible).toBe(false);
+      expect(view.scrollControls.down.visible).toBe(true);
+      view.scrollControls.down.emit('pointerdown');
+      expect(view.getUnlockScroll()).toBe(hangarUnlockMaxScroll(model));
+      const lastRow = unlockRows.at(-1)!;
+      expect(lastRow.text.visible).toBe(true);
+      expect(lastRow.text.y).toBeGreaterThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_TOP_Y,
+      );
+      expect(lastRow.text.y).toBeLessThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+      );
+      expect(view.scrollControls.up.visible).toBe(true);
+      expect(view.scrollControls.down.visible).toBe(false);
+
+      // Scrolling back returns to the first row (no row is stranded).
+      view.scrollControls.up.emit('pointerdown');
+      expect(view.getUnlockScroll()).toBe(0);
+      expect(unlockRows[0].text.visible).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it('keeps every keyboard-focused unlock row inside the visible window', async () => {
+    const scene = await bootWithRoster();
+    const model = scene.getModel();
+    expect(model.unlockRows).toHaveLength(23);
+
+    const actionable = model.unlockRows.filter((row) => row.actionable);
+    // More actionable rows than one page, so focus must actually scroll.
+    expect(actionable.length).toBeGreaterThan(HANGAR_UNLOCK_VISIBLE_ROWS);
+
+    let scrolled = false;
+    for (const row of actionable) {
+      expect(scene.focusRow(row.key), `focus ${row.key}`).toBe(true);
+      expect(scene.getFocusedKey()).toBe(row.key);
+      const rendered = scene
+        .getRows()
+        .find((candidate) => candidate.key === row.key)!;
+      expect(rendered.text.visible, `${row.key} visible`).toBe(true);
+      expect(rendered.text.y).toBeGreaterThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_TOP_Y,
+      );
+      expect(rendered.text.y).toBeLessThanOrEqual(
+        HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+      );
+      if (scene.getUnlockScroll() > 0) scrolled = true;
+    }
+    expect(scrolled).toBe(true);
+  });
+
+  it('auto-scrolls as Tab walks the focus order past the first page', async () => {
+    const scene = await bootWithRoster();
+    const model = scene.getModel();
+    const first = model.unlockRows.find((row) => row.actionable)!;
+    expect(scene.focusRow(first.key)).toBe(true);
+
+    let scrolled = false;
+    for (let step = 0; step < model.focusOrder.length + 2; step += 1) {
+      const key = scene.getFocusedKey();
+      if (key?.startsWith('buy:')) {
+        const rendered = scene
+          .getRows()
+          .find((candidate) => candidate.key === key)!;
+        expect(rendered.text.visible, `${key} visible`).toBe(true);
+        expect(rendered.text.y).toBeLessThanOrEqual(
+          HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+        );
+      }
+      if (scene.getUnlockScroll() > 0) scrolled = true;
+      pressKey(scene, { key: 'Tab' });
+    }
+    expect(scrolled).toBe(true);
   });
 });
 
@@ -992,19 +1300,22 @@ describe('HangarScene', () => {
       'buy:hull-1',
       'buy:hull-2',
       'buy:hull-3',
-      'buy:spread',
-      'buy:wave_laser',
-      'buy:ricochet',
-      'buy:cluster',
       'buy:hardened_plating',
       'buy:anti_maw_plating',
       // The authored power-up unlock rows (AH-0MWKT12BT001106T).
       'buy:bomb',
       'buy:magnet',
+      // The purchasable weapon rows, derived and appended after the authored
+      // set (AH-0MWWI3KIO001DY5C).
+      'buy:spread',
+      'buy:wave_laser',
+      'buy:ricochet',
+      'buy:cluster',
       'hull:hull-1',
       'hull:hull-2',
       'weapon:spread',
       'save-build',
+      'buildout',
       'deploy',
       'map',
       'restart',
@@ -1159,9 +1470,12 @@ describe('HangarScene', () => {
     const storage = memoryStorage(UNARMED_PAYLOAD);
     const scene = await bootHangar({ storage });
 
-    // Only the saved-build save row, the deployment, the map and the restart
-    // row are focusable; no purchase/equip row can be reached.
+    // Only the saved-build save row, the apply-suggested-buildout row, the
+    // deployment, the map and the restart row are focusable; no
+    // purchase/equip row can be reached.
     expect(scene.getFocusedKey()).toBe(SAVE_BUILD_ROW_KEY);
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedKey()).toBe(BUILDOUT_ROW_KEY);
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedKey()).toBe('deploy');
     pressKey(scene, { key: 'Tab' });
@@ -1242,8 +1556,9 @@ describe('HangarScene', () => {
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isHangarWarRun()).toBe(true);
     expect(play.getHangarWarDeployment()).toEqual(deployment);
-    // hex-2 (unheld, aggression 3) selects campaign level 4.
-    expect(play.getWaveManager().level).toBe(4);
+    // hex-2 (unheld, authored aggression 3, ramped to 4 by the ring's
+    // capture progress — AH-0MWFDQ9EY004NO4X) selects campaign level 5.
+    expect(play.getWaveManager().level).toBe(5);
   });
 
   it('launches the deployment from the DEPLOY row on a pointer click', async () => {
@@ -1709,7 +2024,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.maxLevel).toBe(MAX_PERMANENT_LEVEL);
     expect(row.upgradePriceLabel).toBe('150 min');
     expect(row.actionLabel).toBe('UPGRADE · 150 min');
-    expect(row.label).toBe('Spread Cannon — LV 1/5 — UPGRADE · 150 min');
+    expect(row.label).toBe('Spread — LV 1/5 — UPGRADE · 150 min');
     expect(row.actionable).toBe(true);
   });
 
@@ -1720,7 +2035,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.level).toBe(2);
     expect(row.upgradePriceLabel).toBe('200 min · 1 cores');
     expect(row.actionLabel).toBe('UPGRADE · 200 min · 1 cores');
-    expect(row.label).toBe('Spread Cannon — LV 2/5 — UPGRADE · 200 min · 1 cores');
+    expect(row.label).toBe('Spread — LV 2/5 — UPGRADE · 200 min · 1 cores');
     expect(row.actionable).toBe(true);
   });
 
@@ -1733,7 +2048,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.upgradePriceLabel).toBe('150 min');
     expect(row.actionLabel).toBe('UPGRADE · 150 min — NEED 150 min');
     expect(row.label).toBe(
-      'Spread Cannon — LV 1/5 — UPGRADE · 150 min — NEED 150 min',
+      'Spread — LV 1/5 — UPGRADE · 150 min — NEED 150 min',
     );
   });
 
@@ -1766,7 +2081,7 @@ describe('hangar owned-row upgrade affordance (AH-0MWI5AK1E008HDHH)', () => {
     expect(row.upgradePriceLabel).toBeNull();
     expect(row.actionLabel).toBe('MAX');
     expect(row.label).toBe(
-      `Spread Cannon — LV ${MAX_PERMANENT_LEVEL}/${MAX_PERMANENT_LEVEL} — MAX`,
+      `Spread — LV ${MAX_PERMANENT_LEVEL}/${MAX_PERMANENT_LEVEL} — MAX`,
     );
   });
 
