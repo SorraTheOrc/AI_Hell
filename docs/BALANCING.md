@@ -357,6 +357,49 @@ The headless arena (`src/ai/eval/arena.ts`) models the elite through the
   builds its own wave plan without the campaign's cumulative wave index, so it
   has no elite stream (full-campaign mode is the shipped game's path).
 
+### Mineral supply: the measured arena-vs-game divergence
+
+(AH-0MWSGD3QF004RWAQ, evidence slice AH-0MWT5CPPL009QZWE.) The arena's mineral
+supply is a **fixed seeded harvest** and was measured against the shipped
+game's kill-drop economy. The evidence is executable and deterministic
+(seeded, no wall clock): `src/ai/eval/arenaMineralEconomy.test.ts`. Reproduce
+with `npx vitest run src/ai/eval/arenaMineralEconomy.test.ts`.
+
+- **Arena mechanism.** In every mode the mineral reservoir is
+  `DEFAULT_ARENA_SPAWNS.minerals × 3 = 18` points (`src/ai/eval/arena.ts`). The
+  field is topped back to `DEFAULT_ARENA_SPAWNS.minerals = 6` every
+  `COLLECTABLE_RESPAWN_TICKS` (150) from that **same** reservoir, and
+  `nextMineral` only decrements — so **18 is a hard per-run cap** independent of
+  the sortie's enemy count. Campaign/per-level mode swaps only the **power-up**
+  supply to the real per-kill rule; **no kill ever drops a mineral**
+  (`realSupplyMode` pushes only `world.drops`). Measured: a real-supply drain
+  run introduces exactly **18** minerals, and a full five-wave sortie with
+  48–64 kills never introduces more than 18.
+- **Shipped game.** `PlayScene.resetRunState` seeds **no** mineral field
+  (`this.minerals = []`); minerals come **only** from enemy kill drops through
+  the shared `resolveMineralKillPayout` / `BaseEnemy.mineralRedropCount` rule —
+  `MINERAL_DROP_MULTIPLIER (2) × round(absorbed + bonus[0.25–1.25])`. With no
+  absorption that is an expected **1.5 minerals per non-asteroid kill** (2 per
+  small asteroid).
+- **Measured divergence at each ring's fresh aggression level** (shipped
+  five-wave sortie, competent bot; enemy counts are authored and thus
+  seed-independent):
+
+  | Ring | Fresh aggression → level | Sortie enemies | Game kill-drop supply | Arena supply | Divergence |
+  |---|---|---|---|---|---|
+  | 1 | 1 → 2 | 48 | 72.0 | 18 | 4.0× |
+  | 2 | 2 → 3 | 64 | 96.0 | 18 | 5.33× |
+
+  (Enemy absorption would only inflate the game figures further; these are the
+  conservative floor.)
+
+**Consequence.** The arena's "perfect-collection ceiling" of 7.67 / 5.53
+minerals per deployment is bounded by the 18-point harvest, not by the game's
+economy. The one-level mineral income gap is therefore a
+**measurement-fidelity** gap to be closed by modelling the game's
+kill-drop/absorption rule in the arena, not a real balance shortfall (parent
+AH-0MWSGD3QF004RWAQ).
+
 ### Mineral kill-drop rate doubled (AH-0MWB9LCED004K67Y)
 
 Every standard kill now yields **twice** the minerals. A destroyed small
