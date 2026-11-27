@@ -436,6 +436,152 @@ export const PHASE_REARM_COOLDOWN = 0.5;
 /** Safe radius around a teleport candidate: no enemy/bullet within this disc (px). ~3× ship size. */
 export const TELEPORT_SAFE_RADIUS = SHIP_SIZE * 3;
 
+// ── Teleport tunnel VFX (AH-0MWW50H0B002U6XU, slice AH-0MWWDJ3Q1000CAE3) ──
+
+/**
+ * Render depth of the teleport-tunnel container — above the gameplay baseline
+ * (`0`), so the tunnel reads as a transit overlay the ship moves through,
+ * while staying below the death flash and phase-shift juice layers (−10).
+ */
+export const TELEPORT_TUNNEL_DEPTH = 50;
+
+/**
+ * Length of the tunnel-grow phase (≈ 0.75 s — producer Q1 answer).
+ *
+ * During this phase the world slows to ¼ speed and the ship is not steerable;
+ * the tunnel grows from zero length to its full destination length.
+ */
+export const TELEPORT_TUNNEL_GROW_PHASE_SECONDS = 0.75;
+
+/**
+ * Length of the tunnel-transit phase (seconds).
+ *
+ * The ship travels the full tunnel at normal speed.
+ */
+export const TELEPORT_TUNNEL_TRANSIT_PHASE_SECONDS = 0.4;
+
+/**
+ * Length of the tunnel-collapse phase (seconds).
+ *
+ * The tunnel collapses with a descending SFX tone.
+ */
+export const TELEPORT_TUNNEL_COLLAPSE_PHASE_SECONDS = 0.25;
+
+/**
+ * Total teleport-tunnel duration (seconds) — grow + transit + collapse.
+ *
+ * Derived from the three phase constants so it is never a duplicated literal.
+ */
+export const TELEPORT_TUNNEL_DURATION_SECONDS =
+  TELEPORT_TUNNEL_GROW_PHASE_SECONDS +
+  TELEPORT_TUNNEL_TRANSIT_PHASE_SECONDS +
+  TELEPORT_TUNNEL_COLLAPSE_PHASE_SECONDS;
+
+/** Absolute start of the grow phase (seconds from tunnel start). */
+export const TELEPORT_TUNNEL_GROW_START_SECONDS = 0;
+
+/** Absolute start of the transit phase (grow phase's end). */
+export const TELEPORT_TUNNEL_TRANSIT_START_SECONDS =
+  TELEPORT_TUNNEL_GROW_START_SECONDS +
+  TELEPORT_TUNNEL_GROW_PHASE_SECONDS;
+
+/** Absolute start of the collapse phase (transit phase's end). */
+export const TELEPORT_TUNNEL_COLLAPSE_START_SECONDS =
+  TELEPORT_TUNNEL_TRANSIT_START_SECONDS +
+  TELEPORT_TUNNEL_TRANSIT_PHASE_SECONDS;
+
+/**
+ * Whether the swirl layer renders (helical vortex lines that sell the tunnel).
+ */
+export const TELEPORT_TUNNEL_ENABLE_SWIRL = true;
+
+/**
+ * Whether the rib (cross-section ring) layer renders (rings that grow along the
+ * tunnel length to sell the wormhole volume).
+ */
+export const TELEPORT_TUNNEL_ENABLE_RIBS = true;
+
+/**
+ * Whether the core-glow layer renders (a soft radial gradient at the tunnel
+ * entrance that fades as the ship departs).
+ */
+export const TELEPORT_TUNNEL_ENABLE_GLOW = true;
+
+/**
+ * Hard cap on the number of swirl lines drawn — keeps the effect bounded.
+ */
+export const TELEPORT_TUNNEL_MAX_SWIRLS = 60;
+
+/** Number of swirl helical lines drawn per tunnel (≤ {@link TELEPORT_TUNNEL_MAX_SWIRLS}). */
+export const TELEPORT_TUNNEL_SWIRL_COUNT = 48;
+
+/** Number of concentric rib rings drawn per tunnel. */
+export const TELEPORT_TUNNEL_RIB_COUNT = 16;
+
+/**
+ * Number of full helical waves each swirl line traces along the tunnel length
+ * (the wormhole "twist" count). Higher values twist tighter.
+ */
+export const TELEPORT_TUNNEL_SWIRL_WAVES = 2.5;
+
+/** Minimum swirl stroke width (px). */
+export const TELEPORT_TUNNEL_SWIRL_MIN_WIDTH = 1;
+
+/** Maximum swirl stroke width (px). */
+export const TELEPORT_TUNNEL_SWIRL_MAX_WIDTH = 2.5;
+
+/** Colour of the swirl helical lines — bright cyan (wormhole interior).
+ *
+ * Matches the player-ship cyan palette so the tunnel reads as a transit
+ * corridor the ship can see through.
+ */
+export const TELEPORT_TUNNEL_SWIRL_COLOR = 0x00ccff;
+
+/** Peak alpha of the swirl lines during the grow phase.
+ *
+ * Fades to 0 during collapse.
+ */
+export const TELEPORT_TUNNEL_SWIRL_ALPHA_GROW = 0.85;
+
+/** Colour of the rib rings — slightly deeper violet than the swirl,
+ *
+ * so the rings sell the tunnel volume without clashing with the helical lines.
+ */
+export const TELEPORT_TUNNEL_RIB_COLOR = 0x6644cc;
+
+/** Peak alpha of the rib rings during grow.
+ *
+ * Fades to 0 during collapse.
+ */
+export const TELEPORT_TUNNEL_RIB_ALPHA_GROW = 0.6;
+
+/** Colour of the entrance glow — bright white-cyan.
+ *
+ * Used only during the grow phase to sell the portal opening.
+ */
+export const TELEPORT_TUNNEL_GLOW_COLOR = 0xeeeeff;
+
+/** Peak alpha of the entrance glow during grow.
+ *
+ * Fades to 0 during collapse.
+ */
+export const TELEPORT_TUNNEL_GLOW_ALPHA = 0.7;
+
+/** Radius of the tunnel cross-section (px). Controls tunnel "thickness".
+ *
+ * Derived from ship size so it scales with the ship.
+ */
+export const TELEPORT_TUNNEL_RADIUS = SHIP_SIZE * 2;
+
+/**
+ * The teleport time-scale factor applied to the world during the grow phase.
+ *
+ * ¼ speed — enemies, bullets, hazards, wave timers, effect clocks and HUD
+ * countdowns are all scaled by this factor. The tunnel transit itself runs at
+ * real time (1×) so the ship reaches the destination predictably.
+ */
+export const TELEPORT_GROW_TIME_SCALE = 0.25;
+
 /**
  * Shared re-arm window (ms) after a shielded enemy's force field absorbs a
  * player ram (epic AH-0MVJ8W4GE007OMNT AC2, operator Q6 = B;
