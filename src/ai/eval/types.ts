@@ -96,6 +96,13 @@ export interface ArenaState {
     readonly x: number;
     readonly y: number;
     readonly type: string;
+    /**
+     * Worth in minerals when it is not the ordinary one — a red **deposit**
+     * left by a wreck whose payout reached the deposit threshold is worth
+     * {@link MINERAL_DEPOSIT_VALUE}. Omitted for an ordinary dot so every
+     * pre-change record stays byte-identical.
+     */
+    readonly value?: number;
   }[];
   readonly hold: { readonly minerals: number; readonly capacity?: number };
   readonly boss: null;
@@ -133,8 +140,19 @@ export type TelemetryRecord =
   | TelemetryTickRecord
   | TelemetryEventRecord;
 
-/** Counts of the entities and hazards the arena seeds into a scenario. */
+/**
+ * Counts of the entities and hazards the arena seeds into a scenario.
+ *
+ * `minerals` is **skirmish-only**: the seeded skirmish still opens with a
+ * fixed, seeded mineral field of `minerals × 3` points that tops itself back
+ * up to `minerals` from the same reservoir. Real-supply mode (per-level and
+ * full-campaign; `ArenaConfig.level` / `ArenaConfig.campaign`) seeds **no**
+ * mineral field — its minerals come from enemy kills through the shared
+ * `src/core/mineralPayout.ts` rule, so the supply is enemy-count-driven and
+ * `minerals` is ignored there.
+ */
 export interface ArenaSpawns {
+  /** Skirmish-only seeded mineral field size (ignored in real-supply mode). */
   readonly minerals: number;
   readonly powerUps: number;
   readonly enemies: number;

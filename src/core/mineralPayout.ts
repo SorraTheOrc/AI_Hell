@@ -31,6 +31,13 @@
  * seeded stream reproduces exactly. The bonus roll is exactly **one** draw per
  * non-asteroid wreck, preserving the existing RNG stream.
  *
+ * **Phaser-free layout too.** The module also owns the *layout* half —
+ * {@link scatterMineralPositions}, {@link scatterDoubledMineralPositions} and
+ * {@link layOutMineralPayout} — as plain `{x, y, value}` positions. The
+ * Phaser-side scatter helpers in `src/entities/Mineral.ts` build display
+ * objects from these same positions, so the game, the gyms and the headless
+ * arena place a wreck's minerals identically for the same seeded stream.
+ *
  * @module core/mineralPayout
  */
 
@@ -38,6 +45,8 @@ import {
   MINERAL_DEPOSIT_THRESHOLD,
   MINERAL_DEPOSIT_VALUE,
   MINERAL_DROP_MULTIPLIER,
+  MINERAL_REDROP_SCATTER_RADIUS,
+  MINERAL_SIZE,
 } from './constants';
 import {
   DEFAULT_MINERAL_REDROP_BONUS_MAX,
@@ -184,4 +193,134 @@ export function decideMineralKillPayout(
   // Not a mineral carrier: the Salvage bounty (when active) still pays out.
   if (salvageBonus > 0) return decideMineralPayout(0, salvageBonus);
   return { kind: 'none' };
+}
+
+/** One laid-out mineral: a field position plus the minerals it is worth. */
+export interface MineralDropPosition {
+  readonly x: number;
+  readonly y: number;
+  /** Worth in minerals — `1` for an ordinary dot, the deposit value for a red deposit. */
+  readonly value: number;
+}
+
+/**
+ * Scatters `count` mineral **positions** uniformly within `radius` px of
+ * `(x, y)` — the Phaser-free half of the shared `scatterMineralDrops` layout.
+ *
+ * Each position consumes two `rng` draws in the game's fixed order (angle,
+ * then radius), so a caller that builds display objects from these positions
+ * keeps the historic kill-path draw sequence byte-for-byte.
+ *
+ * @param x — scatter-centre x position
+ * @param y — scatter-centre y position
+ * @param count — number of positions (returns none when ≤ 0)
+ * @param rng — random-number generator (defaults to `Math.random`); inject a
+ *   seeded generator for determinism
+ * @param radius — scatter radius in px (defaults to the shipped re-drop radius)
+ */
+export function scatterMineralPositions(
+  x: number,
+  y: number,
+  count: number,
+  rng: () => number = Math.random,
+  radius: number = MINERAL_REDROP_SCATTER_RADIUS,
+): Array<{ x: number; y: number }> {
+  if (count <= 0) return [];
+  const positions: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < count; i += 1) {
+    const angle = rng() * Math.PI * 2;
+    const distance = rng() * radius;
+    positions.push({
+      x: x + Math.cos(angle) * distance,
+      y: y + Math.sin(angle) * distance,
+    });
+  }
+  return positions;
+}
+
+/**
+ * The doubled layout for `totalCount` minerals — the Phaser-free half of the
+ * shared `scatterDoubledMineralDrops` helper. Only
+ * `ceil(totalCount / MINERAL_DROP_MULTIPLIER)` positions are drawn and each is
+ * mirrored across the wreck, so the doubling consumes **no extra draws** (the
+ * seeded kill-path stream is preserved).
+ *
+ * @param x — scatter-centre x position
+ * @param y — scatter-centre y position
+ * @param totalCount — total minerals to lay out (returns none when ≤ 0)
+ * @param rng — random-number generator (defaults to `Math.random`)
+ * @param radius — scatter radius in px (defaults to the shipped re-drop radius)
+ */
+export function scatterDoubledMineralPositions(
+  x: number,
+  y: number,
+  totalCount: number,
+  rng: () => number = Math.random,
+  radius: number = MINERAL_REDROP_SCATTER_RADIUS,
+): Array<{ x: number; y: number }> {
+  if (totalCount <= 0) return [];
+  const baseCount = Math.ceil(totalCount / MINERAL_DROP_MULTIPLIER);
+  const drops = scatterMineralPositions(x, y, baseCount, rng, radius);
+  // Mirror each drop across the wreck so the doubled count is visible without
+  // consuming any additional RNG draws (seeded determinism).
+  const twins = drops.map((drop) => ({ x: 2 * x - drop.x, y: 2 * y - drop.y }));
+  return [...drops, ...twins].slice(0, totalCount);
+}
+
+/**
+ * Lays a resolved {@link MineralPayoutDecision} onto field positions — the
+ * single Phaser-free layout seam the game's `Mineral` scatter helpers and the
+ * headless arena both consume, so a wreck's minerals land in the same places
+ * for the same seeded stream.
+ *
+ * - `none` → no positions;
+ * - `asteroid` → the deterministic symmetric pair about the wreck (no draws);
+ * - `deposit` → exactly one position **at** the wreck, worth the decision's
+ *   value (the red deposit's 10);
+ * - `scatter` → the doubled gold layout followed by the Salvage scatter, in
+ *   that draw order (every dot worth one mineral).
+ *
+ * @param x — wreck x position
+ * @param y — wreck y position
+ * @param decision — the resolved payout for this wreck
+ * @param rng — random-number generator (defaults to `Math.random`)
+ */
+export function layOutMineralPayout(
+  x: number,
+  y: number,
+  decision: MineralPayoutDecision,
+  rng: () => number = Math.random,
+): MineralDropPosition[] {
+  switch (decision.kind) {
+    case 'none':
+      return [];
+    case 'deposit':
+      return [{ x, y, value: decision.value }];
+    case 'asteroid': {
+      const half = MINERAL_DROP_MULTIPLIER / 2;
+      return [
+        { x: x - MINERAL_SIZE * half, y, value: 1 },
+        { x: x + MINERAL_SIZE * half, y, value: 1 },
+      ].slice(0, decision.count);
+    }
+    case 'scatter': {
+      const drops: MineralDropPosition[] = scatterDoubledMineralPositions(
+        x,
+        y,
+        decision.goldCount,
+        rng,
+      ).map((position) => ({ ...position, value: 1 }));
+      if (decision.salvageCount > 0) {
+        for (const position of scatterMineralPositions(
+          x,
+          y,
+          decision.salvageCount,
+          rng,
+        )) {
+          drops.push({ ...position, value: 1 });
+        }
+      }
+      return drops;
+    }
+  }
 }

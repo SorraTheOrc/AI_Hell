@@ -32,10 +32,12 @@ import Phaser from 'phaser';
 import {
   MINERAL_COLOR,
   MINERAL_DEPTH,
-  MINERAL_DROP_MULTIPLIER,
-  MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SIZE,
 } from '../core/constants';
+import {
+  scatterDoubledMineralPositions,
+  scatterMineralPositions,
+} from '../core/mineralPayout';
 import { loadRules } from '../core/rules';
 
 /**
@@ -200,27 +202,21 @@ export function scatterMineralDrops(
   rng: () => number = Math.random,
   color: number = MINERAL_COLOR,
 ): Mineral[] {
-  if (count <= 0) return [];
-
-  const drops: Mineral[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const angle = rng() * Math.PI * 2;
-    const radius = rng() * MINERAL_REDROP_SCATTER_RADIUS;
-    drops.push(
-      new Mineral(scene, {
-        x: x + Math.cos(angle) * radius,
-        y: y + Math.sin(angle) * radius,
-        color,
-      }),
-    );
-  }
-  return drops;
+  // The scatter maths (two draws per drop, angle then radius) lives in the
+  // Phaser-free `src/core/mineralPayout.ts` module, so the headless arena can
+  // place the same minerals for the same seeded stream.
+  return scatterMineralPositions(x, y, count, rng).map(
+    (position) => new Mineral(scene, { x: position.x, y: position.y, color }),
+  );
 }
 
 /**
  * Spawns `totalCount` mineral collectables using the shared scatter maths while
  * consuming the **same number of RNG draws** as an un-doubled scatter of
  * `totalCount / MINERAL_DROP_MULTIPLIER` drops (parent AH-0MWB9LCED004K67Y).
+ * The layout maths lives in the Phaser-free `scatterDoubledMineralPositions`
+ * helper (`src/core/mineralPayout.ts`), so the headless arena consumes the same
+ * positions.
  *
  * The doubling is achieved by mirroring every randomly-placed drop across the
  * wreck centre: a twin at `(2x − drop.x, 2y − drop.y)` is within
@@ -248,19 +244,10 @@ export function scatterDoubledMineralDrops(
   rng: () => number = Math.random,
   color: number = MINERAL_COLOR,
 ): Mineral[] {
-  if (totalCount <= 0) return [];
-
-  const baseCount = Math.ceil(totalCount / MINERAL_DROP_MULTIPLIER);
-  const drops = scatterMineralDrops(scene, x, y, baseCount, rng, color);
-  // Mirror each drop across the wreck so the doubled count is visible without
-  // consuming any additional RNG draws (seeded determinism).
-  const twins = drops.map(
-    (drop) =>
-      new Mineral(scene, {
-        x: 2 * x - drop.x,
-        y: 2 * y - drop.y,
-        color,
-      }),
+  // The doubled layout (draw `ceil(total / 2)`, mirror each drop across the
+  // wreck) lives in the Phaser-free `src/core/mineralPayout.ts` module, so the
+  // headless arena places the same minerals for the same seeded stream.
+  return scatterDoubledMineralPositions(x, y, totalCount, rng).map(
+    (position) => new Mineral(scene, { x: position.x, y: position.y, color }),
   );
-  return [...drops, ...twins].slice(0, totalCount);
 }

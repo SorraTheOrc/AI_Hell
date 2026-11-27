@@ -175,9 +175,12 @@ arena* as the skirmish: wave members are stationary hostiles whose stats come
 from their archetype's `EnemyConfig` — formation movement and Phaser spawner
 behaviour are not modelled, and spawner-delivered archetypes (`ghosts`,
 `horde`, `centipede`, `laneTraffic`) appear as ordinary config-driven hostiles
-so the roster matches the game's wave accounting. The seeded mineral harvest
-and the asteroid shadow-hazard stay live (so the small-asteroid Extra Life
-roll is exercised). The **seeded skirmish** (`--skirmish`; without `--level`
+so the roster matches the game's wave accounting. The asteroid shadow-hazard
+stays live (seeded, respawning) so the small-asteroid Extra Life roll is
+exercised, and **minerals come from kills** through the shared
+`src/core/mineralPayout.ts` rule — there is no seeded mineral field in
+per-level mode (see *Mineral supply: the modelled kill-drop economy* below).
+The **seeded skirmish** (`--skirmish`; without `--level`
 the default is the full campaign) is unchanged — its drops still come from
 the seeded power-up reservoir. `--level` takes precedence over the batch's
 full-campaign default, so a per-level run needs no extra flag.
@@ -346,58 +349,63 @@ The headless arena (`src/ai/eval/arena.ts`) models the elite through the
   (`resolveEliteReward`); an `elite_killed` telemetry event carrying the
   archetype, behaviour, children/bullet count, `guaranteedDrop` and
   `mineralBump`.
-- **Not modelled (documented):** the arena's mineral supply is the seeded
-  harvest, and it does not model kill-time mineral payouts (the ordinary
-  per-kill re-drop or the elite's mineral bump). Modelling only the elite's
-  bump would overstate its share of an economy the harness does not otherwise
-  simulate and would push `mineralsCollected` outside the comparable baseline,
-  so `mineralsCollected` measures the *unchanged* supply instead. The elite's
+- **Not modelled (documented):** the elite's *reward* mineral bump is not added
+  on top of the wreck's ordinary kill payout — the elite's wreck pays through
+  the same shared kill-drop rule as any other wreck (see *Mineral supply*
+  below), so the bump is not counted a second time, and `mineralsCollected`
+  stays one comparable figure. The elite's
   aura/tag/announcement and its distinct death cue are presentation, covered by
   their own unit/gym tests. The **per-level** harness mode stays elite-free: it
   builds its own wave plan without the campaign's cumulative wave index, so it
   has no elite stream (full-campaign mode is the shipped game's path).
 
-### Mineral supply: the measured arena-vs-game divergence
+### Mineral supply: the modelled kill-drop economy
 
-(AH-0MWSGD3QF004RWAQ, evidence slice AH-0MWT5CPPL009QZWE.) The arena's mineral
-supply is a **fixed seeded harvest** and was measured against the shipped
-game's kill-drop economy. The evidence is executable and deterministic
-(seeded, no wall clock): `src/ai/eval/arenaMineralEconomy.test.ts`. Reproduce
-with `npx vitest run src/ai/eval/arenaMineralEconomy.test.ts`.
+(AH-0MWSGD3QF004RWAQ; evidence slice AH-0MWT5CPPL009QZWE; the model landed in
+AH-0MWT5CRJ600382MS.) The arena's mineral supply now **is** the shipped game's
+kill-drop economy. The evidence is executable and deterministic (seeded, no
+wall clock): `src/ai/eval/arenaMineralEconomy.test.ts`. Reproduce it with
+`npx vitest run src/ai/eval/arenaMineralEconomy.test.ts`.
 
-- **Arena mechanism.** In every mode the mineral reservoir is
-  `DEFAULT_ARENA_SPAWNS.minerals × 3 = 18` points (`src/ai/eval/arena.ts`). The
-  field is topped back to `DEFAULT_ARENA_SPAWNS.minerals = 6` every
-  `COLLECTABLE_RESPAWN_TICKS` (150) from that **same** reservoir, and
-  `nextMineral` only decrements — so **18 is a hard per-run cap** independent of
-  the sortie's enemy count. Campaign/per-level mode swaps only the **power-up**
-  supply to the real per-kill rule; **no kill ever drops a mineral**
-  (`realSupplyMode` pushes only `world.drops`). Measured: a real-supply drain
-  run introduces exactly **18** minerals, and a full five-wave sortie with
-  48–64 kills never introduces more than 18.
-- **Shipped game.** `PlayScene.resetRunState` seeds **no** mineral field
-  (`this.minerals = []`); minerals come **only** from enemy kill drops through
-  the shared `resolveMineralKillPayout` / `BaseEnemy.mineralRedropCount` rule —
-  `MINERAL_DROP_MULTIPLIER (2) × round(absorbed + bonus[0.25–1.25])`. With no
-  absorption that is an expected **1.5 minerals per non-asteroid kill** (2 per
-  small asteroid).
-- **Measured divergence at each ring's fresh aggression level** (shipped
-  five-wave sortie, competent bot; enemy counts are authored and thus
-  seed-independent):
+- **Arena mechanism.** Real-supply mode (per-level and full-campaign) seeds
+  **no** mineral field — `ArenaSpawns.minerals` is skirmish-only and ignored
+  there. Every mineral comes from a destroyed body through the shared
+  Phaser-free `src/core/mineralPayout.ts` rule, the same decision and layout
+  `PlayScene` and the gyms consume:
+  - a **non-asteroid** wreck re-drops `MINERAL_DROP_MULTIPLIER (2) ×
+    round(absorbed + bonus[0.25–1.25])` as the doubled gold scatter;
+  - the **asteroid** shadow-hazard body leaves the terminal small rock's
+    two-gold symmetric pair;
+  - a **lane-traffic** hazard (a non-blocking hazard, not a mineral carrier)
+    leaves nothing;
+  - a payout at `MINERAL_DEPOSIT_THRESHOLD` (10) becomes **one** red deposit at
+    the wreck, worth `MINERAL_DEPOSIT_VALUE` (10), and the hold credits that
+    worth — so a deposit counts as ten minerals of income, not one pickup.
 
-  | Ring | Fresh aggression → level | Sortie enemies | Game kill-drop supply | Arena supply | Divergence |
-  |---|---|---|---|---|---|
-  | 1 | 1 → 2 | 48 | 72.0 | 18 | 4.0× |
-  | 2 | 2 → 3 | 64 | 96.0 | 18 | 5.33× |
+  Drop positions and the bonus roll come from a **dedicated seeded stream**
+  seeded from the run seed, so same policy + config + seed ⇒ byte-identical
+  records and the mineral model never perturbs the scenario/behaviour draws.
+  **Measured:** a hostile-free real-supply run introduces **0** minerals (the
+  old fixed 18-point reservoir and its 150-tick top-up are gone), while the
+  shipped five-wave sortie supplies minerals from its wrecks alone — **88**
+  minerals for ring 1's 48-wreck sortie (seed 1) and **138** for ring 2's
+  64-wreck sortie plus its respawning asteroid stand-ins (seed 2).
+- **Remaining fidelity boundaries.** Enemy **absorption** (the `collected`
+  count) is its own follow-up item (AH-0MWT5CSF8003CFQF); until it lands every
+  wreck's `collected` is 0, so a non-asteroid pays 0 or 2 (expected 1.5).
+  Asteroid **splitting** is not simulated — the shadow-hazard body stands in
+  for the whole chain, whose total mineral payout is the small rock's pair.
+  Salvage's timed bounty is not modelled, so its bonus is always 0.
+- **The seeded skirmish is unchanged.** It keeps its fixed seeded field and its
+  150-tick top-up — a hard `minerals × 3 = 18` per-run cap — asserted by its
+  own tests.
 
-  (Enemy absorption would only inflate the game figures further; these are the
-  conservative floor.)
-
-**Consequence.** The arena's "perfect-collection ceiling" of 7.67 / 5.53
-minerals per deployment is bounded by the 18-point harvest, not by the game's
-economy. The one-level mineral income gap is therefore a
-**measurement-fidelity** gap to be closed by modelling the game's
-kill-drop/absorption rule in the arena, not a real balance shortfall (parent
+**Consequence.** With the shipped kill-drop economy in place, measured
+per-deployment minerals rose from 5.83 / 3.06 to **42.94 / 43.92** (rings 1/2,
+grind line) and a captured sortie banks **85.89 / 87.83** minerals at its
+mini-boss checkpoint — far above the parent item's 9.0 / 6.0 target. The
+earlier "perfect-collection ceiling" of 7.67 / 5.53 was the fixed-field
+artefact the evidence slice predicted; the fidelity fix closes the gap (parent
 AH-0MWSGD3QF004RWAQ).
 
 ### Mineral kill-drop rate doubled (AH-0MWB9LCED004K67Y)
@@ -1365,6 +1373,16 @@ balance report.
   and every window, tolerance and `RING_TIMING_TARGETS` value untouched. Ring
   1's held-hex income mass also drops `18 → 17` (`10 × aggression` → 170/tick
   for a fully held ring 1); the income rate itself is unchanged.
+
+  **Superseded measurement (AH-0MWT5CRJ600382MS).** The figures in this table
+  are the historical matchup-rule evidence. Once the arena began modelling the
+  shipped game's kill-drop mineral economy, the same measurement re-read
+  **27.85 min** (24.94–32.03) for ring 1 grind and **59.10 min**
+  (52.13–66.06) for ring 2 grind. Both grind lines now sit
+  **within-tolerance** of their windows (ring 1 above its 24-minute tolerance
+  floor, ring 2 above its 48-minute floor); the windows, tolerances and per-hex
+  budget are untouched — see *Mineral supply: the modelled kill-drop economy*
+  above and `docs/dev/ring-timing-baseline.json`.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 

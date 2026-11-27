@@ -1,25 +1,24 @@
 /**
- * Arena-vs-game mineral economy evidence (AH-0MWT5CPPL009QZWE).
+ * Arena mineral economy evidence (AH-0MWT5CPPL009QZWE, re-pinned by
+ * AH-0MWT5CRJ600382MS).
  *
- * This is the **read-only evidence** slice of *Close the one-level mineral
- * income gap that collection cannot recover* (AH-0MWSGD3QF004RWAQ). It does
- * not change a single arena, drop-rate or balance value — it measures and pins
- * the divergence between the two mineral economies so the balance decision
- * rests on numbers, not prose:
+ * The original evidence slice measured the **divergence** between the arena's
+ * fixed seeded mineral harvest and the shipped game's kill-drop-only economy.
+ * `AH-0MWT5CRJ600382MS` closed that gap: real-supply mode now seeds **no**
+ * mineral field and pays every mineral from a kill through the shared
+ * `src/core/mineralPayout.ts` rule. This file is the executable evidence for
+ * the **new** model:
  *
- * - **The headless arena** (real-supply / campaign mode) supplies a **fixed
- *   seeded harvest** of `DEFAULT_ARENA_SPAWNS.minerals × 3` points, tops the
- *   field back to `DEFAULT_ARENA_SPAWNS.minerals` every
- *   `COLLECTABLE_RESPAWN_TICKS` from that same reservoir, and **never drops a
- *   mineral on a kill** (`realSupplyMode` pushes only power-ups). The supply
- *   is therefore **independent of the sortie's enemy count**.
- * - **The shipped game** seeds **no** mineral field (`PlayScene.resetRunState`
- *   clears `this.minerals = []`); minerals come **only** from enemy kill drops
- *   through the shared `resolveMineralKillPayout` rule — `2 × round(absorbed +
- *   bonus[0.25–1.25])` per non-asteroid kill, 2 per small asteroid. With no
- *   absorption that is `MINERAL_DROP_MULTIPLIER × E[round(bonus)] ≈ 1.5`
- *   minerals per kill, so a one-level sortie's kill economy supplies far more
- *   than the arena's 18-point field.
+ * - **The headless arena** (real-supply / campaign mode) seeds no field; a
+ *   hostile-free run introduces **zero** minerals (the old 18-point reservoir
+ *   and its 150-tick top-up are gone).
+ * - A shipped five-wave sortie's mineral supply is **kill-driven**: every
+ *   non-asteroid kill pays `2 × round(absorbed + bonus[0.25–1.25])` (0 or 2
+ *   with no absorption), each destroyed small-asteroid stand-in pays 2, and
+ *   nothing else supplies minerals. The supply therefore tracks the sortie's
+ *   enemy count instead of a harness constant.
+ * - The seeded **skirmish** keeps its fixed field (its own guard lives in
+ *   `arenaMineralKillDrops.test.ts`).
  *
  * Reproduction: run this file, e.g.
  * `npx vitest run src/ai/eval/arenaMineralEconomy.test.ts`.
@@ -57,17 +56,19 @@ const DRAIN_TICKS = 6_000;
 const ARENA_TIMEOUT_MS = 300_000;
 
 /**
- * The arena's documented per-run mineral supply, in points.
+ * The **skirmish**'s documented per-run mineral supply, in points — and the
+ * figure real-supply mode must no longer be bounded by.
  *
- * The reservoir is built with `spawns.minerals × 3` points and `nextMineral`
- * only decrements, so this is a **hard cap** on every run — never a function
- * of the sortie's enemy count. `DEFAULT_ARENA_SPAWNS.minerals = 6` ⇒ **18**.
+ * The skirmish reservoir is built with `spawns.minerals × 3` points and its
+ * top-ups draw from that same reservoir, so this is a hard cap there.
+ * `DEFAULT_ARENA_SPAWNS.minerals = 6` ⇒ **18**. Real-supply mode ignores
+ * `spawns.minerals` entirely.
  */
-const ARENA_MINERAL_SUPPLY = DEFAULT_ARENA_SPAWNS.minerals * 3;
+const SKIRMISH_MINERAL_CAP = DEFAULT_ARENA_SPAWNS.minerals * 3;
 
 /**
- * The expected minerals one non-asteroid kill drops in the **shipped game**
- * when the enemy has absorbed nothing.
+ * The expected minerals one non-asteroid kill drops when the enemy has
+ * absorbed nothing.
  *
  * `BaseEnemy.mineralRedropCount` is `MINERAL_DROP_MULTIPLIER × round(absorbed +
  * bonus)` with `bonus` uniform on `[mineralRedropBonusMin,
@@ -92,70 +93,72 @@ function expectedRedropPerKill(): number {
 
 /** The player-visible mineral figures one arena run reported. */
 interface ArenaMineralMeasurement {
-  /** Minerals the bot collected (one per `mineral_collected` event). */
+  /** Minerals the bot collected (a deposit credits its full worth). */
   readonly collected: number;
   /** Minerals still on the field in the final sampled tick. */
   readonly finalField: number;
   /**
    * Minerals the arena ever introduced into the run:
-   * `collected + finalField`. Each introduced point is counted exactly once
-   * (the reservoir only decrements), so this is the run's measured supply.
+   * `collected + finalField`. Each introduced point is counted exactly once,
+   * so this is the run's measured supply.
    */
   readonly introduced: number;
   /** Non-asteroid enemies killed (`enemy_killed` events). */
   readonly enemyKilled: number;
+  /** Asteroid shadow-hazard bodies destroyed (`asteroid_destroyed`). */
+  readonly asteroidDestroyed: number;
 }
 
 /**
  * Reads the mineral accounting out of a run's telemetry.
  *
- * Sampling **every tick** is deliberate: `introduced = collected +
- * finalField` is only exact when the final sample is the state at the break
- * tick, and a run breaks mid-tick at combat (before the collectable steps), so
- * no mineral changes between the last sample and the break.
+ * Sampling **every tick** is deliberate: `introduced = collected + finalField`
+ * is only exact when the final sample is the state at the break tick, and a run
+ * breaks mid-tick at combat (before the collectable steps), so no mineral
+ * changes between the last sample and the break.
  */
 function readMineralAccounting(records: readonly TelemetryRecord[]): ArenaMineralMeasurement {
   let collected = 0;
   let enemyKilled = 0;
+  let asteroidDestroyed = 0;
   let finalField = 0;
   for (const record of records) {
     if (record.kind === 'event') {
-      if (record.event === 'mineral_collected') collected += 1;
+      if (record.event === 'mineral_collected') {
+        const value = Number(record.payload?.value ?? 1);
+        collected += Number.isFinite(value) ? value : 1;
+      }
       if (record.event === 'enemy_killed') enemyKilled += 1;
+      if (record.event === 'asteroid_destroyed') asteroidDestroyed += 1;
     } else if (record.kind === 'tick') {
       finalField = record.state.minerals.length;
     }
   }
-  return { collected, finalField, introduced: collected + finalField, enemyKilled };
+  return { collected, finalField, introduced: collected + finalField, enemyKilled, asteroidDestroyed };
 }
 
 /**
- * Measures the arena's **hard mineral supply** in real-supply mode.
+ * Measures the arena's **mineral supply with no kills available** in
+ * real-supply mode.
  *
  * The run is a per-level (`realSupplyMode`) arena with a **wave-less** level
- * definition, so no hostiles spawn and the closed loop is pure bot-vs-minerals
- * — the same construction the arena's own hold-full tests use, but through the
- * campaign supply path. `spawns.minerals` is the shipped default (6), so the
- * reservoir holds `6 × 3 = 18` points. The legacy ladder prioritises
- * collectables with the field empty of enemies, so it drains the reservoir
- * completely; `DRAIN_TICKS = 6 000` is far beyond the 12 replenishment slots
- * (`12 × 150 ticks = 1 800`) the reservoir needs once the bot empties the
- * field, leaving ample travel time.
+ * definition, so no hostiles spawn and the closed loop is pure bot-vs-minerals.
+ * `spawns.minerals` is deliberately set to the shipped default (6): real-supply
+ * mode must ignore it, so the measured supply is the kill economy's — zero when
+ * nothing dies.
  *
  * @param seed — run seed (same seed ⇒ identical figures).
  * @returns the measured accounting.
  */
-function measureArenaMineralSupply(seed: number): ArenaMineralMeasurement {
+function measureKillFreeSupply(seed: number): ArenaMineralMeasurement {
   const result = runArena(createLegacyBotPolicy(), {
     seed,
     ticks: DRAIN_TICKS,
     dt: DT,
     // `level` (not `campaign`) selects the real-supply path this measures.
     level: 1,
-    // A wave-less level: no enemies, so the only collectables are minerals.
+    // A wave-less level: no enemies, so no kill can supply a mineral.
     levelDefinition: { level: 1, name: 'mineral-only', waves: [] },
-    // Exactly the shipped mineral reservoir; no asteroids or power-ups so the
-    // measurement is pure mineral supply.
     spawns: { minerals: DEFAULT_ARENA_SPAWNS.minerals, powerUps: 0, enemies: 0, asteroids: 0 },
     // One sample per tick keeps `introduced = collected + finalField` exact.
     sampleEveryTicks: 1,
@@ -164,7 +167,7 @@ function measureArenaMineralSupply(seed: number): ArenaMineralMeasurement {
   return readMineralAccounting(result.records);
 }
 
-/** One ring's aggression-selected fact set for the divergence evidence. */
+/** One ring's aggression-selected fact set for the kill-driven evidence. */
 interface RingMineralEvidence {
   readonly ringIndex: number;
   /** The fresh-ring aggression floor (no captures yet). */
@@ -173,15 +176,14 @@ interface RingMineralEvidence {
   readonly level: number;
   /** Enemies authored across the shipped five-wave sortie. */
   readonly plannedEnemies: number;
-  /** Non-asteroid enemies the arena actually killed in the measured sortie. */
-  readonly killedEnemies: number;
-  /** Minerals the arena introduced while the sortie was played. */
-  readonly arenaIntroduced: number;
+  /** The sortie's measured mineral accounting. */
+  readonly accounting: ArenaMineralMeasurement;
 }
 
 /**
  * Plays one ring's shipped five-wave sortie in full-campaign (real-supply)
- * mode and reports the arena's mineral bookkeeping alongside the sortie size.
+ * mode and reports the arena's kill-driven mineral bookkeeping alongside the
+ * sortie size.
  *
  * The sortie is the ring's **fresh** aggression (`baseAggression` floor, i.e.
  * before the capture-progress ramp), resolved through the shipped
@@ -228,49 +230,54 @@ function measureRingSortie(ringIndex: number, seed: number): RingMineralEvidence
     },
     build: { appVersion: 'arena-mineral-economy', commit: 'test' },
   });
-  const accounting = readMineralAccounting(result.records);
   return {
     ringIndex,
     aggression,
     level,
     plannedEnemies,
-    killedEnemies: accounting.enemyKilled,
-    arenaIntroduced: accounting.introduced,
+    accounting: readMineralAccounting(result.records),
   };
 }
 
 describe('arena mineral economy (AH-0MWT5CPPL009QZWE)', () => {
-  it('measures the arena mineral supply as the fixed 18-point reservoir, never more', () => {
-    const measurement = measureArenaMineralSupply(17);
-    // The documented figure: `DEFAULT_ARENA_SPAWNS.minerals × 3 = 18`. The
-    // legacy ladder drains the whole reservoir in a hostile-free real-supply
-    // run, so the measured introduced count equals the documented cap.
-    expect(measurement.introduced).toBe(ARENA_MINERAL_SUPPLY);
-    expect(ARENA_MINERAL_SUPPLY).toBe(18);
-    // No kills happened, so the run's supply is purely the seeded harvest.
+  it('seeds no static mineral field in real-supply mode, even with spawns.minerals set', () => {
+    const measurement = measureKillFreeSupply(17);
+    // Real-supply mode ignores `spawns.minerals`: with no kills the measured
+    // supply is exactly zero (the old fixed 18-point harvest is gone).
+    expect(measurement.introduced).toBe(0);
+    expect(measurement.collected).toBe(0);
     expect(measurement.enemyKilled).toBe(0);
+    // Document the skirmish-only figure so this guard's intent stays explicit.
+    expect(SKIRMISH_MINERAL_CAP).toBe(18);
   }, ARENA_TIMEOUT_MS);
 
-  it('is deterministic: the same seed reproduces identical mineral figures', () => {
-    const first = measureArenaMineralSupply(23);
-    const second = measureArenaMineralSupply(23);
-    expect(second).toEqual(first);
-  }, ARENA_TIMEOUT_MS);
-
-  it('supplies at most 18 minerals across a full sortie even with many kills (no kill drops)', () => {
+  it('supplies a sortie from its kills, at the shared rule’s per-kill payout', () => {
     const ring1 = measureRingSortie(1, 1);
     const ring2 = measureRingSortie(2, 2);
     for (const ring of [ring1, ring2]) {
+      const { enemyKilled, asteroidDestroyed, introduced } = ring.accounting;
       // The sortie fields real enemies and the bot kills most of them…
       expect(ring.plannedEnemies).toBeGreaterThan(40);
-      expect(ring.killedEnemies).toBeGreaterThan(0);
-      // …yet the arena never introduces more than its fixed reservoir: kills
-      // add no minerals, so the supply is independent of the kill count.
-      expect(ring.arenaIntroduced).toBeLessThanOrEqual(ARENA_MINERAL_SUPPLY);
+      expect(enemyKilled).toBeGreaterThan(0);
+      // …and the mineral supply is now a function of those kills, not a fixed
+      // field: with no absorption a non-asteroid wreck pays 0 or 2 (expected
+      // 1.5) and each asteroid stand-in pays the small rock's 2.
+      const perWreckCap = MINERAL_DROP_MULTIPLIER * (enemyKilled + asteroidDestroyed);
+      expect(introduced).toBeGreaterThan(0);
+      expect(introduced).toBeLessThanOrEqual(perWreckCap);
+      // Above the skirmish's hard 18-point cap — the old ceiling no longer
+      // bounds a real-supply sortie.
+      expect(introduced).toBeGreaterThan(SKIRMISH_MINERAL_CAP);
     }
+    // The measured kill-driven supply is a deterministic figure per seed, so
+    // pin it: ring 1 seed 1 banks 88 minerals from its wrecks (the 48-wreck
+    // sortie's 0/2 non-asteroid payouts plus the asteroid stand-ins' pairs),
+    // ring 2 seed 2 banks 138 (64 wrecks plus the respawning shadow hazard).
+    expect(ring1.accounting.introduced).toBe(88);
+    expect(ring2.accounting.introduced).toBe(138);
   }, ARENA_TIMEOUT_MS);
 
-  it('records the arena-vs-game mineral divergence at each ring’s aggression-selected level', () => {
+  it('records the kill-driven supply at each ring’s aggression-selected level', () => {
     const ring1 = measureRingSortie(1, 1);
     const ring2 = measureRingSortie(2, 2);
     const payout = expectedRedropPerKill();
@@ -285,15 +292,12 @@ describe('arena mineral economy (AH-0MWT5CPPL009QZWE)', () => {
     expect(ring1.level).toBe(2);
     expect(ring2.level).toBe(3);
 
-    // The game-equivalent kill-drop supply for the same sortie: the authored
-    // enemy count × the shared rule's expected payout. (Absorption would only
-    // inflate this further; the figures below are the conservative floor.)
-    const ring1Game = ring1.plannedEnemies * payout;
-    const ring2Game = ring2.plannedEnemies * payout;
-    // The divergence: the game's kill economy supplies several times the
-    // arena's fixed 18-point field, so the arena's "perfect-collection
-    // ceiling" is a harness artefact, not a real economy shortfall.
-    expect(ring1Game).toBeGreaterThan(ARENA_MINERAL_SUPPLY * 3);
-    expect(ring2Game).toBeGreaterThan(ARENA_MINERAL_SUPPLY * 3);
+    for (const ring of [ring1, ring2]) {
+      // The supply the arena now introduces is the kill economy's: at least the
+      // conservative no-absorption floor (`enemyKilled × 1.5`, before the small
+      // asteroid pairs) and no more than the per-wreck cap.
+      const floor = ring.accounting.enemyKilled * payout;
+      expect(ring.accounting.introduced).toBeGreaterThanOrEqual(Math.floor(floor));
+    }
   }, ARENA_TIMEOUT_MS);
 });

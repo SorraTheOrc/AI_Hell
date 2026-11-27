@@ -16,12 +16,16 @@ import * as path from 'node:path';
 import {
   MINERAL_DEPOSIT_VALUE,
   MINERAL_DROP_MULTIPLIER,
+  MINERAL_SIZE,
 } from './constants';
 import {
   decideMineralKillPayout,
   decideMineralPayout,
+  layOutMineralPayout,
   resolveAsteroidMineralYield,
   resolveMineralRedropCount,
+  scatterDoubledMineralPositions,
+  scatterMineralPositions,
 } from './mineralPayout';
 
 const MODULE_PATH = path.resolve(process.cwd(), 'src/core/mineralPayout.ts');
@@ -209,6 +213,92 @@ describe('decideMineralKillPayout — full wreck decision', () => {
     const first = decideMineralKillPayout({ collected: 6 }, seeded(7));
     const second = decideMineralKillPayout({ collected: 6 }, seeded(7));
     expect(second).toEqual(first);
+  });
+});
+
+describe('Phaser-free layout (AH-0MWT5CRJ600382MS)', () => {
+  it('scatters each position with the game\u2019s angle-then-radius draws', () => {
+    const draws: number[] = [];
+    const rng = (): number => {
+      const value = draws.length / 8;
+      draws.push(value);
+      return value;
+    };
+    const positions = scatterMineralPositions(100, 50, 2, rng, 40);
+    // Two draws per drop in the historic order: angle, then radius.
+    expect(draws).toHaveLength(4);
+    const firstAngle = draws[0] * Math.PI * 2;
+    const firstRadius = draws[1] * 40;
+    expect(positions[0].x).toBeCloseTo(100 + Math.cos(firstAngle) * firstRadius, 10);
+    expect(positions[0].y).toBeCloseTo(50 + Math.sin(firstAngle) * firstRadius, 10);
+    expect(positions).toHaveLength(2);
+  });
+
+  it('doubles the layout by mirroring each drop across the wreck (no extra draws)', () => {
+    let calls = 0;
+    const rng = (): number => {
+      calls += 1;
+      return 0.25;
+    };
+    const positions = scatterDoubledMineralPositions(100, 50, 6, rng, 40);
+    // `ceil(6 / 2) = 3` base drops × two draws each; the doubled count is free.
+    expect(calls).toBe(6);
+    expect(positions).toHaveLength(6);
+    for (let i = 0; i < 3; i += 1) {
+      expect(positions[i + 3].x).toBeCloseTo(2 * 100 - positions[i].x, 10);
+      expect(positions[i + 3].y).toBeCloseTo(2 * 50 - positions[i].y, 10);
+    }
+  });
+
+  it('lays a small-asteroid payout as the symmetric pair with no draws', () => {
+    const rng = (): number => {
+      throw new Error('an asteroid payout must not draw');
+    };
+    expect(
+      layOutMineralPayout(100, 50, { kind: 'asteroid', count: 2 }, rng),
+    ).toEqual([
+      { x: 100 - MINERAL_SIZE, y: 50, value: 1 },
+      { x: 100 + MINERAL_SIZE, y: 50, value: 1 },
+    ]);
+  });
+
+  it('lays a deposit as exactly one position worth its value at the wreck', () => {
+    const rng = (): number => {
+      throw new Error('a deposit payout must not draw');
+    };
+    expect(
+      layOutMineralPayout(
+        120,
+        60,
+        { kind: 'deposit', value: MINERAL_DEPOSIT_VALUE },
+        rng,
+      ),
+    ).toEqual([{ x: 120, y: 60, value: MINERAL_DEPOSIT_VALUE }]);
+  });
+
+  it('lays a scatter as the doubled gold dots followed by the Salvage dots', () => {
+    let calls = 0;
+    const rng = (): number => {
+      calls += 1;
+      return 0.5;
+    };
+    const positions = layOutMineralPayout(
+      10,
+      20,
+      { kind: 'scatter', goldCount: 2, salvageCount: 2 },
+      rng,
+    );
+    // Gold: ceil(2 / 2) = 1 base drop × two draws; Salvage: two drops × two.
+    expect(calls).toBe(6);
+    expect(positions).toHaveLength(4);
+    expect(positions.every((position) => position.value === 1)).toBe(true);
+  });
+
+  it('lays nothing for the none decision, without drawing', () => {
+    const rng = (): number => {
+      throw new Error('a none payout must not draw');
+    };
+    expect(layOutMineralPayout(10, 20, { kind: 'none' }, rng)).toEqual([]);
   });
 });
 

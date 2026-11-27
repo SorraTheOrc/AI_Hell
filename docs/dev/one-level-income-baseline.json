@@ -11,11 +11,11 @@
       "deployments": 18,
       "captured": 9,
       "captureRate": 0.5,
-      "mineralsPerDeployment": 5.833333333333333,
+      "mineralsPerDeployment": 42.94444444444444,
       "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 11.666666666666666,
+      "mineralsPerCapturedDeployment": 85.88888888888889,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 55.833333333333336
+      "mineralEquivalentPerDeployment": 92.94444444444444
     },
     "unlockPace": [
       {
@@ -27,9 +27,9 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 38,
+        "mineralBoundDeployments": 6,
         "coreBoundDeployments": 6,
-        "deploymentsToAfford": 38
+        "deploymentsToAfford": 6
       },
       {
         "id": "hull-3",
@@ -40,9 +40,9 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 55,
+        "mineralBoundDeployments": 8,
         "coreBoundDeployments": 8,
-        "deploymentsToAfford": 55
+        "deploymentsToAfford": 8
       },
       {
         "id": "hardened_plating",
@@ -53,9 +53,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 14,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 14
+        "deploymentsToAfford": 2
       },
       {
         "id": "anti_maw_plating",
@@ -66,9 +66,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 19,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 19
+        "deploymentsToAfford": 4
       },
       {
         "id": "bomb",
@@ -79,9 +79,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 23,
+        "mineralBoundDeployments": 4,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 23
+        "deploymentsToAfford": 4
       },
       {
         "id": "magnet",
@@ -92,9 +92,9 @@
           "cores": 2
         },
         "minRing": 2,
-        "mineralBoundDeployments": 35,
+        "mineralBoundDeployments": 5,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 35
+        "deploymentsToAfford": 5
       },
       {
         "id": "wave_laser",
@@ -105,9 +105,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 21,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 21
+        "deploymentsToAfford": 3
       },
       {
         "id": "ricochet",
@@ -118,9 +118,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 16,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 16
+        "deploymentsToAfford": 4
       },
       {
         "id": "cluster",
@@ -131,9 +131,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 28,
+        "mineralBoundDeployments": 4,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 28
+        "deploymentsToAfford": 4
       }
     ]
   },
@@ -287,11 +287,11 @@
       "deployments": 36,
       "captured": 18,
       "captureRate": 0.5,
-      "mineralsPerDeployment": 3.0555555555555554,
+      "mineralsPerDeployment": 43.916666666666664,
       "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 6.111111111111111,
+      "mineralsPerCapturedDeployment": 87.83333333333333,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 53.05555555555556
+      "mineralEquivalentPerDeployment": 93.91666666666666
     },
     "unlockPace": [
       {
@@ -303,9 +303,9 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 72,
+        "mineralBoundDeployments": 6,
         "coreBoundDeployments": 6,
-        "deploymentsToAfford": 72
+        "deploymentsToAfford": 6
       },
       {
         "id": "hull-3",
@@ -316,9 +316,9 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 105,
+        "mineralBoundDeployments": 8,
         "coreBoundDeployments": 8,
-        "deploymentsToAfford": 105
+        "deploymentsToAfford": 8
       },
       {
         "id": "hardened_plating",
@@ -329,9 +329,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 27,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 27
+        "deploymentsToAfford": 2
       },
       {
         "id": "anti_maw_plating",
@@ -342,9 +342,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 36,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 36
+        "deploymentsToAfford": 4
       },
       {
         "id": "bomb",
@@ -355,9 +355,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 43,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 43
+        "deploymentsToAfford": 3
       },
       {
         "id": "magnet",
@@ -368,9 +368,9 @@
           "cores": 2
         },
         "minRing": 2,
-        "mineralBoundDeployments": 66,
+        "mineralBoundDeployments": 5,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 66
+        "deploymentsToAfford": 5
       },
       {
         "id": "wave_laser",
@@ -381,9 +381,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 40,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 40
+        "deploymentsToAfford": 3
       },
       {
         "id": "ricochet",
@@ -394,9 +394,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 30,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 30
+        "deploymentsToAfford": 4
       },
       {
         "id": "cluster",
@@ -407,9 +407,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 53,
+        "mineralBoundDeployments": 4,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 53
+        "deploymentsToAfford": 4
       }
     ]
   },

@@ -142,13 +142,15 @@
  * the ring; a rush segment is reported `not-applicable` for the budget.
  *
  * Re-rated against the derived windows (AH-0MWHU5AV800969NA), the shipped
- * one-level deployment measures ring 1 grind as **`missed`** (22.6 min against
- * 30–90 — 1.4 min under the 24-minute tolerance floor; re-measured from
- * 23.7 min when `hex-r1-1` dropped to aggression 1 in AH-0MWW28ET2002PNI8) and
- * ring 2 grind as
- * **`within-tolerance`** (51.7 min against 60–180: 8.3 min under the window
+ * one-level deployment measures ring 1 grind as **`within-tolerance`** (27.8
+ * min against 30–90 — 2.2 min under the window floor, inside the 6-minute
+ * tolerance whose floor is 24) and ring 2 grind as
+ * **`within-tolerance`** (59.1 min against 60–180: 0.9 min under the window
  * floor, inside the ±12-minute tolerance whose floor is 48 — seeds 1–3 in
- * `docs/dev/ring-timing-baseline.json`).
+ * `docs/dev/ring-timing-baseline.json`). The pair moved with the game-faithful
+ * kill-drop mineral economy (AH-0MWT5CRJ600382MS), which pays salvage for
+ * every wreck; before it the arena's fixed field measured 22.6 / 51.7 min and
+ * ring 1 read `missed`.
  * The measured figures are recorded, never re-worded; the rulings are tracked
  * by two linked rebalancing items — ring 1 AH-0MWFDQ9EY004NO4X (ruled: honour
  * the wave `shootEnabled` gate, ramp each ring's aggression with its captures,
@@ -327,16 +329,18 @@ export function deriveRingTimingTarget(
  * and the per-hex target is authored once.
  *
  * Re-rated against these derived windows (AH-0MWHU5AV800969NA), the shipped
- * one-level sortie measures ring 1 grind at **22.6 minutes** (`missed`) and
- * ring 2 grind at **51.7 minutes** (`within-tolerance` of 60–180: 8.3 min under
- * the window floor, inside the ±12-min tolerance whose floor is 48). Ring 1's
- * figure moved 15.4 → 23.7 when the producer's ruling on
- * **AH-0MWFDQ9EY004NO4X** landed (honour the wave `shootEnabled` gate; ramp a
- * ring's aggression with its captures), then 23.7 → 22.6 when `hex-r1-1`
- * dropped to aggression 1 (AH-0MWW28ET2002PNI8) — a mechanical re-measurement
- * of the same model — and it still **misses** — the windows
- * are never re-worded to match a measurement. Ring 2's own ruling is tracked by
- * **AH-0MWFDQCFV007BZE5**, not silently changed here.
+ * one-level sortie measures ring 1 grind at **27.8 minutes** (`within-tolerance`
+ * of 30–90: 2.2 min under the window floor, inside the ±6-min tolerance whose
+ * floor is 24) and ring 2 grind at **59.1 minutes** (`within-tolerance` of
+ * 60–180: 0.9 min under the window floor, inside the ±12-min tolerance whose
+ * floor is 48). The figures moved with the game-faithful kill-drop mineral
+ * economy (AH-0MWT5CRJ600382MS) — before it the arena's fixed field measured
+ * 22.6 / 51.7 min and ring 1 was `missed`. Earlier moves: 15.4 → 23.7 when the
+ * producer's ruling on **AH-0MWFDQ9EY004NO4X** landed (honour the wave
+ * `shootEnabled` gate; ramp a ring's aggression with its captures), then 23.7 →
+ * 22.6 when `hex-r1-1` dropped to aggression 1 (AH-0MWW28ET2002PNI8). The
+ * windows are never re-worded to match a measurement. Ring 2's own ruling is
+ * tracked by **AH-0MWFDQCFV007BZE5**, not silently changed here.
  */
 export const RING_TIMING_TARGETS: Readonly<Record<number, RingTimingTarget>> =
   Object.freeze({
@@ -909,11 +913,20 @@ export function resolveDeploymentLoadout(
   };
 }
 
-/** Minerals collected in one arena run (its earned salvage). */
+/**
+ * Minerals collected in one arena run (its earned salvage).
+ *
+ * A mineral's **worth** is credited, not the number of pickup events: an
+ * ordinary dot is one, and a red deposit is `MINERAL_DEPOSIT_VALUE` (the
+ * arena records the worth on the event only when it is not one, so ordinary
+ * messages keep their historic shape).
+ */
 function mineralsCollected(records: readonly TelemetryRecord[]): number {
   let minerals = 0;
   for (const record of records) {
-    if (record.kind === 'event' && record.event === 'mineral_collected') minerals += 1;
+    if (record.kind !== 'event' || record.event !== 'mineral_collected') continue;
+    const value = Number(record.payload?.value ?? 1);
+    minerals += Number.isFinite(value) ? value : 1;
   }
   return minerals;
 }

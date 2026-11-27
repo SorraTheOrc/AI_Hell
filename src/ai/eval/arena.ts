@@ -44,6 +44,33 @@
  * "Player weapon fire" below. It is the evaluation harness's counterpart to
  * the browser capture path; both feed the same telemetry schema.
  *
+ * ## Mineral economy (AH-0MWT5CRJ600382MS)
+ *
+ * Real-supply mode (per-level and full-campaign) models the **shipped game's**
+ * mineral economy: it seeds **no** mineral field, and every mineral comes from
+ * a destroyed body through the shared Phaser-free `src/core/mineralPayout.ts`
+ * rule — the same decision and layout `PlayScene` and the gyms consume:
+ *
+ * - a **non-asteroid** wreck re-drops `2 × round(collected + bonus)` as the
+ *   doubled gold scatter;
+ * - the **asteroid** shadow-hazard leaves the terminal small rock's two-gold
+ *   pair (no draw);
+ * - a payout at the shared deposit threshold collapses to one red deposit at
+ *   the wreck, worth `MINERAL_DEPOSIT_VALUE`, and the hold credits that worth;
+ * - a **lane-traffic** hazard (non-blocking, not a mineral carrier) leaves
+ *   nothing, mirroring the game's `LaneTraffic.mineralRedropCount` = 0.
+ *
+ * Drop positions and the payout bonus come from a **dedicated stream seeded
+ * from the run seed**, so the same policy + config + seed ⇒ byte-identical
+ * records and the mineral model never perturbs the scenario/behaviour draws.
+ * The seeded **skirmish** is unchanged: it keeps its fixed seeded field and
+ * its top-up. **Fidelity boundaries:** enemy mineral absorption (the
+ * `collected` count) is its own follow-up item — until it lands every wreck's
+ * `collected` is 0, so a non-asteroid pays 0 or 2; asteroid splitting is not
+ * simulated, so the shadow-hazard body stands in for the whole chain (whose
+ * total mineral payout is the small rock's pair); and Salvage's timed bounty
+ * is not modelled, so its bonus is always 0.
+ *
  * ## Player weapon fire (AH-0MW5DV9I6001D4HN, AH-0MW5DVAME0062GQO)
  *
  * The arena fires from the run's **ownership context**, never from a fixed
@@ -186,7 +213,8 @@
  *   `centipede`/`laneTraffic` flags add those archetypes as ordinary
  *   config-driven hostiles so the roster matches the game's wave accounting.
  *   The asteroid shadow-hazard stays live (seeded, respawning) so the
- *   small-asteroid Extra Life roll is exercised.
+ *   small-asteroid Extra Life roll is exercised, and minerals come from kills
+ *   through the shared kill-payout rule (see "Mineral economy" above).
  *
  * ## Full-campaign mode (AH-0MVD1RGKM005GW0C)
  *
@@ -211,7 +239,8 @@
  *   distributions in balance reports.
  * - Power-up supply uses the real per-kill drop rule at the **current**
  *   campaign level (the shared `levelScaling` curves), never a seeded
- *   reservoir.
+ *   reservoir; **mineral** supply likewise comes from the kills themselves
+ *   through the shared `src/core/mineralPayout.ts` rule, never a seeded field.
  * - **Fidelity boundary (parent AC4):** clearing the final level triggers the
  *   boss encounter, which is treated as the **end of the run**. No boss or
  *   mini-boss entity is simulated this round; a mini-boss wave is its
@@ -283,6 +312,11 @@ import { CENTIPEDE_ENEMY_KEY } from '../../waves/CentipedeSpawner';
 import { LANE_TRAFFIC_ENEMY_KEY } from '../../waves/LaneTrafficSpawner';
 import type { DifficultyCurveRow, EnemyConfig, EnemyMovementClass, ShipConfig } from '../../core/configTypes';
 import { MineralHold } from '../../core/mineralHold';
+import {
+  decideMineralKillPayout,
+  layOutMineralPayout,
+  type MineralDropPosition,
+} from '../../core/mineralPayout';
 import { PowerUpLevelStore } from '../../powerups/powerUpLevels';
 import { EffectsRegistry } from '../../powerups/effects';
 import {
@@ -417,6 +451,18 @@ interface Vec {
   y: number;
 }
 
+/**
+ * One mineral on the arena field: a position plus the minerals it is worth.
+ *
+ * Ordinary dots are worth one; a red **deposit** from a wreck whose payout
+ * reached the shared threshold is worth `MINERAL_DEPOSIT_VALUE` in a single
+ * pickup, exactly as the game's `Mineral.value` and the ship's hold treat it
+ * (AH-0MWT5CRJ600382MS).
+ */
+interface ArenaMineral extends Vec {
+  value: number;
+}
+
 interface Hostile {
   id: number;
   x: number;
@@ -457,6 +503,14 @@ interface Hostile {
   bulletSpeed: number;
   /** Chance (0..1) of firing per cycle, from config `shotProbability`. */
   shotProbability: number;
+  /**
+   * Minerals this hostile has absorbed (the game's `BaseEnemy.collectMineral`
+   * count). The arena's absorption pass lands in the sibling item; the field
+   * exists here because the kill payout reads it: a wreck re-drops
+   * `2 × round(collected + bonus)` through the shared rule. Asteroids and
+   * lane-traffic hazards never absorb, so their count stays `0`.
+   */
+  mineralCollected: number;
   /**
    * Body radius for the shared AOE geometry (`utils/aoe`), so a blast catches
    * a hostile when its edge intersects the effect area (AH-0MW5DVAME0062GQO).
@@ -733,7 +787,7 @@ interface ArenaWorld {
   player: { x: number; y: number; vx: number; vy: number; facing: number; angularVelocity: number };
   lives: number;
   invulnerableTicks: number;
-  minerals: Vec[];
+  minerals: ArenaMineral[];
   drops: Vec[];
   hostiles: Hostile[];
   playerBullets: PlayerBullet[];
@@ -1315,6 +1369,9 @@ function stateOf(world: ArenaWorld): ArenaState {
       x: mineral.x,
       y: mineral.y,
       type: 'mineral',
+      // An ordinary dot stays shape-identical (value omitted); only a deposit's
+      // worth is recorded, so pre-change skirmish records remain byte-identical.
+      ...(mineral.value !== 1 ? { value: mineral.value } : {}),
     })),
     hold: { minerals: world.hold.store, capacity: world.hold.capacity },
     boss: null,
@@ -1568,6 +1625,68 @@ export function resolveArenaHostileStats(
 }
 
 /**
+ * The plain facts the arena reads off one destroyed hostile to resolve its
+ * mineral payout. Structurally satisfied by the arena's internal `Hostile`.
+ */
+export interface ArenaWreck {
+  /** Wreck x position (where the payout lands). */
+  readonly x: number;
+  /** Wreck y position. */
+  readonly y: number;
+  /** True for the asteroid shadow-hazard body. */
+  readonly isAsteroid: boolean;
+  /** The destroyed body's archetype key. */
+  readonly archetype: string;
+  /** Minerals the hostile absorbed before dying (0 for a fresh body). */
+  readonly mineralCollected?: number;
+}
+
+/**
+ * Resolves the minerals one wreck leaves on the arena field through the
+ * **shared** Phaser-free rule in `src/core/mineralPayout.ts` — the same payout
+ * decision and scatter layout the game and the gyms consume, so the arena's
+ * mineral supply cannot drift from the shipped economy
+ * (AH-0MWT5CRJ600382MS).
+ *
+ * - **Asteroid** → the terminal small rock's yield: two gold minerals as a
+ *   deterministic symmetric pair (no draw). Splitting is not modelled; the
+ *   arena's shadow-hazard body stands in for the whole asteroid chain, whose
+ *   only mineral payout is the small rock's (a large/medium rock drops nothing
+ *   itself — its split children do).
+ * - **Lane-traffic hazard** → nothing: the game's
+ *   `LaneTraffic.mineralRedropCount` is `0` (a hazard, not a mineral carrier).
+ * - **Any other enemy** → `2 × round(collected + bonus)`, laid out as the
+ *   doubled gold scatter; when the resolved payout reaches the shared deposit
+ *   threshold the whole payout collapses to one deposit worth its value at the
+ *   wreck.
+ *
+ * Salvage is not modelled in the arena (it has no timed bounty window), so the
+ * Salvage bonus is always `0`. Every draw comes from the supplied `rng`, so a
+ * seeded stream reproduces the payout exactly.
+ *
+ * @param wreck — the destroyed body's plain payout facts
+ * @param rng — seeded random-number generator for the bonus roll and scatter
+ *   (defaults to `Math.random`; the arena always injects its seeded stream)
+ */
+export function resolveArenaWreckMinerals(
+  wreck: ArenaWreck,
+  rng: () => number = Math.random,
+): MineralDropPosition[] {
+  if (wreck.isAsteroid) {
+    const decision = decideMineralKillPayout({ asteroidSizeTier: 'small' }, rng);
+    return layOutMineralPayout(wreck.x, wreck.y, decision, rng);
+  }
+  // A non-blocking hazard that is not an asteroid (lane traffic) never
+  // re-drops minerals — the game's `LaneTraffic.mineralRedropCount` is 0.
+  if (isNonBlockingHazard(wreck.archetype)) return [];
+  const decision = decideMineralKillPayout(
+    { collected: Math.max(0, wreck.mineralCollected ?? 0) },
+    rng,
+  );
+  return layOutMineralPayout(wreck.x, wreck.y, decision, rng);
+}
+
+/**
  * Runs one headless arena run for `policy` (AC1).
  *
  * The returned {@link ArenaRunResult.records} are telemetry-shaped and can be
@@ -1736,11 +1855,16 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   let hostileReservoir: HostileSpec[];
   let asteroidReservoir: Vec[];
   if (realSupplyMode) {
-    // Campaign modes keep the seeded mineral harvest and the asteroid
-    // shadow-hazard (so the Extra Life roll stays live) but **never** seed
-    // power-up drops — supply comes from kills through the real drop rule.
+    // Real-supply modes model the shipped game's economy: there is **no**
+    // seeded mineral field — minerals come from kills through the shared
+    // `src/core/mineralPayout.ts` rule (see `destroyHostile`). The legacy
+    // mineral-reservoir draw is still consumed and discarded so the asteroid
+    // shadow-hazard positions (the next draws from the same seeded stream)
+    // stay put, keeping the Extra Life roll and contact baselines stable for a
+    // reason that is *not* the mineral model.
     const modeRng = createSeededRng(config.seed + 1);
-    mineralReservoir = seededFieldPoints(modeRng, spawns.minerals * 3, width, height);
+    seededFieldPoints(modeRng, spawns.minerals * 3, width, height);
+    mineralReservoir = [];
     powerUpReservoir = [];
     hostileReservoir = [];
     asteroidReservoir = seededFieldPoints(modeRng, spawns.asteroids * 3, width, height);
@@ -1762,6 +1886,11 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   // independent of the reservoir and governor streams, so the closed loop
   // stays deterministic without perturbing already-drawn scenario positions.
   const simRng = createSeededRng(config.seed);
+  // A second dedicated stream for the shared kill-payout draws (the bonus roll
+  // and the gold scatter). Keeping it separate from `simRng` means adding
+  // mineral kill-drops cannot shift the shot-probability or power-up-drop
+  // sequence, so the mineral model is the only behaviour that changes.
+  const mineralRng = createSeededRng(config.seed);
 
   const governor = new BotInputGovernor(config.humanInput ?? {});
   governor.seed(config.seed);
@@ -1834,7 +1963,9 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     const point = mineralReservoir[mineralReservoir.length - nextMineral];
     if (point) {
       nextMineral -= 1;
-      world.minerals.push({ ...point });
+      // Every seeded field mineral is an ordinary one-mineral dot (the skirmish
+      // has no deposits — those come from kill payouts in real-supply mode).
+      world.minerals.push({ ...point, value: 1 });
     }
   };
   const spawnPowerUp = (): void => {
@@ -1924,6 +2055,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       fireCooldown: HOSTILE_FIRE_WARMUP_TICKS + index * 7,
       bulletSpeed: positiveOr(enemy?.bulletSpeed, FALLBACK_ENEMY_BULLET_SPEED),
       shotProbability: shootEnabled ? clamp01(enemy?.shotProbability ?? 1) : 0,
+      mineralCollected: 0,
       motion,
       touching: false,
       avoidableUntil: -1,
@@ -2147,15 +2279,21 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       if (hostile.isAsteroid && simRng() < extraLifeDropChance(supplyLevel, DEFAULT_RULES)) {
         world.drops.push({ x: hostile.x, y: hostile.y });
       }
+      // Minerals come from the kill through the **shared** Phaser-free rule
+      // (AH-0MWT5CRJ600382MS): the payout decision and its layout are the same
+      // ones the game and gyms consume, so the arena's mineral supply is the
+      // shipped kill-drop economy rather than a seeded field. The draws use the
+      // dedicated `mineralRng` stream, so same seed ⇒ identical drops.
+      for (const drop of resolveArenaWreckMinerals(hostile, mineralRng)) {
+        world.minerals.push({ ...drop });
+      }
     }
     // The reward's evidence event. The arena models the reward **decision**
     // (guaranteed drop + level-scaled bump, the same resolver the game reads)
-    // but not kill-time mineral payouts: the harness mineral supply is the
-    // seeded harvest, and the ordinary per-kill re-drop is likewise not
-    // modelled. Modelling only the elite's bump would overstate its share of
-    // an economy the arena does not otherwise simulate, so `mineralsCollected`
-    // stays comparable with the pre-elite baseline (documented in
-    // docs/BALANCING.md).
+    // and the ordinary kill-payout minerals (see "Mineral economy" above), but
+    // not the elite's *reward* mineral bump: its wreck pays through the same
+    // shared kill rule as any other wreck, so the bump is not added a second
+    // time (documented in docs/BALANCING.md).
     if (hostile.eliteBehaviour) {
       const reward = resolveEliteReward(supplyLevel, DEFAULT_RULES);
       pushEvent(tick, 'elite_killed', {
@@ -2800,12 +2938,17 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       if (distance(mineral, playerPoint) > COLLECT_RADIUS) return true;
       // Shared hold model: collect into the hold, and run the shared
       // hold-full choice flow the moment it fills (AH-0MVD1RIH2008YCNV).
-      world.hold.collect();
-      mineralsCollected += 1;
+      // A mineral's *worth* is credited (10 for a red deposit), exactly as
+      // `GameState.addMinerals(mineral.value)` does in the game.
+      world.hold.collect(mineral.value);
+      mineralsCollected += mineral.value;
       pushEvent(tick, 'mineral_collected', {
         x: mineral.x,
         y: mineral.y,
         total: world.hold.store,
+        // Omitted for an ordinary dot so the pre-change record shape (and any
+        // baseline over it) is unchanged; present only for a deposit's worth.
+        ...(mineral.value !== 1 ? { value: mineral.value } : {}),
       });
       if (world.hold.isFull) resolveHoldFull(tick);
       return false;
@@ -2825,7 +2968,10 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // kills through the real drop rule); the asteroid shadow-hazard refills
     // on the same cadence as the skirmish.
     if (tick > 0 && tick % COLLECTABLE_RESPAWN_TICKS === 0) {
-      if (world.minerals.length < spawns.minerals) spawnMineral();
+      // The seeded mineral field and its top-up are **skirmish-only**: in
+      // real-supply mode every mineral came from a kill and the field is never
+      // replenished (AH-0MWT5CRJ600382MS).
+      if (!realSupplyMode && world.minerals.length < spawns.minerals) spawnMineral();
       if (!realSupplyMode && world.drops.length < spawns.powerUps) spawnPowerUp();
     }
     if (tick > 0 && tick % HOSTILE_RESPAWN_TICKS === 0) {
