@@ -7,7 +7,9 @@
  * §7.5 anchor, owns the **single** band/target config object the promo arc is
  * planned from, and turns that corpus into the ordered, non-overlapping
  * footage windows of the arc (`planIntensityArc`) with the inter-window fade
- * overlap compensated so the **rendered** timeline delivers the 34 s arc.
+ * overlap compensated — rounded up to the planner's sample grid — so the
+ * **rendered** timeline delivers the 34 s arc (at most one sample step longer
+ * for an off-grid fade).
  * `.otio` emission is the following slice; it consumes the plan and the totals
  * here (in particular `planTotals`) rather than re-deriving anything.
  *
@@ -1064,14 +1066,39 @@ function growWindowBy(window, amountSeconds, sampleRateHz) {
 }
 
 /**
+ * Rounds a seconds value **up** to the nearest whole sample step.
+ *
+ * The planner can only grow windows in whole samples, so a compensation demand
+ * that is not a whole number of steps must be absorbed by rounding the demand
+ * up — never by delivering a shorter arc (AH-0MWXJKONT0059CT6).  The epsilon
+ * matters: an on-grid total such as 3 × 0.4 s evaluates to `1.2000000000000002`,
+ * whose quotient would otherwise round up to 13 samples; subtracting the
+ * module's time epsilon snaps it back to 12 while a genuine sub-step residual
+ * still rounds up.
+ *
+ * @param {number} seconds
+ * @param {number} stepSeconds
+ * @returns {number} the smallest whole number of sample steps that covers
+ *   `seconds`.
+ */
+function roundUpToSampleGrid(seconds, stepSeconds) {
+  const samples = Math.ceil((seconds - TIME_EPSILON) / stepSeconds);
+  return Math.max(seconds, samples * stepSeconds);
+}
+
+/**
  * Distributes the inter-window fade overlap across the planned windows so the
  * **rendered** timeline delivers the arc's targets.
  *
  * `vidc` cross-fades consecutive clips, so `n` windows render
  * `Σ durations − (n − 1) × fadeSeconds` seconds (parent item assumption 3).
- * The planner therefore adds exactly `(n − 1) × fadeSeconds` of footage: the
- * extra is shared evenly, in arc order, by growing each window into the slack
- * of its own contiguous in-band run (end edge first).
+ * The planner therefore adds *at least* `(n − 1) × fadeSeconds` of footage:
+ * the compensation demand is quantised up to the nearest whole sample step
+ * (derived from `config.sampleRateHz`), so a fade whose total overlap is off
+ * the sample grid is rounded up to the next step — the planner never delivers
+ * a quieter (shorter) arc.  The extra footage is shared evenly, in arc order,
+ * by growing each window into the slack of its own contiguous in-band run
+ * (end edge first).
  *
  * @returns {number} the extra footage the plan could not accommodate (0 when
  *   the compensation was applied in full).
@@ -1081,11 +1108,16 @@ function compensateFadeOverlap(windows, config) {
   if (extraSeconds <= TIME_EPSILON) return 0;
 
   const stepSeconds = 1 / config.sampleRateHz;
-  let remaining = extraSeconds;
+  // Quantise the demand up to the sample grid so the loop never drops a
+  // sub-step remainder (AH-0MWXJKONT0059CT6).  The planner can only absorb
+  // whole sample steps, so any fractional remainder must be absorbed by
+  // rounding the *demand* up — never by delivering less than the target arc.
+  const roundedCompensation = roundUpToSampleGrid(extraSeconds, stepSeconds);
+  let remaining = roundedCompensation;
   // One sample per window per pass, so the extra footage is shared evenly in
   // arc order (an uneven remainder lands on the earlier bands). The pass bound
   // is the sample count needed plus a window's worth of no-progress passes.
-  const maxPasses = Math.ceil(extraSeconds / stepSeconds) + windows.length + 8;
+  const maxPasses = Math.ceil(roundedCompensation / stepSeconds) + windows.length + 8;
   let passes = 0;
   while (remaining > TIME_EPSILON && passes < maxPasses) {
     passes += 1;
@@ -1145,8 +1177,10 @@ function formatSeconds(value) {
  *   capture (an `.otio` `source_range` is per clip);
  * - window edges are nudged to local `smoothed` minima within
  *   `config.edgeNudgeSeconds`;
- * - the fade overlap is compensated so the rendered total is the arc's 34 s,
- *   not 34 s minus the overlaps;
+ * - the fade overlap is compensated so the rendered total reaches the arc's
+ *   34 s, not 34 s minus the overlaps; the compensation is quantised **up**
+ *   to the sample grid, so an off-grid fade total renders within one sample
+ *   step of the target rather than below it (AH-0MWXJKONT0059CT6);
  * - ties resolve by clip natural order, then earliest `t`, so the plan is
  *   reproducible byte-for-byte from the same inputs.
  *
@@ -1219,10 +1253,19 @@ export function planIntensityArc(captures, config = DEFAULT_INTENSITY_ARC_CONFIG
       (total, window) => total + windowDurationSeconds(window, stepSeconds),
       0,
     );
+    // The demand was already rounded up to the sample grid inside
+    // compensateFadeOverlap (AH-0MWXJKONT0059CT6), so any remainder here is a
+    // genuine footage shortage — the windows simply cannot grow enough even
+    // for the quantised demand.  Name the rounded demand and the step so the
+    // diagnosis points at the planner's quantisation, not at the footage.
+    const rawCompensation = Math.max(0, (nudged.length - 1) * config.fadeSeconds);
+    const roundedCompensation = roundUpToSampleGrid(rawCompensation, stepSeconds);
     throw new IntensityArcShortfallError(
       `Intensity arc cannot deliver the ${planTargetSeconds(config)}s rendered arc: ` +
         `the selected windows leave only ${formatSeconds(footageSeconds)} of footage, ` +
-        `which cannot absorb the ${formatSeconds(uncompensated)} inter-window fade compensation that remains. ` +
+        `which cannot absorb the sample-step-quantised fade compensation of ` +
+        `${formatSeconds(roundedCompensation)} (rounded up to the ${config.sampleRateHz} Hz / ` +
+        `${formatSeconds(stepSeconds)} sample grid). ` +
         'Re-capture longer runs of the arc bands, or lower DEFAULT_INTENSITY_ARC_CONFIG.fadeSeconds.',
       [],
     );
@@ -1243,6 +1286,12 @@ export function planIntensityArc(captures, config = DEFAULT_INTENSITY_ARC_CONFIG
 /**
  * Summarises a plan: delivered footage, the rendered total (footage minus the
  * inter-window fade overlaps) and the per-band delivered seconds.
+ *
+ * When the fade overlap is off the planner's sample grid the compensation is
+ * rounded **up**, so `renderedSeconds` may exceed the arc target by less than
+ * one sample step (AH-0MWXJKONT0059CT6).  `footageSeconds` and `fadeSeconds`
+ * stay individually truthful — only the rounded-up compensation shows up as
+ * extra footage.
  *
  * The planner's own totals, not a re-derivation: the CLI's `--dry-run` output
  * and the `.otio` metadata both quote this, so the numbers a producer reads are

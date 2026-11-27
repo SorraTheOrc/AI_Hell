@@ -482,8 +482,11 @@ The planner:
    reach each band's target, drawn longest-first across the pooled captures,
    with every edge nudged (≤ 0.25 s) onto a local `smoothed` minimum so a cut
    never lands mid-spike;
-3. compensates the inter-cut cross fade, so the **rendered** timeline totals
-   34 s rather than 34 s minus the overlaps; and
+3. compensates the inter-cut cross fade, so the **rendered** timeline reaches
+   the 34 s arc target rather than 34 s minus the overlaps; the compensation
+   is rounded **up** to the planner's sample grid (`sampleRateHz`, 10 Hz), so
+   an off-grid fade total renders at most one sample step (100 ms) longer than
+   34 s — never shorter; and
 4. writes the edit as an OpenTimelineIO 0.16.0 document,
    `<dir>/promo.otio`, which `vidc render --timeline` compiles.
 

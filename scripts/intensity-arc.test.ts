@@ -850,6 +850,80 @@ describe('intensity arc planning (AH-0MWPD4SGJ005LAPR)', () => {
     }
   });
 
+  it('rounds an off-grid fade overlap up to the sample grid (AH-0MWXJKONT0059CT6)', () => {
+    // Repro from the report: 4 windows × 450 ms = 1.35 s of total overlap,
+    // which is 13.5 samples at 10 Hz — not a whole number of sample steps.
+    const config = configWith({ fadeSeconds: 0.45 });
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]);
+    const plan = planIntensityArc(captures, config);
+    const totals = planTotals(plan, config);
+    const stepSeconds = 1 / config.sampleRateHz;
+
+    // Planned without throwing, and the compensation is rounded UP to 1.4 s
+    // (14 samples), never down to 1.3 s.
+    const rawOverlap = (plan.length - 1) * config.fadeSeconds;
+    const roundedCompensation = Math.ceil(rawOverlap / stepSeconds) * stepSeconds;
+    expect(roundedCompensation).toBeCloseTo(1.4, 9);
+    expect(totals.footageSeconds).toBeCloseTo(
+      ARC_RENDERED_TOTAL_SECONDS + roundedCompensation,
+      6,
+    );
+    // The rendered arc is the 34 s target plus the sub-step residual, never
+    // shorter than the target.
+    expect(totals.renderedSeconds).toBeCloseTo(
+      ARC_RENDERED_TOTAL_SECONDS + (roundedCompensation - rawOverlap),
+      6,
+    );
+    expect(totals.renderedSeconds).toBeGreaterThanOrEqual(ARC_RENDERED_TOTAL_SECONDS);
+    expect(totals.renderedSeconds - ARC_RENDERED_TOTAL_SECONDS).toBeLessThanOrEqual(
+      stepSeconds + 1e-9,
+    );
+    // The plan totals are internally consistent: footage − fade = rendered.
+    expect(totals.footageSeconds - totals.fadeSeconds).toBeCloseTo(
+      totals.renderedSeconds,
+      6,
+    );
+    expect(totals.fadeSeconds).toBeCloseTo(rawOverlap, 9);
+  });
+
+  it('leaves an on-grid fade overlap exactly on the arc target, adding no extra footage', () => {
+    // 500 ms × 3 = 1.5 s, already a whole number of 0.1 s sample steps.
+    const config = configWith({ fadeSeconds: 0.5 });
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]);
+    const plan = planIntensityArc(captures, config);
+    const totals = planTotals(plan, config);
+
+    const rawOverlap = (plan.length - 1) * config.fadeSeconds;
+    const stepSeconds = 1 / config.sampleRateHz;
+    // On the grid: rounding up changes nothing.
+    expect(Math.ceil(rawOverlap / stepSeconds) * stepSeconds).toBeCloseTo(rawOverlap, 9);
+    expect(totals.footageSeconds).toBeCloseTo(ARC_RENDERED_TOTAL_SECONDS + rawOverlap, 6);
+    expect(totals.renderedSeconds).toBeCloseTo(ARC_RENDERED_TOTAL_SECONDS, 6);
+    expect(totals.renderedSeconds).not.toBeGreaterThan(ARC_RENDERED_TOTAL_SECONDS + 1e-9);
+  });
+
+  it('names the sample-step-quantised compensation when the footage genuinely cannot absorb it', () => {
+    // Every band has only ~1 s of slack, so a 2 s fade demand (6 s total over
+    // 4 windows) cannot be absorbed even after rounding up to the grid.
+    const config = configWith({ fadeSeconds: 2 });
+    const captures = syntheticCorpus([{ stem: 'clip-a', plateaus: FULL_ARC_PLATEAUS }]);
+    let captured: unknown;
+    try {
+      planIntensityArc(captures, config);
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(IntensityArcShortfallError);
+    const message = (captured as IntensityArcShortfallError).message;
+    // The message names the quantisation, the sample step and the rate — not
+    // an unqualified "the footage is short" that would send a producer to
+    // re-capture footage they already have.  It also names the rounded demand.
+    expect(message).toMatch(/sample-step-quantised fade compensation/i);
+    expect(message).toContain('6.000s');
+    expect(message).toContain('0.100s');
+    expect(message).toContain('10 Hz');
+  });
+
   it('never reuses footage and never lets a cut leave its band', () => {
     // Two captures with different runs: medium must pool across both, so the
     // plan carries several windows from different clips.

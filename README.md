@@ -769,8 +769,9 @@ added by AH-0MUWTNPYJ0031FQE):
   formats). The arc is the command's only behaviour: there is no flag to select
   or disable it, and its bands/thresholds live in one config object
   (`scripts/intensity-arc.mjs`). Cuts cross-fade at an explicit **300 ms**
-  (`--fade-duration`, overridable) — the planner compensates that overlap so the
-  rendered timeline still totals 34 s. Captures with no usable series are
+  (`--fade-duration`, overridable) — the planner compensates that overlap, rounded
+  up to its 10 Hz sample grid, so the rendered timeline reaches 34 s (at most one
+  sample step longer for an off-grid fade). Captures with no usable series are
   skipped with a warning; `--dry-run` prints the plan and the `vidc` argv without
   writing or rendering. AI_Hell keeps no FFmpeg logic and no output validation
   of its own. See

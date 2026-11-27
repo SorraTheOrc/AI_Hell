@@ -246,7 +246,10 @@ calibration behind them are documented in
 | `very high` | `I ≥ 0.75` | 10 s |
 
 Because the windows are joined with `vidc`'s cross fade, the planner adds
-`(cuts − 1) × fade` of footage so the **rendered** timeline still totals 34 s.
+`(cuts − 1) × fade` of footage, rounded **up** to its 10 Hz sample grid, so the
+**rendered** timeline reaches 34 s — at most one sample step (100 ms) longer for
+a fade total that is off the grid, never shorter. The `--fade-duration` value
+forwarded to `vidc` is unchanged.
 Cuts land on local `smoothed` minima within 0.25 s of the planned edge, so a cut
 never falls mid-spike, and no footage is used twice.
 

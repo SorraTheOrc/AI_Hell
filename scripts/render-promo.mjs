@@ -108,7 +108,11 @@ Options:
   --resolution <WxH>      target resolution (vidc default: 1920x1080)
   --fps <number>          target frame rate (vidc default: 30)
   --fade-duration <ms>    cross fade between cuts in milliseconds (default: 300);
-                          the arc's fade compensation uses this same value
+                          the arc's fade compensation uses this same value.
+                          The compensation is rounded up to the planner's 10 Hz
+                          sample grid, so an off-grid fade total may render the
+                          arc less than one sample step (100 ms) longer than
+                          34 s; the value forwarded to vidc is unchanged
   --overwrite             overwrite the MP4 when it already exists
   --dry-run               print the arc plan and the vidc argv; write nothing
   --json                  emit vidc's JSON summary

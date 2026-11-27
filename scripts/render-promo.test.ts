@@ -383,6 +383,11 @@ describe('capture:promo CLI (AH-0MWPD4VV300828HE)', () => {
     expect(out.read()).toMatch(/intensity arc/i);
     expect(out.read()).not.toContain('--intensity-arc');
     expect(out.read()).not.toContain('--arc ');
+    // The fade help documents the sample-step quantisation of the
+    // compensation, while the forwarded value is unchanged (AH-0MWXJKONT0059CT6).
+    expect(out.read()).toMatch(/rounded up to the planner's 10 Hz\s+sample grid/i);
+    expect(out.read()).toContain('one sample step (100 ms)');
+    expect(out.read()).toMatch(/value forwarded to vidc is unchanged/i);
   });
 
   it('prints the usage text and exits 2 for a rejected flag', () => {

@@ -298,8 +298,9 @@ describe('capture:promo — the arc plan and the document it hands to vidc', () 
   it('is byte-deterministic: the same options build the same argv and document', { timeout: 30_000 }, () => {
     // The explicit value is on the planner's 0.1 s sample grid: the overlaps a
     // 4-window plan must compensate are (windows − 1) × fade, and the planner
-    // grows windows in whole samples (AH-0MWXJKONT0059CT6 covers the off-grid
-    // case, which fails loudly instead of over-running the arc).
+    // grows windows in whole samples. An off-grid total is rounded up to the
+    // grid (AH-0MWXJKONT0059CT6), rendering at most one sample step longer —
+    // never shorter — than the arc target.
     const first = parseArgs(['--dir', dir, '--fade-duration', '400']);
     const second = parseArgs(['--dir', dir, '--fade-duration', '400']);
 
