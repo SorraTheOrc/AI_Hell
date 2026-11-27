@@ -29,6 +29,7 @@ import {
   WEAPON_EVOLUTION_TABLE,
   WEAPON_PAIRINGS,
   assertValidWeaponEvolutionTable,
+  evolvedWeaponBaseIds,
   getEvolvedWeaponDefinition,
   resolveEvolvedWeaponDefinition,
   resolveEvolvedWeaponPattern,
@@ -336,6 +337,34 @@ describe('base-id classification (epic AC11)', () => {
       }
       expect(WEAPON_IDS).not.toContain(pairing.evolvedId);
     }
+  });
+});
+
+describe('evolvedWeaponBaseIds (AH-0MWXJEZET003B2IC)', () => {
+  it('returns both catalogue base ids for every shipped evolved weapon', () => {
+    for (const pairing of WEAPON_PAIRINGS) {
+      expect([...evolvedWeaponBaseIds(pairing.evolvedId)]).toEqual([
+        ...pairing.baseIds,
+      ]);
+    }
+  });
+
+  it('resolves Chain Ricochet to [ricochet, arc] so the second half is honoured', () => {
+    expect([...evolvedWeaponBaseIds('chain_ricochet')]).toEqual([
+      'ricochet',
+      'arc',
+    ]);
+  });
+
+  it('is a copy, so a caller cannot mutate the shipped pairing table', () => {
+    const ids = evolvedWeaponBaseIds('chain_ricochet');
+    expect(ids).not.toBe(WEAPON_PAIRINGS[0].baseIds);
+  });
+
+  it('returns an empty list for an unknown id instead of throwing (total)', () => {
+    expect([...evolvedWeaponBaseIds('not_evolved' as EvolvedWeaponId)]).toEqual(
+      [],
+    );
   });
 });
 

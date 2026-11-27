@@ -126,4 +126,16 @@ describe('weapon-evolution pairing docs match the shipped table (AC12)', () => {
       expect(readme, definition.name).toContain(definition.name);
     }
   });
+
+  it('the GDD and README note the two-id hex-matchup classification (AH-0MWXJEZET003B2IC)', () => {
+    // GDD §4.4 must record that an evolved weapon resolves to BOTH base ids,
+    // with the weakness-beats-strength precedence, so the docs cannot silently
+    // regress to the single-id (primary-half-only) description.
+    expect(powerUpsSection).toContain('**both** of its **base** ids');
+    expect(powerUpsSection).toContain('`weaknesses` resolves `effective`');
+    expect(powerUpsSection).toContain('`strengths` resolves `resisted`');
+    expect(powerUpsSection).toContain('AH-0MWXJEZET003B2IC');
+    // README names the same two-id classification.
+    expect(readme).toContain('classifying as **both** of its **base** ids');
+  });
 });

@@ -80,6 +80,7 @@ interface HexMatchupContract {
   resolveHexMatchup(
     weaponId: string | null | undefined,
     lookup: WeaponVerdictLookup | null | undefined,
+    baseIds?: readonly string[] | null,
   ): HexMatchupVerdict;
   buildAuthoredVerdictLookup(
     strengths: readonly string[] | null | undefined,
@@ -213,6 +214,127 @@ describe('resolveHexMatchup', () => {
         'resisted',
       );
       expect(resolveHexMatchup('synthetic-other', synthetic)).toBe('neutral');
+    },
+  );
+});
+
+describe('resolveHexMatchup with baseIds (evolved weapons, AH-0MWXJEZET003B2IC)', () => {
+  it(
+    'keeps the single-id verdict when baseIds is undefined, null or empty',
+    async () => {
+      const { resolveHexMatchup } = await hexMatchup();
+      const lookup: WeaponVerdictLookup = {
+        nova: 'effective',
+        cannon: 'resisted',
+      };
+      // Backward compatibility: the optional baseIds never changes the
+      // single-id path a non-evolved shot takes.
+      expect(resolveHexMatchup('nova', lookup)).toBe('effective');
+      expect(resolveHexMatchup('nova', lookup, undefined)).toBe('effective');
+      expect(resolveHexMatchup('nova', lookup, null)).toBe('effective');
+      expect(resolveHexMatchup('nova', lookup, [])).toBe('effective');
+      expect(resolveHexMatchup('cannon', lookup, [])).toBe('resisted');
+    },
+  );
+
+  it(
+    'resolves the second half when only it is authored (the failing case today)',
+    async () => {
+      const { resolveHexMatchup } = await hexMatchup();
+      // Chain Ricochet fires as `ricochet` (primary) but carries `arc` as its
+      // second base id; the-dawnbreaker authors `arc` as a weakness.
+      expect(
+        resolveHexMatchup('ricochet', { arc: 'effective' }, [
+          'ricochet',
+          'arc',
+        ]),
+      ).toBe('effective');
+      // The mirror case: a strength authored on the second half is honoured.
+      expect(
+        resolveHexMatchup('ricochet', { arc: 'resisted' }, [
+          'ricochet',
+          'arc',
+        ]),
+      ).toBe('resisted');
+    },
+  );
+
+  it(
+    'takes the most advantageous verdict across both halves',
+    async () => {
+      const { resolveHexMatchup } = await hexMatchup();
+      const lookup: WeaponVerdictLookup = {
+        ricochet: 'neutral',
+        arc: 'effective',
+      };
+      expect(
+        resolveHexMatchup('ricochet', lookup, ['ricochet', 'arc']),
+      ).toBe('effective');
+    },
+  );
+
+  it(
+    'pins the precedence when the two halves disagree: weakness (effective) wins over strength (resisted)',
+    async () => {
+      const { resolveHexMatchup } = await hexMatchup();
+      // Order must not matter: both directions return effective.
+      expect(
+        resolveHexMatchup('ricochet', { ricochet: 'resisted', arc: 'effective' }, [
+          'ricochet',
+          'arc',
+        ]),
+      ).toBe('effective');
+      expect(
+        resolveHexMatchup('arc', { ricochet: 'effective', arc: 'resisted' }, [
+          'arc',
+          'ricochet',
+        ]),
+      ).toBe('effective');
+    },
+  );
+
+  it(
+    'returns resisted when both halves are strengths',
+    async () => {
+      const { resolveHexMatchup } = await hexMatchup();
+      expect(
+        resolveHexMatchup('ricochet', { ricochet: 'resisted', arc: 'resisted' }, [
+          'ricochet',
+          'arc',
+        ]),
+      ).toBe('resisted');
+    },
+  );
+
+  it(
+    'returns neutral when neither half is authored (an unauthored / blank hex)',
+    async () => {
+      const { resolveHexMatchup } = await hexMatchup();
+      expect(
+        resolveHexMatchup('ricochet', { nova: 'effective' }, [
+          'ricochet',
+          'arc',
+        ]),
+      ).toBe('neutral');
+      expect(
+        resolveHexMatchup('ricochet', {}, ['ricochet', 'arc']),
+      ).toBe('neutral');
+      expect(
+        resolveHexMatchup('ricochet', null, ['ricochet', 'arc']),
+      ).toBe('neutral');
+    },
+  );
+
+  it(
+    'normalises each base id through the shared alias before looking it up',
+    async () => {
+      const { resolveHexMatchup } = await hexMatchup();
+      expect(
+        resolveHexMatchup('ricochet', { wave_laser: 'effective' }, [
+          'ricochet',
+          'waveLaser',
+        ]),
+      ).toBe('effective');
     },
   );
 });

@@ -292,6 +292,32 @@ export const EVOLVED_WEAPON_DEFINITIONS: readonly EvolvedWeaponDefinition[] = [
 ];
 
 /**
+ * The catalogue ids a fused shot classifies as for hex matchup purposes.
+ *
+ * A fused shot carries the pairing's base ids so a hex authored on the
+ * **second** half is still honoured (AH-0MWXJEZET003B2IC). This helper is the
+ * one place the fire path reads them, mirroring
+ * {@link resolveWeaponEvolution}'s published `baseIds` so there is no second
+ * table (epic AC11).
+ *
+ * Pure and total: an unknown id (unreachable for a shipped evolved weapon)
+ * returns an empty list rather than throwing, so the fire path degrades to the
+ * primary-id path instead of crashing.
+ *
+ * @param evolvedId — the live evolved weapon.
+ * @returns the pairing's base ids (`['ricochet', 'arc']` for Chain Ricochet),
+ *   or an empty list for an unknown id.
+ */
+export function evolvedWeaponBaseIds(
+  evolvedId: EvolvedWeaponId,
+): readonly WeaponId[] {
+  const pairing = WEAPON_PAIRINGS.find(
+    (candidate) => candidate.evolvedId === evolvedId,
+  );
+  return pairing ? [...pairing.baseIds] : [];
+}
+
+/**
  * Looks up an evolved definition by id.
  *
  * The shipped table is validated at module load, so a shipped id always

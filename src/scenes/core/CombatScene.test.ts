@@ -3352,5 +3352,29 @@ describe('CombatScene — field-tier evolution through the shared fire path (AH-
       .getPlayerBullets()
       .filter((bullet) => bullet.weaponId === 'ricochet');
     expect(evolvedBullets).toHaveLength(1);
+    // The fused shot also carries **both** base ids so a hex weakness authored
+    // on the second half (`arc`) is honoured at the hit seam
+    // (AH-0MWXJEZET003B2IC); `weaponId` stays the primary half for
+    // presentation and catalogue lookup.
+    expect([...(evolvedBullets[0].baseIds ?? [])]).toEqual(['ricochet', 'arc']);
+  });
+
+  it('a non-evolved shot carries no base ids (single-id path unchanged)', async () => {
+    booted = await bootScene([StubCombatScene]);
+    const scene = booted.scene as StubCombatScene;
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+    player.equipWeapon('cannon');
+
+    scene.runAutoFire(0.01);
+
+    const cannonBullets = scene
+      .getPlayerBullets()
+      .filter((bullet) => bullet.weaponId === 'cannon');
+    expect(cannonBullets.length).toBeGreaterThan(0);
+    for (const bullet of cannonBullets) {
+      expect(bullet.baseIds).toBeUndefined();
+    }
   });
 });

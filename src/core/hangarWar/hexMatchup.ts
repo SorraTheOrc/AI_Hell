@@ -138,26 +138,73 @@ export function normaliseMatchupWeaponId(weaponId: unknown): string | null {
 }
 
 /**
- * Resolves one weapon's matchup verdict against a hex's boss.
+ * Resolves a shot's matchup verdict against a hex's boss.
  *
  * The **only** place the advantage/handicap is decided. Total: a `null`,
  * `undefined` or blank weapon id, a `null`/`undefined` lookup (an unauthored
  * hex) and an id the lookup does not name all resolve to `'neutral'`.
  *
+ * ## Evolved weapons classify as **both** base ids (AH-0MWXJEZET003B2IC)
+ *
+ * A fused shot carries the pairing's `baseIds` alongside its primary
+ * `weaponId` (e.g. Chain Ricochet carries `['ricochet', 'arc']` while its
+ * `weaponId` stays `'ricochet'`). When `baseIds` is a non-empty array the
+ * verdict is resolved across **every** id, so a hex that is weak to either
+ * half still counts:
+ *
+ * - a `weaknesses` entry on **either** id → `'effective'`;
+ * - otherwise a `strengths` entry on **either** id → `'resisted'`;
+ * - otherwise → `'neutral'`.
+ *
+ * **Weakness wins over strength** when the two halves disagree (the shot is
+ * still a threat to a boss weak to one half, even if the other half is
+ * resisted), pinned by `hexMatchup.test.ts`. A `null`/empty `baseIds` falls
+ * through to the single `weaponId` lookup, so a non-evolved shot resolves
+ * byte-for-byte as before.
+ *
  * @param weaponId — the weapon id the shot carries (authored or catalogue
  *   spelling; it is normalised before the lookup).
  * @param lookup — the injectable verdict lookup for the hex being fought.
+ * @param baseIds — the fused shot's base ids, when it is an evolved weapon;
+ *   `undefined`/`null`/empty for a non-evolved shot (single-id path).
  * @returns the verdict to apply at the hit seam.
  */
 export function resolveHexMatchup(
   weaponId: string | null | undefined,
   lookup: WeaponVerdictLookup | null | undefined,
+  baseIds?: readonly string[] | null,
 ): HexMatchupVerdict {
-  const weapon = normaliseMatchupWeaponId(weaponId);
-  if (weapon === null || lookup === null || lookup === undefined) {
-    return 'neutral';
+  if (lookup === null || lookup === undefined) return 'neutral';
+  const ids = matchupWeaponIds(weaponId, baseIds);
+  if (ids.length === 0) return 'neutral';
+  let resisted = false;
+  for (const id of ids) {
+    const verdict = lookup[id];
+    if (verdict === 'effective') return 'effective';
+    if (verdict === 'resisted') resisted = true;
   }
-  return lookup[weapon] ?? 'neutral';
+  return resisted ? 'resisted' : 'neutral';
+}
+
+/**
+ * The canonical ids a shot is classified by, deduplicated in lookup order.
+ *
+ * A non-empty `baseIds` list takes precedence so an evolved shot is classified
+ * by **both** halves; otherwise the single `weaponId` is used, keeping the
+ * non-evolved path byte-for-byte. Blank/unusable ids are dropped, so a fully
+ * blank input yields no ids (→ `'neutral'`).
+ */
+function matchupWeaponIds(
+  weaponId: string | null | undefined,
+  baseIds: readonly string[] | null | undefined,
+): string[] {
+  const source = Array.isArray(baseIds) && baseIds.length > 0 ? baseIds : [weaponId];
+  const ids: string[] = [];
+  for (const candidate of source) {
+    const id = normaliseMatchupWeaponId(candidate);
+    if (id !== null && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
 }
 
 /**

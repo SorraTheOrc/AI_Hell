@@ -103,9 +103,10 @@ import {
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
-import type {
-  EvolvedWeaponId,
-  EvolutionTransitionKind,
+import {
+  evolvedWeaponBaseIds,
+  type EvolvedWeaponId,
+  type EvolutionTransitionKind,
 } from '../../utils/weaponEvolutions';
 import {
   advanceOrbitPhase,
@@ -1554,6 +1555,13 @@ export class CombatCoreScene<
         // The shot's weapon identity, carried to the hit seam so the hex
         // matchup rule can resolve this weapon's verdict (AH-0MWL88REU009MO5G).
         bullet.weaponId = def.id;
+        // An evolved shot carries **both** base ids so a hex authored on the
+        // second half is still honoured (AH-0MWXJEZET003B2IC). `weaponId`
+        // stays the primary half for presentation/impact FX/catalogue lookup;
+        // a non-evolved shot leaves `baseIds` undefined (single-id path).
+        if (shotEvolution) {
+          bullet.baseIds = evolvedWeaponBaseIds(shotEvolution);
+        }
         // Wall-bounce feedback for ricochet: play impact VFX/SFX on each
         // edge reflection (AH-0MV822AP1006W2F9).
         if (def.bounce !== undefined) {
@@ -1810,6 +1818,11 @@ export class CombatCoreScene<
       // still honours the hex matchup rule at the hit seam
       // (AH-0MWL88REU009MO5G).
       warhead.weaponId = def.id;
+      // A split from an evolved shot keeps both base ids, so the second-half
+      // classification survives the split (AH-0MWXJEZET003B2IC).
+      if (bullet.baseIds) {
+        warhead.baseIds = bullet.baseIds;
+      }
       this._pendingSplitWarheads.push(warhead);
     }
     this.spawnSplitBurst(bullet.x, bullet.y, count);

@@ -1295,8 +1295,12 @@ on entry (AH-0MUJM746P000QAEO).
 > per cadence tick — so the boss's 200-hit pool (§4.3) and the level-0 output
 > budget (§4.4.2) keep their meaning, and every evolved cadence stays on the
 > shared 16th-note lattice (§2.3) with morphs on bar downbeats only. An evolved
-> weapon resolves to its **base** ids for hex-matchup purposes
-> (AH-0MWL5376H001WJFZ).
+> weapon resolves to **both** of its **base** ids for hex-matchup purposes: a
+> hex that names **either** half in its `weaknesses` resolves `effective`, and a
+> hex that names **either** half in its `strengths` resolves `resisted` (a
+> weakness on either half wins when the two disagree), so a fused shot carries
+> both ids and fusing never quietly changes which hexes a build is strong or
+> weak against (AH-0MWL5376H001WJFZ, AH-0MWXJEZET003B2IC).
 
 The player collects power-ups dropped by destroyed enemies through the shared weighted-random drop pool (§6.4). There are **17 distinct types** — including the three **area-of-effect weapons** (Nova, Mortar, Arc) documented in the table below; the shipped defaults encode rarity as **relative weights** — standard power-ups (Shield–Teleport, Magnet, Mineral Scoop, Force Field) at **4**, **Extra Life** and the **Mystery UFO** at **3**, the **Smart Bomb**, the **Orbital Strike** and the **Mining Laser** at **2**, and each weapon drop at **2** (the `~15–20 %` / `~5 %` per-enemy figures below are conceptual guidance, not a directly coded per-enemy chance). Extra Life therefore takes ≈ **5.0 % of power-up draws** (weight 3 of the 60 total power-up weight) — still rarer than standard drops, and only from the **field** (it is a field-pickup-only kind, §4.4.1):
 
@@ -4441,9 +4445,10 @@ retained as the original proposal.
   only** — never the number of damage instances per cadence tick — so the boss's
   200-hit pool (§4.3) and the level-0 output budget (§4.4.2) keep their meaning.
   Every evolved cadence stays on the shared 16th-note lattice and morphs only on
-  a bar downbeat. An evolved weapon resolves to its **base** id for hex matchup
-  purposes, so a fusion can never bypass a hex's authored strengths and
-  weaknesses.
+  a bar downbeat. An evolved weapon resolves to **both** of its **base** ids for
+  hex matchup purposes — a weakness on either half yields `effective`, a
+  strength on either half yields `resisted` — so a fusion can never bypass a
+  hex's authored strengths and weaknesses (AH-0MWXJEZET003B2IC).
 - **Legibility:** a fusion cue on collecting the second half, a HUD badge naming
   the evolved weapon with its icon, and a matching downbeat cue on expiry — so
   the pairings can be learned from play.

@@ -3813,11 +3813,14 @@ export class PlayScene extends CombatScene<
    *   `Boss.takeDamage()` so the per-hit impact VFX appears at the hit point.
    * @param hitY — optional world-space Y of the hit.
    * @param weaponId — the firing weapon's catalogue id (absent ⇒ neutral).
+   * @param baseIds — an evolved shot's base ids (both halves), or absent for
+   *   a non-evolved shot (AH-0MWXJEZET003B2IC).
    */
   private _damageBoss(
     hitX?: number,
     hitY?: number,
     weaponId?: string | null,
+    baseIds?: readonly string[] | null,
   ): void {
     const boss = this.boss;
     if (!boss || !boss.alive) return;
@@ -3827,9 +3830,9 @@ export class PlayScene extends CombatScene<
     // all. The reaction (effective flinch / resisted non-flinch) is keyed on
     // the connected shot, never on a damage instance (AH-0MWL88YYO0053DWH).
     boss.applyMatchupImpact(
-      this.resolveMatchupImpactState(boss, weaponId),
+      this.resolveMatchupImpactState(boss, weaponId, baseIds),
     );
-    const charged = this.resolveHitCharge(boss, weaponId, 1);
+    const charged = this.resolveHitCharge(boss, weaponId, 1, baseIds);
     const hits = charged + this.effectsRegistry.frenzyBonusHits();
     for (let hit = 0; hit < hits && boss.alive; hit += 1) {
       this._applyBossHit(hitX, hitY);
@@ -3909,11 +3912,14 @@ export class PlayScene extends CombatScene<
    * @param hitX — optional world-space X of the hit.
    * @param hitY — optional world-space Y of the hit.
    * @param weaponId — the firing weapon's catalogue id (absent ⇒ neutral).
+   * @param baseIds — an evolved shot's base ids (both halves), or absent for
+   *   a non-evolved shot (AH-0MWXJEZET003B2IC).
    */
   private _damageMiniBoss(
     hitX?: number,
     hitY?: number,
     weaponId?: string | null,
+    baseIds?: readonly string[] | null,
   ): void {
     const miniBoss = this.miniBoss;
     if (!miniBoss || !miniBoss.alive) return;
@@ -3921,9 +3927,9 @@ export class PlayScene extends CombatScene<
     // resisted shot of a pair applies no damage but must still raise the tag
     // and show no flinch) — AH-0MWL88YYO0053DWH.
     miniBoss.applyMatchupImpact(
-      this.resolveMatchupImpactState(miniBoss, weaponId),
+      this.resolveMatchupImpactState(miniBoss, weaponId, baseIds),
     );
-    const charged = this.resolveHitCharge(miniBoss, weaponId, 1);
+    const charged = this.resolveHitCharge(miniBoss, weaponId, 1, baseIds);
     const hits = charged + this.effectsRegistry.frenzyBonusHits();
     for (let hit = 0; hit < hits && miniBoss.alive; hit += 1) {
       this._applyMiniBossHit(hitX, hitY);
@@ -5370,13 +5376,13 @@ export class PlayScene extends CombatScene<
       // The shot's weapon identity rides into the shared matchup charge; the
       // damage path adds Frenzy's bonus hits and stops once the boss dies
       // (AH-0MVH80ZJ7009W18Z, AH-0MWL88REU009MO5G).
-      this._damageBoss(pb.x, pb.y, pb.weaponId);
+      this._damageBoss(pb.x, pb.y, pb.weaponId, pb.baseIds);
       pb.destroy();
       return true;
     }
     // Mini-boss encounter (the final boss is not spawned at the same time).
     if (this._playerBulletHitsEntity(pb, this.miniBoss)) {
-      this._damageMiniBoss(pb.x, pb.y, pb.weaponId);
+      this._damageMiniBoss(pb.x, pb.y, pb.weaponId, pb.baseIds);
       pb.destroy();
       return true;
     }

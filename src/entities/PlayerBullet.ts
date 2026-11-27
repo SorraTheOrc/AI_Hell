@@ -128,6 +128,19 @@ export class PlayerBullet extends Phaser.GameObjects.Image {
   weaponId?: string;
 
   /**
+   * The pairing's catalogue ids when this shot is an **evolved** weapon
+   * (AH-0MWXJEZET003B2IC), e.g. `['ricochet', 'arc']` for Chain Ricochet.
+   *
+   * `weaponId` stays the primary half so presentation, impact FX and the
+   * shot's catalogue definition keep using it; `baseIds` adds the second
+   * half so the hex matchup rule can resolve a verdict against **both**
+   * halves (`core/hangarWar/hexMatchup`). `undefined` for a non-evolved shot,
+   * which keeps the single-id matchup path byte-for-byte. Never read by
+   * flight logic.
+   */
+  baseIds?: readonly string[];
+
+  /**
    * Bullet lifetime in seconds. The bullet wraps across all four screen
    * edges while alive and is destroyed once this elapses.
    */

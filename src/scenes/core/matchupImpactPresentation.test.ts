@@ -25,7 +25,10 @@ import * as bulletImpactModule from '../../vfx/bulletImpact';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { EffectsRegistry } from '../../powerups/effects';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
-import type { WeaponVerdictLookup } from '../../core/hangarWar/hexMatchup';
+import {
+  buildAuthoredVerdictLookup,
+  type WeaponVerdictLookup,
+} from '../../core/hangarWar/hexMatchup';
 import {
   MATCHUP_EFFECTIVE_IMPACT_FX,
   MATCHUP_RESISTED_IMPACT_FX,
@@ -123,14 +126,24 @@ describe('matchup impact presentation through the shared seam (AC8)', () => {
     return booted.scene as PresentationScene;
   }
 
-  /** Fires a cannon shot at the enemy, carrying the cannon's own impactFx. */
+  /**
+   * Fires a shot at the enemy, carrying the weapon's own impactFx. `baseIds`,
+   * when supplied, is what an evolved shot carries alongside its primary
+   * `weaponId` (AH-0MWXJEZET003B2IC).
+   */
   function connect(
     scene: PresentationScene,
     enemy: MultiHitEnemy,
+    options: {
+      weaponId?: keyof typeof WEAPON_CATALOGUE;
+      baseIds?: readonly string[];
+    } = {},
   ): PlayerBullet {
+    const weaponId = options.weaponId ?? 'cannon';
     const bullet = scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
-    bullet.weaponId = 'cannon';
-    bullet.impactFx = WEAPON_CATALOGUE.cannon.impactFx;
+    bullet.weaponId = weaponId;
+    bullet.baseIds = options.baseIds;
+    bullet.impactFx = WEAPON_CATALOGUE[weaponId].impactFx;
     scene.runCollisions();
     return bullet;
   }
@@ -212,6 +225,51 @@ describe('matchup impact presentation through the shared seam (AC8)', () => {
         shape: undefined,
       }),
     );
+    expect(enemy.health).toBe(19);
+  });
+
+  it('an evolved shot resolves effective from its second half (Chain Ricochet vs the-dawnbreaker’s arc weakness)', async () => {
+    const scene = await boot();
+    // Mirrors hex-r1-1 (the-dawnbreaker): weaknesses = nova|arc. Chain Ricochet
+    // fires as `ricochet` (primary) but carries `arc` as its second base id.
+    scene.lookup = buildAuthoredVerdictLookup([], ['nova', 'arc']);
+    const enemy = new MultiHitEnemy(scene, 40, 40);
+    scene.entities.push(enemy);
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+
+    connect(scene, enemy, { weaponId: 'ricochet', baseIds: ['ricochet', 'arc'] });
+
+    // The second-half weakness doubles the offered hit point.
+    expect(cue).toHaveBeenCalledWith(
+      effectsModule.MATCHUP_IMPACT_STATE_CUES.effective.cue,
+    );
+    expect(enemy.health).toBe(18);
+  });
+
+  it('a non-evolved shot resolves exactly as today (no second id, no behaviour change)', async () => {
+    const scene = await boot();
+    // The same authored arc weakness must NOT apply to a bare ricochet shot
+    // that carries no base ids: the single-id path is unchanged.
+    scene.lookup = buildAuthoredVerdictLookup([], ['nova', 'arc']);
+    const enemy = new MultiHitEnemy(scene, 40, 40);
+    scene.entities.push(enemy);
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+
+    connect(scene, enemy, { weaponId: 'ricochet' });
+
+    // Neutral: the weapon's own cue, one ordinary hit point.
+    expect(cue).toHaveBeenCalledWith(WEAPON_CATALOGUE.ricochet.impactFx!.cue);
+    expect(enemy.health).toBe(19);
+  });
+
+  it('an unauthored / blank hex still resolves neutral for an evolved shot', async () => {
+    const scene = await boot();
+    scene.lookup = null;
+    const enemy = new MultiHitEnemy(scene, 40, 40);
+    scene.entities.push(enemy);
+
+    connect(scene, enemy, { weaponId: 'ricochet', baseIds: ['ricochet', 'arc'] });
+
     expect(enemy.health).toBe(19);
   });
 

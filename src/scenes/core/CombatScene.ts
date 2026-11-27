@@ -573,13 +573,17 @@ export abstract class CombatScene<
    *
    * @param target — the target the shot connected with.
    * @param weaponId — the shot's weapon id, or `null`/`undefined` (neutral).
+   * @param baseIds — an evolved shot's base ids (both halves), or
+   *   `null`/`undefined`/empty for a non-evolved shot (single-id path)
+   *   (AH-0MWXJEZET003B2IC).
    */
   protected resolveMatchupImpactState(
     target: object,
     weaponId: string | null | undefined,
+    baseIds?: readonly string[] | null,
   ): HexMatchupVerdict {
     if (!this.isMatchupEligible(target)) return 'neutral';
-    return resolveHexMatchup(weaponId, this.getMatchupLookup());
+    return resolveHexMatchup(weaponId, this.getMatchupLookup(), baseIds);
   }
 
   /**
@@ -600,16 +604,19 @@ export abstract class CombatScene<
    * @param target — the target the shot connected with (ledger identity).
    * @param weaponId — the shot's weapon id, or `null`/`undefined` (neutral).
    * @param points — the offered hit points (1 for an ordinary shot).
+   * @param baseIds — an evolved shot's base ids (both halves), or
+   *   `null`/`undefined`/empty for a non-evolved shot (AH-0MWXJEZET003B2IC).
    * @returns the hit points to apply at the seam.
    */
   protected resolveHitCharge(
     target: object,
     weaponId: string | null | undefined,
     points: number,
+    baseIds?: readonly string[] | null,
   ): number {
     const base = Math.max(0, Math.floor(points));
     if (base === 0) return 0;
-    const verdict = this.resolveMatchupImpactState(target, weaponId);
+    const verdict = this.resolveMatchupImpactState(target, weaponId, baseIds);
     if (verdict === 'effective') return base * 2;
     if (verdict === 'resisted') {
       const targetId = this.matchupTargetIdOf(target);
@@ -728,7 +735,12 @@ export abstract class CombatScene<
     // The matchup charge applies to every shot through the one shared seam:
     // `effective` offers two hit points, `resisted` one per two connected
     // shots (ledger), `neutral` the offered points (AH-0MWL88REU009MO5G).
-    const charged = this.resolveHitCharge(enemy, bullet.weaponId, points);
+    const charged = this.resolveHitCharge(
+      enemy,
+      bullet.weaponId,
+      points,
+      bullet.baseIds,
+    );
     let applied = 0;
     if (enemy.takeDamage) {
       // Frenzy (AH-0MVH80ZJ7009W18Z): while its window is active a single
@@ -802,7 +814,7 @@ export abstract class CombatScene<
     const state =
       target === undefined
         ? 'neutral'
-        : this.resolveMatchupImpactState(target, bullet.weaponId);
+        : this.resolveMatchupImpactState(target, bullet.weaponId, bullet.baseIds);
     this.resolveImpactFx(bullet.impactFx, bullet.x, bullet.y, state);
   }
 
