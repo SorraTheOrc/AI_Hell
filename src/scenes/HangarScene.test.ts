@@ -48,6 +48,10 @@ import {
   HANGAR_INTEL_LINE_STEP,
   HANGAR_MAP_ROW_Y,
   HANGAR_RESTART_ROW_Y,
+  HANGAR_RIGHT_SCROLL_INDICATOR_Y,
+  HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+  HANGAR_RIGHT_VIEWPORT_TOP_Y,
+  HANGAR_RIGHT_VISIBLE_ROWS,
   HANGAR_ROW_STEP,
   HANGAR_NEUTRAL_MARKER,
   HANGAR_STRONG_BACKGROUND,
@@ -68,6 +72,7 @@ import {
   advanceRestartConfirm,
   buildHangarModifierOptions,
   buildHangarRestartRow,
+  buildHangarRightColumnEntries,
   buildHangarScreenModel,
   buildHangarUnlockRows,
   buildHangarWeaponOptions,
@@ -76,6 +81,7 @@ import {
   hangarAttractDecision,
   hangarLowestRowY,
   hangarRightColumnLayout,
+  hangarRightMaxScroll,
   hangarUnlockMaxScroll,
   purchaseHangarEntry,
   renderHangarScreen,
@@ -1007,6 +1013,244 @@ describe('hangar unlock tree scrolling (AH-0MWWI3ONJ004QRR9)', () => {
       pressKey(scene, { key: 'Tab' });
     }
     expect(scrolled).toBe(true);
+  });
+});
+
+// ── The grown right column scrolls (AH-0MWWRQ8PX0088NQR) ──────────
+//
+// The right-hand column grows with the number of owned starting weapons. At
+// four owned hulls and nine (then fifteen) owned weapons its modifier and
+// saved-build rows would collide with the fixed buildout/restart/map/deploy
+// block, so — exactly like the unlock tree — the column renders one ordered
+// entry list through a fixed-height window. These specs pin the window, the
+// keyboard auto-scroll and the pointer affordances, and prove the last row is
+// reachable without any row colliding with the fixed block. The fixtures stay
+// at four owned hulls so the right column (not an unbounded unlock tree) is
+// what these specs exercise.
+describe('hangar right column scrolling (AH-0MWWRQ8PX0088NQR)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Every shipped weapon id except the permanent cannon, in catalogue order. */
+  const ALL_WEAPONS = [
+    'spread',
+    'dual',
+    'rapid',
+    'wave_laser',
+    'ricochet',
+    'cluster',
+    'options',
+    'nova',
+    'mortar',
+    'arc',
+    'rear_guard',
+    'broadside',
+    'railgun',
+    'shard_swarm',
+    'heavy_slug',
+  ];
+
+  /** The worst-case hangar: four hulls, `weaponCount` weapons, two modifiers, a saved build. */
+  function worstCasePayload(weaponCount: number): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = ALL_WEAPONS.slice(0, weaponCount);
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['spread'],
+      modifiers: [],
+    };
+    // One saved build renders the fixed five-row saved-build surface.
+    payload.hangar.savedBuilds = [
+      {
+        id: 'saved-1',
+        name: 'Saved One',
+        hullId: 'hull-1',
+        startingWeapons: ['spread'],
+        modifiers: [],
+      },
+    ];
+    payload.hangar.bankedMinerals = 0;
+    payload.hangar.bankedCores = 0;
+    return payload;
+  }
+
+  /** Boots the shipped scene with the injected payload. */
+  async function bootWith(payload: HangarWarPayload): Promise<HangarScene> {
+    booted = await bootScene([HangarScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, { payload, storage: null });
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: HangarScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  /** The right-column model rows rendered by `scene`, in entry order. */
+  function rightRows(
+    scene: HangarScene,
+    model: ReturnType<typeof buildHangarScreenModel>,
+  ) {
+    return buildHangarRightColumnEntries(model)
+      .filter((entry) => entry.kind !== 'heading')
+      .map((entry) => scene.getRows().find((row) => row.key === entry.key)!);
+  }
+
+  it('windows the right column clear of the fixed block at 9 and 15 owned weapons', async () => {
+    for (const weaponCount of [9, 15]) {
+      const payload = worstCasePayload(weaponCount);
+      const model = buildHangarScreenModel(payload);
+      expect(model.weaponOptions).toHaveLength(weaponCount);
+
+      // The **unscrolled** column overflows the fixed block — this is the
+      // latent collision the item fixes (it is why the column scrolls).
+      expect(hangarLowestRowY(model)).toBeGreaterThan(HANGAR_BUILDOUT_ROW_Y);
+
+      // The window geometry is single-sourced above the block.
+      expect(HANGAR_RIGHT_VISIBLE_ROWS).toBeGreaterThan(0);
+      expect(HANGAR_RIGHT_VIEWPORT_TOP_Y).toBeLessThan(
+        HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+      );
+      expect(HANGAR_RIGHT_VIEWPORT_BOTTOM_Y).toBeLessThan(
+        HANGAR_BUILDOUT_ROW_Y,
+      );
+      expect(HANGAR_RIGHT_SCROLL_INDICATOR_Y).toBeLessThan(
+        HANGAR_BUILDOUT_ROW_Y,
+      );
+      expect(hangarRightMaxScroll(model)).toBeGreaterThan(0);
+
+      const scene = await bootWith(payload);
+      const rows = rightRows(scene, model);
+      const visible = rows.filter((row) => row.text.visible);
+      expect(visible.length).toBeGreaterThan(0);
+      for (const row of visible) {
+        expect(row.text.y).toBeGreaterThanOrEqual(
+          HANGAR_RIGHT_VIEWPORT_TOP_Y,
+        );
+        expect(row.text.y).toBeLessThanOrEqual(
+          HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+        );
+        expect(row.text.y).toBeLessThan(HANGAR_BUILDOUT_ROW_Y);
+      }
+
+      // Paging to the end reveals the last saved-build row inside the window.
+      scene.scrollRightRows(HANGAR_RIGHT_VISIBLE_ROWS * 10);
+      expect(scene.getRightScroll()).toBe(hangarRightMaxScroll(model));
+      const last = rows.at(-1)!;
+      expect(last.text.visible).toBe(true);
+      expect(last.text.y).toBeGreaterThanOrEqual(HANGAR_RIGHT_VIEWPORT_TOP_Y);
+      expect(last.text.y).toBeLessThanOrEqual(
+        HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+      );
+
+      booted?.game.destroy(true);
+      booted = null;
+    }
+  });
+
+  it('keeps every keyboard-focused right-column row inside the visible window', async () => {
+    const payload = worstCasePayload(15);
+    const model = buildHangarScreenModel(payload);
+    const scene = await bootWith(payload);
+
+    const actionable = buildHangarRightColumnEntries(model).filter(
+      (entry) => entry.kind !== 'heading' && entry.actionable,
+    );
+    // More actionable right-column rows than one page, so focus must scroll.
+    expect(actionable.length).toBeGreaterThan(HANGAR_RIGHT_VISIBLE_ROWS);
+
+    let scrolled = false;
+    for (const entry of actionable) {
+      expect(scene.focusRow(entry.key), `focus ${entry.key}`).toBe(true);
+      expect(scene.getFocusedKey()).toBe(entry.key);
+      const rendered = scene
+        .getRows()
+        .find((candidate) => candidate.key === entry.key)!;
+      expect(rendered.text.visible, `${entry.key} visible`).toBe(true);
+      expect(rendered.text.y).toBeGreaterThanOrEqual(
+        HANGAR_RIGHT_VIEWPORT_TOP_Y,
+      );
+      expect(rendered.text.y).toBeLessThanOrEqual(
+        HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+      );
+      if (scene.getRightScroll() > 0) scrolled = true;
+    }
+    expect(scrolled).toBe(true);
+  });
+
+  it('auto-scrolls the right window as Tab walks past the first page', async () => {
+    const payload = worstCasePayload(15);
+    const model = buildHangarScreenModel(payload);
+    const scene = await bootWith(payload);
+
+    let scrolled = false;
+    for (let step = 0; step < model.focusOrder.length + 2; step += 1) {
+      const key = scene.getFocusedKey();
+      if (key?.startsWith('weapon:') || key?.startsWith('build:')) {
+        const rendered = scene
+          .getRows()
+          .find((candidate) => candidate.key === key)!;
+        expect(rendered.text.visible, `${key} visible`).toBe(true);
+        expect(rendered.text.y).toBeLessThanOrEqual(
+          HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+        );
+      }
+      if (scene.getRightScroll() > 0) scrolled = true;
+      pressKey(scene, { key: 'Tab' });
+    }
+    expect(scrolled).toBe(true);
+  });
+
+  it('pages the right column with the pointer affordances, first row to last', async () => {
+    const payload = worstCasePayload(15);
+    const model = buildHangarScreenModel(payload);
+    const scene = await bootWith(payload);
+
+    // A read-only render exercises the pointer affordances without handlers.
+    const view = renderHangarScreen(scene, model);
+    try {
+      const rows = buildHangarRightColumnEntries(model)
+        .filter((entry) => entry.kind !== 'heading')
+        .map((entry) => view.rows.find((row) => row.key === entry.key)!);
+
+      expect(view.rightScrollControls.up.visible).toBe(false);
+      expect(view.rightScrollControls.down.visible).toBe(true);
+      view.rightScrollControls.down.emit('pointerdown');
+      expect(view.getRightScroll()).toBe(hangarRightMaxScroll(model));
+
+      const last = rows.at(-1)!;
+      expect(last.text.visible).toBe(true);
+      expect(last.text.y).toBeGreaterThanOrEqual(HANGAR_RIGHT_VIEWPORT_TOP_Y);
+      expect(last.text.y).toBeLessThanOrEqual(
+        HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+      );
+      expect(view.rightScrollControls.up.visible).toBe(true);
+      expect(view.rightScrollControls.down.visible).toBe(false);
+
+      // Paging back returns to the first row (no row is stranded).
+      view.rightScrollControls.up.emit('pointerdown');
+      expect(view.getRightScroll()).toBe(0);
+      expect(rows[0].text.visible).toBe(true);
+      // The first entry is the HULLS heading, so the first **row** sits one
+      // step below the top of the window.
+      expect(rows[0].text.y).toBe(
+        HANGAR_RIGHT_VIEWPORT_TOP_Y + HANGAR_ROW_STEP,
+      );
+    } finally {
+      view.destroy();
+    }
   });
 });
 

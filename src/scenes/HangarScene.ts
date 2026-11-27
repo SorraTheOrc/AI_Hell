@@ -942,4 +942,18 @@ export class HangarScene extends Phaser.Scene {
   scrollUnlockRows(delta: number): number {
     return this.view?.scrollUnlockRows(delta) ?? 0;
   }
+
+  /** The first visible right-column entry (the scroll offset, in entries). */
+  getRightScroll(): number {
+    return this.view?.getRightScroll() ?? 0;
+  }
+
+  /**
+   * Scrolls the right-hand column by `delta` entries (positive = down). The
+   * column grows with the owned starting weapons, so it scrolls instead of
+   * colliding with the fixed bottom block (AH-0MWWRQ8PX0088NQR).
+   */
+  scrollRightRows(delta: number): number {
+    return this.view?.scrollRightRows(delta) ?? 0;
+  }
 }

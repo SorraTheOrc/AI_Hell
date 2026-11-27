@@ -40,10 +40,15 @@ import {
 } from './GymHangar';
 import {
   buildHangarScreenModel,
+  buildHangarRightColumnEntries,
+  HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
+  HANGAR_RIGHT_VIEWPORT_TOP_Y,
+  HANGAR_RIGHT_VISIBLE_ROWS,
   HANGAR_STRONG_MARKER,
   HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
   HANGAR_UNLOCK_VISIBLE_ROWS,
   HANGAR_WEAK_MARKER,
+  hangarRightMaxScroll,
   hangarUnlockMaxScroll,
 } from '../hangarWar/hangarScreen';
 import {
@@ -175,6 +180,78 @@ describe('GymHangar', () => {
     expect(lastRow.text.visible).toBe(true);
     expect(lastRow.text.y).toBeLessThanOrEqual(
       HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y,
+    );
+  });
+
+  it('renders the same scrolling right column the game does (AH-0MWWRQ8PX0088NQR)', async () => {
+    // A veteran hangar: four hulls, every shipped weapon, two modifiers and a
+    // saved build. The right column would overflow the fixed block unscrolled,
+    // so the shared renderer windows it — and the gym, which owns no second
+    // renderer, renders that identical window read-only (gym↔game parity).
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
+    payload.hangar.unlockedWeapons = [
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+      'nova',
+      'mortar',
+      'arc',
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+    ];
+    payload.hangar.ownedModifiers = ['hardened_plating', 'anti_maw_plating'];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['spread'],
+      modifiers: [],
+    };
+    payload.hangar.savedBuilds = [
+      {
+        id: 'saved-1',
+        name: 'Saved One',
+        hullId: 'hull-1',
+        startingWeapons: ['spread'],
+        modifiers: [],
+      },
+    ];
+
+    const scene = await bootHangar({ payload });
+    const model = scene.getModel();
+
+    // One shared code path: the gym's model is the game's model.
+    expect(model).toEqual(buildHangarScreenModel(payload));
+    expect(model.weaponOptions).toHaveLength(15);
+    expect(hangarRightMaxScroll(model)).toBeGreaterThan(0);
+    // Read-only: the same rows, none actionable.
+    expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+
+    const rightRows = buildHangarRightColumnEntries(model)
+      .filter((entry) => entry.kind !== 'heading')
+      .map((entry) => scene.getRows().find((row) => row.key === entry.key)!);
+    const visible = rightRows.filter((row) => row.text.visible);
+    expect(visible.length).toBeGreaterThan(0);
+    for (const row of visible) {
+      expect(row.text.y).toBeGreaterThanOrEqual(HANGAR_RIGHT_VIEWPORT_TOP_Y);
+      expect(row.text.y).toBeLessThanOrEqual(HANGAR_RIGHT_VIEWPORT_BOTTOM_Y);
+    }
+
+    // The gym pages the shared right-column window to the last row.
+    expect(scene.scrollRightRows(HANGAR_RIGHT_VISIBLE_ROWS * 10)).toBe(
+      hangarRightMaxScroll(model),
+    );
+    const lastRow = rightRows.at(-1)!;
+    expect(lastRow.text.visible).toBe(true);
+    expect(lastRow.text.y).toBeLessThanOrEqual(
+      HANGAR_RIGHT_VIEWPORT_BOTTOM_Y,
     );
   });
 

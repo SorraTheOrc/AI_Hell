@@ -210,4 +210,18 @@ export class GymHangar extends Phaser.Scene {
   scrollUnlockRows(delta: number): number {
     return this.view?.scrollUnlockRows(delta) ?? 0;
   }
+
+  /** The first visible right-column entry (the shared screen's scroll offset). */
+  getRightScroll(): number {
+    return this.view?.getRightScroll() ?? 0;
+  }
+
+  /**
+   * Scrolls the shared screen's right-hand column by `delta` entries (positive
+   * = down). Like the unlock tree, this is pointer navigation only — the gym
+   * renders the same windowed column the game does (AH-0MWWRQ8PX0088NQR).
+   */
+  scrollRightRows(delta: number): number {
+    return this.view?.scrollRightRows(delta) ?? 0;
+  }
 }

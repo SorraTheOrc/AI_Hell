@@ -55,6 +55,11 @@
  *   part of that model, so the gym renders the identical `TARGET INTEL` block
  *   and `▲ EFFECTIVE` / `▼ RESISTED` marks read-only
  *   (AH-0MWMT4STK001PSK4).
+ * - **Both columns scroll when the roster outgrows the screen.** The unlock
+ *   tree (AH-0MWWI3ONJ004QRR9) and the right-hand hull/loadout/modifier/
+ *   saved-build column (AH-0MWWRQ8PX0088NQR) share one window rule
+ *   ({@link hangarWindowMax}) and the same keyboard/pointer affordances, so a
+ *   veteran roster can never hide a row behind the fixed deploy block.
  * - **An empty loadout is auto-fitted on open; the button is the explicit
  *   path** (AH-0MWOWEPO2004B0MR, documented by AH-0MWOWEYZQ006IR9T). The
  *   shared boss-aware selector (`selectAutoLoadout` via `applyAutoLoadout`)
@@ -2083,6 +2088,27 @@ export interface HangarScreenView {
     readonly up: Phaser.GameObjects.Text;
     readonly down: Phaser.GameObjects.Text;
   };
+  /**
+   * The first right-column entry currently visible (the scroll offset, in
+   * entries). `0` when the column fits or nothing has scrolled
+   * (AH-0MWWRQ8PX0088NQR).
+   */
+  getRightScroll(): number;
+  /**
+   * Scrolls the right-hand column by `delta` entries (positive = down), clamped
+   * to the model. Returns the applied offset so a caller can assert the clamp.
+   */
+  scrollRightRows(delta: number): number;
+  /** Whether `key` is a right-column row inside the visible window (test seam). */
+  isRightColumnRowVisible(key: string): boolean;
+  /**
+   * The pointer scroll affordances rendered beside the right-hand column,
+   * mirroring the unlock tree's.
+   */
+  readonly rightScrollControls: {
+    readonly up: Phaser.GameObjects.Text;
+    readonly down: Phaser.GameObjects.Text;
+  };
   /** Destroys the rendered objects and detaches the keyboard listener. */
   destroy(): void;
 }
@@ -2129,7 +2155,6 @@ const RIGHT_X = 520;
 const TITLE_Y = 34;
 const SALVAGE_Y = 70;
 const RING_Y = 90;
-const SECTION_Y = 118;
 const ROW_START_Y = 144;
 
 /** Vertical step between rows in either column. */
@@ -2182,13 +2207,57 @@ export const HANGAR_UNLOCK_SCROLL_INDICATOR_Y =
   HANGAR_UNLOCK_ROW_START_Y + HANGAR_UNLOCK_VISIBLE_ROWS * HANGAR_ROW_STEP;
 
 /**
+ * The largest scroll offset a window of `visible` slots allows for `total`
+ * entries (`0` when everything fits).
+ *
+ * The one shared window rule behind both the unlock tree and the right-hand
+ * column (AH-0MWWRQ8PX0088NQR), so the two columns scroll identically and only
+ * the row source differs.
+ */
+export function hangarWindowMax(total: number, visible: number): number {
+  return Math.max(0, total - visible);
+}
+
+/**
+ * The scroll offset that keeps `index` inside a `visible`-slot window.
+ *
+ * Pure and total: the renderer, the pointer affordances and the navigation
+ * spec share this one rule, so a focused row can never be scrolled out of view.
+ * The returned offset is not clamped to the list's maximum — the caller clamps
+ * it once against {@link hangarWindowMax}.
+ */
+export function hangarWindowScrollForFocus(
+  index: number,
+  scroll: number,
+  visible: number,
+): number {
+  if (index < scroll) return index;
+  if (index >= scroll + visible) {
+    return index - visible + 1;
+  }
+  return scroll;
+}
+
+/** Whether `index` is inside a `visible`-slot window at scroll offset `scroll`. */
+export function hangarWindowRowVisible(
+  index: number,
+  scroll: number,
+  visible: number,
+): boolean {
+  return index >= scroll && index < scroll + visible;
+}
+
+/**
  * The largest scroll offset (in rows) the unlock viewport allows. `0` when the
  * whole tree fits, so callers can treat a scrollable list and a short one alike.
  */
 export function hangarUnlockMaxScroll(
   model: Pick<HangarScreenModel, 'unlockRows'>,
 ): number {
-  return Math.max(0, model.unlockRows.length - HANGAR_UNLOCK_VISIBLE_ROWS);
+  return hangarWindowMax(
+    model.unlockRows.length,
+    HANGAR_UNLOCK_VISIBLE_ROWS,
+  );
 }
 
 /**
@@ -2203,11 +2272,7 @@ export function hangarUnlockScrollForFocus(
   index: number,
   scroll: number,
 ): number {
-  if (index < scroll) return index;
-  if (index >= scroll + HANGAR_UNLOCK_VISIBLE_ROWS) {
-    return index - HANGAR_UNLOCK_VISIBLE_ROWS + 1;
-  }
-  return scroll;
+  return hangarWindowScrollForFocus(index, scroll, HANGAR_UNLOCK_VISIBLE_ROWS);
 }
 
 /** Whether unlock row `index` is inside the window at scroll offset `scroll`. */
@@ -2215,7 +2280,7 @@ export function hangarUnlockRowVisible(
   index: number,
   scroll: number,
 ): boolean {
-  return index >= scroll && index < scroll + HANGAR_UNLOCK_VISIBLE_ROWS;
+  return hangarWindowRowVisible(index, scroll, HANGAR_UNLOCK_VISIBLE_ROWS);
 }
 
 /** The right-hand column's section and row geometry (single-sourced). */
@@ -2234,12 +2299,180 @@ export interface HangarRightColumnLayout {
 }
 
 /**
- * Derives every Y in the right-hand column from the model's row counts, so the
- * renderer and the layout test read one geometry and a new row cannot silently
- * collide with the fixed bottom-row block.
+ * The right-hand column is taller than the space above the fixed bottom block
+ * once a player owns many starting weapons, so — exactly like the unlock tree
+ * — it renders through a fixed-height viewport and scrolls rather than
+ * colliding with the buildout/restart/map/deploy rows (AH-0MWWRQ8PX0088NQR).
  *
- * The saved-build surface is **compact and fixed-height** (one save row plus a
- * cycle/apply/rename/delete block for the selected build), so an unbounded
+ * The column is one **ordered entry list** (section headings included), so the
+ * window is row-count-driven: a future roster change needs no new cap. The
+ * window holds 17 entries (16 × 16 px = 256 px), ending one step above the
+ * pointer scroll affordance and two steps above the top bottom-block slot.
+ */
+export const HANGAR_RIGHT_VISIBLE_ROWS = 17;
+
+/** The Y of the first entry inside the right-column viewport (its top). */
+export const HANGAR_RIGHT_VIEWPORT_TOP_Y = ROW_START_Y;
+
+/** The Y of the last entry that fits inside the right-column viewport. */
+export const HANGAR_RIGHT_VIEWPORT_BOTTOM_Y =
+  HANGAR_RIGHT_VIEWPORT_TOP_Y
+  + (HANGAR_RIGHT_VISIBLE_ROWS - 1) * HANGAR_ROW_STEP;
+
+/**
+ * The Y of the right-column pointer scroll affordance, directly beneath the
+ * viewport and above the fixed bottom block.
+ */
+export const HANGAR_RIGHT_SCROLL_INDICATOR_Y =
+  HANGAR_RIGHT_VIEWPORT_TOP_Y + HANGAR_RIGHT_VISIBLE_ROWS * HANGAR_ROW_STEP;
+
+/**
+ * One renderable entry in the right-hand column: a section heading or a row.
+ *
+ * Keeping headings in the same ordered list as the rows is what lets the
+ * column scroll as one window: when a section's rows overflow, its heading
+ * scrolls with them instead of being stranded above the fold.
+ */
+export interface HangarRightColumnEntry {
+  /** Unique key (`heading:<section>` for a heading; the row key for a row). */
+  readonly key: string;
+  /** Position in the ordered list (0-based) — sets the unscrolled Y. */
+  readonly index: number;
+  /** What the entry is; a heading is never actionable. */
+  readonly kind:
+    | 'heading'
+    | 'hull'
+    | 'weapon'
+    | 'power-up'
+    | 'modifier'
+    | 'saved-build';
+  /** Rendered text. */
+  readonly label: string;
+  /** Whether the row can be activated (always false for a heading). */
+  readonly actionable: boolean;
+  /** Matchup verdict for a weapon row; `null` everywhere else. */
+  readonly matchup: BossMatchup | null;
+  /** Option/entry id for a hull/weapon/power-up/modifier row. */
+  readonly rowId: string | null;
+  /** Saved-build verb for a saved-build row. */
+  readonly savedBuildVerb: HangarSavedBuildRow['verb'] | null;
+  /** Selected saved build id for a saved-build row. */
+  readonly savedBuildId: string | null;
+}
+
+/**
+ * The right-hand column as one ordered list of renderable entries (pure).
+ *
+ * Reading order is `HULLS` → hulls → `LOADOUT` → weapons → power-ups →
+ * `MODIFIERS` → modifiers → `SAVED BUILDS` → saved-build rows. Power-ups share
+ * the LOADOUT block (labelled `POWER-UP`) so the column needs no second
+ * loadout heading. This is also the keyboard/pointer order, because the
+ * renderer registers the rows in this order.
+ */
+export function buildHangarRightColumnEntries(
+  model: Pick<
+    HangarScreenModel,
+    'hullOptions' | 'weaponOptions' | 'powerUpOptions' | 'modifierOptions' | 'savedBuildRows'
+  >,
+): HangarRightColumnEntry[] {
+  const entries: HangarRightColumnEntry[] = [];
+  const pushHeading = (section: string, label: string): void => {
+    entries.push({
+      key: `heading:${section}`,
+      index: entries.length,
+      kind: 'heading',
+      label,
+      actionable: false,
+      matchup: null,
+      rowId: null,
+      savedBuildVerb: null,
+      savedBuildId: null,
+    });
+  };
+
+  pushHeading('hulls', 'HULLS');
+  for (const option of model.hullOptions) {
+    entries.push({
+      key: option.key,
+      index: entries.length,
+      kind: 'hull',
+      label: option.label,
+      actionable: option.actionable,
+      matchup: null,
+      rowId: option.id,
+      savedBuildVerb: null,
+      savedBuildId: null,
+    });
+  }
+
+  pushHeading('loadout', 'LOADOUT');
+  for (const option of model.weaponOptions) {
+    entries.push({
+      key: option.key,
+      index: entries.length,
+      kind: 'weapon',
+      label: option.label,
+      actionable: option.actionable,
+      matchup: option.matchup,
+      rowId: option.id,
+      savedBuildVerb: null,
+      savedBuildId: null,
+    });
+  }
+  for (const option of model.powerUpOptions) {
+    entries.push({
+      key: option.key,
+      index: entries.length,
+      kind: 'power-up',
+      label: option.label,
+      actionable: option.actionable,
+      matchup: null,
+      rowId: option.id,
+      savedBuildVerb: null,
+      savedBuildId: null,
+    });
+  }
+
+  pushHeading('modifiers', 'MODIFIERS');
+  for (const option of model.modifierOptions) {
+    entries.push({
+      key: option.key,
+      index: entries.length,
+      kind: 'modifier',
+      label: option.label,
+      actionable: option.actionable,
+      matchup: null,
+      rowId: option.id,
+      savedBuildVerb: null,
+      savedBuildId: null,
+    });
+  }
+
+  pushHeading('saved-builds', 'SAVED BUILDS');
+  for (const row of model.savedBuildRows) {
+    entries.push({
+      key: row.key,
+      index: entries.length,
+      kind: 'saved-build',
+      label: row.label,
+      actionable: row.actionable,
+      matchup: null,
+      rowId: null,
+      savedBuildVerb: row.verb,
+      savedBuildId: row.buildId,
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * Derives every Y in the right-hand column from its ordered entry list, so the
+ * renderer, the scroll window and the layout test read one geometry and a new
+ * row cannot silently collide with the fixed bottom-row block.
+ *
+ * The saved-build surface stays **compact and fixed-height** (one save row plus
+ * a cycle/apply/rename/delete block for the selected build), so an unbounded
  * saved-build list never grows this geometry: the selected index cycles
  * instead of adding rows (AH-0MWL8C6FE008G1E7).
  */
@@ -2249,54 +2482,81 @@ export function hangarRightColumnLayout(
     'hullOptions' | 'weaponOptions' | 'powerUpOptions' | 'modifierOptions' | 'savedBuildRows'
   >,
 ): HangarRightColumnLayout {
-  const hullRowY = model.hullOptions.map(
-    (_, index) => ROW_START_Y + index * HANGAR_ROW_STEP,
-  );
-  const loadoutHeadingY =
-    ROW_START_Y + model.hullOptions.length * HANGAR_ROW_STEP + 10;
-  const weaponRowY = model.weaponOptions.map(
-    (_, index) => loadoutHeadingY + 26 + index * HANGAR_ROW_STEP,
-  );
-  // Power-ups share the LOADOUT block, listed after the weapons, so the extra
-  // section needs no second heading (the layout already holds a lot of rows).
-  const powerUpRowY = model.powerUpOptions.map(
-    (_, index) =>
-      loadoutHeadingY
-      + 26
-      + (model.weaponOptions.length + index) * HANGAR_ROW_STEP,
-  );
-  const loadoutRows = model.weaponOptions.length + model.powerUpOptions.length;
-  const modifierHeadingY =
-    loadoutHeadingY + 26 + loadoutRows * HANGAR_ROW_STEP + 10;
-  const modifierRowY = model.modifierOptions.map(
-    (_, index) => modifierHeadingY + 26 + index * HANGAR_ROW_STEP,
-  );
-  const savedBuildHeadingY =
-    modifierHeadingY + 26 + model.modifierOptions.length * HANGAR_ROW_STEP + 10;
-  const savedBuildRowY = model.savedBuildRows.map(
-    (_, index) => savedBuildHeadingY + 26 + index * HANGAR_ROW_STEP,
-  );
-  return {
-    hullRowY,
-    loadoutHeadingY,
-    weaponRowY,
-    powerUpRowY,
-    modifierHeadingY,
-    modifierRowY,
-    savedBuildHeadingY,
-    savedBuildRowY,
+  const entries = buildHangarRightColumnEntries(model);
+  const yOf = (entry: HangarRightColumnEntry): number =>
+    ROW_START_Y + entry.index * HANGAR_ROW_STEP;
+  const headingY = (section: string): number => {
+    const found = entries.find(
+      (entry) => entry.kind === 'heading' && entry.key === `heading:${section}`,
+    );
+    return found === undefined ? ROW_START_Y : yOf(found);
   };
+  const rowYs = (kind: HangarRightColumnEntry['kind']): number[] =>
+    entries.filter((entry) => entry.kind === kind).map(yOf);
+
+  return {
+    hullRowY: rowYs('hull'),
+    loadoutHeadingY: headingY('loadout'),
+    weaponRowY: rowYs('weapon'),
+    powerUpRowY: rowYs('power-up'),
+    modifierHeadingY: headingY('modifiers'),
+    modifierRowY: rowYs('modifier'),
+    savedBuildHeadingY: headingY('saved-builds'),
+    savedBuildRowY: rowYs('saved-build'),
+  };
+}
+
+/**
+ * The largest scroll offset (in entries) the right-column viewport allows.
+ * `0` when the whole column fits, so callers can treat a scrollable column and
+ * a short one alike.
+ */
+export function hangarRightMaxScroll(
+  model: Pick<
+    HangarScreenModel,
+    'hullOptions' | 'weaponOptions' | 'powerUpOptions' | 'modifierOptions' | 'savedBuildRows'
+  >,
+): number {
+  return hangarWindowMax(
+    buildHangarRightColumnEntries(model).length,
+    HANGAR_RIGHT_VISIBLE_ROWS,
+  );
+}
+
+/**
+ * The scroll offset that keeps right-column entry `index` inside its window.
+ * Uses the same shared rule as the unlock tree, so a focused row can never be
+ * scrolled out of view (AH-0MWWRQ8PX0088NQR).
+ */
+export function hangarRightScrollForFocus(
+  index: number,
+  scroll: number,
+): number {
+  return hangarWindowScrollForFocus(
+    index,
+    scroll,
+    HANGAR_RIGHT_VISIBLE_ROWS,
+  );
+}
+
+/** Whether right-column entry `index` is inside the window at `scroll`. */
+export function hangarRightEntryVisible(
+  index: number,
+  scroll: number,
+): boolean {
+  return hangarWindowRowVisible(index, scroll, HANGAR_RIGHT_VISIBLE_ROWS);
 }
 
 /**
  * The lowest row Y the **unscrolled** model geometry reaches.
  *
- * This is the height the tree would occupy without a viewport: at the full
- * 23-row roster it extends past the fixed bottom block, which is exactly why
- * the renderer scrolls the unlock tree (AH-0MWWI3ONJ004QRR9). The layout spec
- * therefore asserts overflow against this value and checks that the *visible
- * window* ({@link HANGAR_UNLOCK_VIEWPORT_BOTTOM_Y}) and the right column stay
- * above {@link HANGAR_RESTART_ROW_Y}.
+ * This is the height either column would occupy without a viewport, so it is
+ * deliberately expected to overflow at the full roster: the 23-row unlock tree
+ * (AH-0MWWI3ONJ004QRR9) and, once a player owns many starting weapons, the
+ * right-hand column (AH-0MWWRQ8PX0088NQR) both extend past the fixed bottom
+ * block, which is exactly why the renderer windows and scrolls them. Layout
+ * specs therefore assert overflow against this value and check that the two
+ * *visible windows* stay above the block.
  */
 export function hangarLowestRowY(model: HangarScreenModel): number {
   const right = hangarRightColumnLayout(model);
@@ -2340,21 +2600,21 @@ interface RenderedRows {
   byKey: Map<string, HangarScreenRow>;
 }
 
-/** Renders a heading text. */
+/** Renders a heading text and returns it (the scrolled columns need the ref). */
 function heading(
   scene: Phaser.Scene,
   objects: Phaser.GameObjects.Text[],
   x: number,
   y: number,
   label: string,
-): void {
-  objects.push(
-    scene.add.text(x, y, label, {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: HEADING_COLOR,
-    }),
-  );
+): Phaser.GameObjects.Text {
+  const text = scene.add.text(x, y, label, {
+    fontFamily: 'monospace',
+    fontSize: '14px',
+    color: HEADING_COLOR,
+  });
+  objects.push(text);
+  return text;
 }
 
 /** The row colour for a matchup verdict, falling back to the existing ones. */
@@ -2616,116 +2876,146 @@ export function renderHangarScreen(
   // Position the initial window (and hide the rows below the fold).
   applyUnlockScroll();
 
-  // ── Deployment selector (right column) ─────────────────────────
-  const right = hangarRightColumnLayout(model);
-  heading(scene, objects, RIGHT_X, SECTION_Y, 'HULLS');
-  model.hullOptions.forEach((option, index) => {
-    addRow(
-      RIGHT_X,
-      right.hullRowY[index],
-      option.key,
-      option.label,
-      option.actionable,
-      null,
-      handlers?.onEquipHull
-        ? () => handlers.onEquipHull!(option.id)
-        : undefined,
+  // ── Deployment selector (right column, scrollable viewport) ─────
+  // The column grows with the number of owned starting weapons, so — like the
+  // unlock tree — it renders one ordered entry list (headings included) through
+  // a fixed-height window and scrolls instead of colliding with the fixed
+  // bottom block (AH-0MWWRQ8PX0088NQR). Every row keeps its model key, so the
+  // shared FocusManager, the pointer handlers and the gym address the same rows.
+  const rightEntries = buildHangarRightColumnEntries(model);
+
+  // Pointer scroll affordances, mirroring the unlock tree's. They are not model
+  // rows (so the keyboard focus order is unchanged), and they scroll the
+  // right-hand column rather than the unlock tree.
+  const rightScrollUp = scene.add
+    .text(RIGHT_X + 130, HANGAR_RIGHT_VIEWPORT_TOP_Y, '', {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: HEADING_COLOR,
+    })
+    .setInteractive({ useHandCursor: true });
+  const rightScrollDown = scene.add
+    .text(RIGHT_X + 130, HANGAR_RIGHT_SCROLL_INDICATOR_Y, '', {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: HEADING_COLOR,
+    })
+    .setInteractive({ useHandCursor: true });
+  objects.push(rightScrollUp, rightScrollDown);
+
+  const rightRefs: Phaser.GameObjects.Text[] = [];
+  let rightScroll = 0;
+  const maxRightScroll = (): number => hangarRightMaxScroll(model);
+  const clampRightScroll = (value: number): number =>
+    Math.min(Math.max(0, value), maxRightScroll());
+  const rightIndexFor = (key: string): number =>
+    rightEntries.findIndex((entry) => entry.key === key);
+  const applyRightScroll = (): void => {
+    rightScroll = clampRightScroll(rightScroll);
+    rightRefs.forEach((text, index) => {
+      text.setVisible(hangarRightEntryVisible(index, rightScroll));
+      text.y =
+        HANGAR_RIGHT_VIEWPORT_TOP_Y
+        + (index - rightScroll) * HANGAR_ROW_STEP;
+    });
+    const moreAbove = rightScroll > 0;
+    const moreBelow = rightScroll < maxRightScroll();
+    rightScrollUp.setText(moreAbove ? '▲ MORE' : '').setVisible(moreAbove);
+    rightScrollDown.setText(moreBelow ? '▼ MORE' : '').setVisible(moreBelow);
+  };
+  const scrollRightRows = (delta: number): number => {
+    rightScroll = clampRightScroll(rightScroll + delta);
+    applyRightScroll();
+    return rightScroll;
+  };
+  const ensureRightVisible = (key: string | null): void => {
+    if (key === null) return;
+    const index = rightIndexFor(key);
+    if (index < 0) return;
+    rightScroll = clampRightScroll(
+      hangarRightScrollForFocus(index, rightScroll),
     );
+    applyRightScroll();
+  };
+  rightScrollUp.on('pointerdown', () => {
+    scrollRightRows(-HANGAR_RIGHT_VISIBLE_ROWS);
+  });
+  rightScrollDown.on('pointerdown', () => {
+    scrollRightRows(HANGAR_RIGHT_VISIBLE_ROWS);
   });
 
-  heading(scene, objects, RIGHT_X, right.loadoutHeadingY, 'LOADOUT');
-  model.weaponOptions.forEach((option, index) => {
-    addRow(
-      RIGHT_X,
-      right.weaponRowY[index],
-      option.key,
-      option.label,
-      option.actionable,
-      option.matchup,
-      handlers?.onToggleWeapon
-        ? () => handlers.onToggleWeapon!(option.id)
-        : undefined,
-    );
-  });
-  // Power-ups share the LOADOUT block (labelled `POWER-UP`), so a permanent
-  // passive kind is toggled with the same affordance as a weapon without a
-  // second heading (the right column is height-constrained).
-  model.powerUpOptions.forEach((option, index) => {
-    addRow(
-      RIGHT_X,
-      right.powerUpRowY[index],
-      option.key,
-      option.label,
-      option.actionable,
-      null,
-      handlers?.onTogglePowerUp
-        ? () => handlers.onTogglePowerUp!(option.id)
-        : undefined,
-    );
-  });
-
-  heading(scene, objects, RIGHT_X, right.modifierHeadingY, 'MODIFIERS');
-  model.modifierOptions.forEach((option, index) => {
-    addRow(
-      RIGHT_X,
-      right.modifierRowY[index],
-      option.key,
-      option.label,
-      option.actionable,
-      null,
-      handlers?.onToggleModifier
-        ? () => handlers.onToggleModifier!(option.id)
-        : undefined,
-    );
-  });
-
-  // ── Saved ship configurations (right column, below the modifiers) ──
-  // A compact, fixed-height surface: `＋ SAVE` plus (when at least one build
-  // exists) the cycle/apply/rename/delete rows for the selected build, so an
-  // unbounded list never grows the screen (AH-0MWL8C6FE008G1E7).
-  heading(scene, objects, RIGHT_X, right.savedBuildHeadingY, 'SAVED BUILDS');
-  model.savedBuildRows.forEach((row, index) => {
-    let action: (() => void) | undefined;
-    switch (row.verb) {
-      case 'save':
-        action = handlers?.onSaveBuild
-          ? () => handlers.onSaveBuild!()
+  /** The handler an ordered right-column entry activates (never a heading). */
+  const rightActionFor = (
+    entry: HangarRightColumnEntry,
+  ): (() => void) | undefined => {
+    switch (entry.kind) {
+      case 'heading':
+        return undefined;
+      case 'hull':
+        return handlers?.onEquipHull && entry.rowId
+          ? () => handlers.onEquipHull!(entry.rowId!)
           : undefined;
-        break;
-      case 'cycle':
-        action = handlers?.onCycleBuild
-          ? () => handlers.onCycleBuild!()
+      case 'weapon':
+        return handlers?.onToggleWeapon && entry.rowId
+          ? () => handlers.onToggleWeapon!(entry.rowId!)
           : undefined;
-        break;
-      case 'apply':
-        action =
-          handlers?.onApplyBuild && row.buildId
-            ? () => handlers.onApplyBuild!(row.buildId!)
-            : undefined;
-        break;
-      case 'rename':
-        action =
-          handlers?.onRenameBuild && row.buildId
-            ? () => handlers.onRenameBuild!(row.buildId!)
-            : undefined;
-        break;
-      case 'delete':
-        action =
-          handlers?.onDeleteBuild && row.buildId
-            ? () => handlers.onDeleteBuild!(row.buildId!)
-            : undefined;
-        break;
+      case 'power-up':
+        return handlers?.onTogglePowerUp && entry.rowId
+          ? () => handlers.onTogglePowerUp!(entry.rowId!)
+          : undefined;
+      case 'modifier':
+        return handlers?.onToggleModifier && entry.rowId
+          ? () => handlers.onToggleModifier!(entry.rowId!)
+          : undefined;
+      case 'saved-build':
+        switch (entry.savedBuildVerb) {
+          case 'save':
+            return handlers?.onSaveBuild
+              ? () => handlers.onSaveBuild!()
+              : undefined;
+          case 'cycle':
+            return handlers?.onCycleBuild
+              ? () => handlers.onCycleBuild!()
+              : undefined;
+          case 'apply':
+            return handlers?.onApplyBuild && entry.savedBuildId
+              ? () => handlers.onApplyBuild!(entry.savedBuildId!)
+              : undefined;
+          case 'rename':
+            return handlers?.onRenameBuild && entry.savedBuildId
+              ? () => handlers.onRenameBuild!(entry.savedBuildId!)
+              : undefined;
+          case 'delete':
+            return handlers?.onDeleteBuild && entry.savedBuildId
+              ? () => handlers.onDeleteBuild!(entry.savedBuildId!)
+              : undefined;
+          default:
+            return undefined;
+        }
+    }
+  };
+
+  for (const entry of rightEntries) {
+    const unscrolledY = ROW_START_Y + entry.index * HANGAR_ROW_STEP;
+    if (entry.kind === 'heading') {
+      rightRefs.push(
+        heading(scene, objects, RIGHT_X, unscrolledY, entry.label),
+      );
+      continue;
     }
     addRow(
       RIGHT_X,
-      right.savedBuildRowY[index],
-      row.key,
-      row.label,
-      row.actionable,
-      null,
-      action,
+      unscrolledY,
+      entry.key,
+      entry.label,
+      entry.actionable,
+      entry.matchup,
+      rightActionFor(entry),
     );
-  });
+    rightRefs.push(rendered.byKey.get(entry.key)!.text);
+  }
+  // Position the initial window (and hide the entries below the fold).
+  applyRightScroll();
 
   // ── Apply suggested buildout (the loadout action, above DEPLOY) ──
   // Rendered from the model's published row, so the game and the gym show the
@@ -2805,30 +3095,39 @@ export function renderHangarScreen(
     return focusable[index]?.key ?? null;
   };
 
-  // Pointer scroll: a wheel over the screen moves the unlock window by one row
-  // (only when the tree overflows, so a short list is never interceptable).
+  // Pointer scroll: a wheel over the screen moves the window under the pointer
+  // by one row — the right-hand column on the right, the unlock tree on the
+  // left — only when that column overflows, so a short list is never
+  // interceptable.
   const onWheel = (
-    _pointer: Phaser.Input.Pointer,
+    pointer: Phaser.Input.Pointer,
     _over: readonly Phaser.GameObjects.GameObject[],
     _deltaX: number,
     deltaY: number,
   ): void => {
+    const direction = deltaY > 0 ? 1 : -1;
+    if (pointer.x >= GAME_WIDTH / 2 && maxRightScroll() > 0) {
+      scrollRightRows(direction);
+      return;
+    }
     if (maxUnlockScroll() === 0) return;
-    scrollUnlockRows(deltaY > 0 ? 1 : -1);
+    scrollUnlockRows(direction);
   };
   scene.input?.on('wheel', onWheel);
 
   focusManager.attachKeyboard(scene);
-  // Always observe focus: an unlock row that gains keyboard focus is scrolled
-  // back into the window before the external listener reports it, so the grown
-  // tree can never hide the focused row from a keyboard-only player.
+  // Always observe focus: a row that gains keyboard focus is scrolled back into
+  // its column's window before the external listener reports it, so neither
+  // grown column can hide the focused row from a keyboard-only player.
   focusManager.setFocusChangeListener(() => {
     const key = focusedKey();
     ensureUnlockVisible(key);
+    ensureRightVisible(key);
     options?.onFocusChange?.(key);
   });
-  // Seed the window: the default focus may be a row below the first page.
+  // Seed the windows: the default focus may be a row below the first page.
   ensureUnlockVisible(focusedKey());
+  ensureRightVisible(focusedKey());
 
   return {
     model,
@@ -2840,6 +3139,7 @@ export function renderHangarScreen(
       if (index < 0) return false;
       focusManager.setFocusedIndex(index);
       ensureUnlockVisible(key);
+      ensureRightVisible(key);
       return true;
     },
     activateFocused(): void {
@@ -2852,6 +3152,13 @@ export function renderHangarScreen(
       return index >= 0 && hangarUnlockRowVisible(index, unlockScroll);
     },
     scrollControls: { up: scrollUp, down: scrollDown },
+    getRightScroll: () => rightScroll,
+    scrollRightRows,
+    isRightColumnRowVisible(key: string): boolean {
+      const index = rightIndexFor(key);
+      return index >= 0 && hangarRightEntryVisible(index, rightScroll);
+    },
+    rightScrollControls: { up: rightScrollUp, down: rightScrollDown },
     destroy(): void {
       focusManager.shutdown();
       scene.input?.off('wheel', onWheel);
