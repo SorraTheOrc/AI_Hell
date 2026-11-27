@@ -156,6 +156,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playExtraLifeCollectSound` | Sine 440→880 then 660→990 Hz | Extra Life | `dropLayer` | new | `aihell-pickup-extralife` |
 | `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | Magnet | `dropLayer` | new | `aihell-pickup-magnet` |
 | `playPhaseShiftSound` | Triangle chirp 320→1560 Hz + bandpass noise swing 600→3200 Hz | Phase Shift | `CombatScene` | new | `aihell-phase-shift` |
+| `playTeleportGrowSound` | Triangle chirp 180→1400 Hz + rising bandpass-noise swell 400→3600 Hz, 0.75 s | Teleport grow phase (sequenced warp) | `CombatCoreScene._startTeleportSequence` | new | `aihell-teleport-grow` |
+| `playTeleportCollapseSound` | Triangle chirp 1400→180 Hz + falling bandpass-noise swell 3600→400 Hz, 0.3 s | Teleport collapse phase (sequenced warp) | `CombatCoreScene._tickTeleportSequence` | new | `aihell-teleport-collapse` |
 | `playVictoryFanfareSound` | Two-phrase fanfare: arpeggio C5-E5-G5-C6 + cadence + sustained chord + bass + sparkle + shimmer, ~3.3 s, ≤ 0.2 | Victory | `PlayScene` | new | `aihell-victory-fanfare` (sequence + stack) |
 | `playVictoryExplosionSound` | Layered saw 110→32 Hz boom + sine sub-rumble + LP noise crackle, ~0.65 s; runtime volume ×0.6 (`EXPLOSION_VOLUME_SCALE`, AH-0MVZVMZOQ00076QF) composed with the caller firework volume | Victory firework burst/starburst | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-explosion` |
 | `playVictoryCrackSound` | Quick saw 587→140 Hz + HP noise crack, ~0.18 s | Victory firework ring | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-crack` |
@@ -414,6 +416,8 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-pickup-extralife` | `playExtraLifeCollectSound` | Two warm sine chimes 440→880 / 660→990 Hz | 32225 |
 | `aihell-pickup-magnet` | `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | 32226 |
 | `aihell-phase-shift` | `playPhaseShiftSound` | Triangle chirp + bandpass noise swing | 32230 |
+| `aihell-teleport-grow` | `playTeleportGrowSound` | Triangle chirp 180→1400 Hz + rising bandpass-noise swell | 32295 |
+| `aihell-teleport-collapse` | `playTeleportCollapseSound` | Triangle chirp 1400→180 Hz + falling bandpass-noise swell | 32296 |
 | `aihell-victory-fanfare` | `playVictoryFanfareSound` | Two-phrase fanfare (sequence of arpeggio + cadence + chord + bass + sparkle + shimmer) | 32240 |
 | `aihell-victory-explosion` | `playVictoryExplosionSound` | Layered saw/sub boom + LP noise crackle | 32250–32254 |
 | `aihell-victory-crack` | `playVictoryCrackSound` | Quick saw + HP crack transient | 32255–32257 |
