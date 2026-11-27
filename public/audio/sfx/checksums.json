@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32299",
-  "inputs": "5e706233cbdc13a865aa684c58514198f42371055d25e8ab25efa68f0b38ed2d",
+  "inputs": "f9eb6471c5f11f9a0b19e4de2a74ea8e38fffd944620fb2676e64bd2f05e69c5",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -88,6 +88,8 @@
     "audio/sfx/aihell-swarm-burst.32160.wav": "34a964144cfb98f8a9b6ec7930d6448ed01dd6a99bd15c83fce131c96b9d7988",
     "audio/sfx/aihell-tank-advance.32140.wav": "f078268836983b0a02c517b03f3c399d9dae2cf10b86e94b4902bb467cfbba8e",
     "audio/sfx/aihell-tank-fire.32141.wav": "f9708ced90f149315fb22d9154409c04d6c06f9359742206d9b417dba27bf2ae",
+    "audio/sfx/aihell-teleport-collapse.32296.wav": "5c613f5412992fa4673a57c7ec3c3ed752e5e117d52f6be1e06bd48987a0608b",
+    "audio/sfx/aihell-teleport-grow.32295.wav": "214dcbb1654e2b3529012682384025bf77408db0d3da5e29f30fcd7a958d4b95",
     "audio/sfx/aihell-victory-crack.32255.wav": "476d44cf13d4256d6e16c00574504006f61523bb1e57553c5dcdfe37254f9d61",
     "audio/sfx/aihell-victory-crack.32256.wav": "d32afcd48b9b9a22fe1f9a9c621ba67272bc1777d3e75214bb0100c4581f9c07",
     "audio/sfx/aihell-victory-crack.32257.wav": "b303ca877a1366c8317d527324b56fc32c3c2d223d65ce6cbd06450c0afba03e",

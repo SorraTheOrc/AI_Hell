@@ -12,6 +12,7 @@ import {
   PLAYER_RESPAWN_INVULNERABLE,
   TELEPORT_TUNNEL_DURATION_SECONDS,
   TELEPORT_TUNNEL_GROW_PHASE_SECONDS,
+  TELEPORT_TUNNEL_TRANSIT_PHASE_SECONDS,
 } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, advanceAndCull } from '../../entities/PlayerBullet';
@@ -707,6 +708,39 @@ describe('CombatScene — shared combat core hook contract', () => {
       // Idempotent: a second teardown is a no-op.
       expect(() => scene.cancelTeleportSequence()).not.toThrow();
       expect(scene.teleportTimeScale()).toBe(1);
+    });
+
+    it('AC — fires the grow SFX once at start and the collapse SFX once on its edge', async () => {
+      const scene = await boot();
+      scene.addPlayer({ x: 100, y: 100 });
+      scene.effects.applyCollect('teleport');
+      const growSpy = vi.spyOn(effectsModule, 'playTeleportGrowSound');
+      const collapseSpy = vi.spyOn(effectsModule, 'playTeleportCollapseSound');
+
+      expect(scene.triggerTeleport()).toBe(true);
+      // Grow fires once on the opening edge; collapse has not fired yet.
+      expect(growSpy).toHaveBeenCalledTimes(1);
+      expect(collapseSpy).not.toHaveBeenCalled();
+
+      // Through grow + transit: still no collapse cue.
+      scene.runTickTeleportSequence(
+        TELEPORT_TUNNEL_GROW_PHASE_SECONDS +
+          TELEPORT_TUNNEL_TRANSIT_PHASE_SECONDS -
+          0.02,
+      );
+      expect(collapseSpy).not.toHaveBeenCalled();
+
+      // Crossing into collapse fires it exactly once.
+      scene.runTickTeleportSequence(0.05);
+      expect(scene.getTeleportPhase()).toBe('collapse');
+      expect(collapseSpy).toHaveBeenCalledTimes(1);
+
+      // Further ticks (through completion) do not re-fire it.
+      scene.runTickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS);
+      expect(collapseSpy).toHaveBeenCalledTimes(1);
+      expect(growSpy).toHaveBeenCalledTimes(1);
+      growSpy.mockRestore();
+      collapseSpy.mockRestore();
     });
 
     it('AC — a scene shutdown mid-sequence clears the factor and leaks nothing', async () => {

@@ -1,0 +1,79 @@
+# AI Hell cue: aihell-teleport-grow — sequenced teleport grow — triangle chirp
+# 180 to 1400 Hz plus a rising bandpass-noise swell (the wormhole opening).
+# Parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJLJ2000O7DG.
+version: "0.1"
+meta:
+  name: aihell-teleport-grow
+  description: Sequenced teleport grow — triangle chirp 180 to 1400 Hz plus a rising bandpass-noise swell.
+  category: AIHell
+  tags:
+    - powerup
+    - teleport
+    - warp
+  duration: 0.75
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 180
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 180
+        - kind: exponentialRamp
+          time: 0.7
+          value: 1400
+  e0:
+    kind: envelope
+    params:
+      attack: 0.02
+      decay: 0.2
+      sustain: 0.7
+      release: 0.53
+  g0:
+    kind: gain
+    params:
+      gain: 0.14
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: bandpass
+      frequency: 400
+      Q: 2
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 400
+        - kind: exponentialRamp
+          time: 0.7
+          value: 3600
+  e1:
+    kind: envelope
+    params:
+      attack: 0.02
+      decay: 0.2
+      sustain: 0.6
+      release: 0.53
+  g1:
+    kind: gain
+    params:
+      gain: 0.08
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

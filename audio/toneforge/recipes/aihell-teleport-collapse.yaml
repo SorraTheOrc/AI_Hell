@@ -1,0 +1,79 @@
+# AI Hell cue: aihell-teleport-collapse — sequenced teleport collapse — triangle
+# chirp 1400 to 180 Hz plus a falling bandpass-noise swell (the wormhole closing).
+# Parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJLJ2000O7DG.
+version: "0.1"
+meta:
+  name: aihell-teleport-collapse
+  description: Sequenced teleport collapse — triangle chirp 1400 to 180 Hz plus a falling bandpass-noise swell.
+  category: AIHell
+  tags:
+    - powerup
+    - teleport
+    - warp
+  duration: 0.3
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1400
+        - kind: exponentialRamp
+          time: 0.3
+          value: 180
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.296
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.14
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: bandpass
+      frequency: 3600
+      Q: 2
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 3600
+        - kind: exponentialRamp
+          time: 0.28
+          value: 400
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.276
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.08
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

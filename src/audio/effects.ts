@@ -1480,6 +1480,23 @@ export function playPhaseShiftSound(): void {
   playCue('playPhaseShiftSound');
 }
 
+/**
+ * Rising, wobbly warp swell — the sequenced teleport tunnel growing open
+ * (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJLJ2000O7DG). Headless-safe: the
+ * shared `playCue` funnel is a no-op without an AudioContext.
+ */
+export function playTeleportGrowSound(): void {
+  playCue('playTeleportGrowSound');
+}
+
+/**
+ * Falling warp tone — the sequenced teleport tunnel collapsing
+ * (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJLJ2000O7DG). Headless-safe.
+ */
+export function playTeleportCollapseSound(): void {
+  playCue('playTeleportCollapseSound');
+}
+
 // ── End-of-run cues ─────────────────────────────────────────────────
 
 /** Two-phrase fanfare — run victory. */

@@ -554,6 +554,22 @@
       ]
     },
     {
+      "cue": "playTeleportGrowSound",
+      "recipe": "aihell-teleport-grow",
+      "delivery": "baked",
+      "seeds": [
+        32295
+      ]
+    },
+    {
+      "cue": "playTeleportCollapseSound",
+      "recipe": "aihell-teleport-collapse",
+      "delivery": "baked",
+      "seeds": [
+        32296
+      ]
+    },
+    {
       "cue": "playVictoryFanfareSound",
       "recipe": "aihell-victory-fanfare",
       "delivery": "baked",

@@ -191,6 +191,8 @@ import {
 import {
   playMineralCollectChimeSound,
   playPowerUpBlockedSound,
+  playTeleportCollapseSound,
+  playTeleportGrowSound,
   setExplosionBeatClock,
   setThrusterBeatClock,
   updateThrusterSound,
@@ -473,6 +475,8 @@ export class CombatCoreScene<
     readonly endX: number;
     readonly endY: number;
     elapsedSeconds: number;
+    /** Whether the collapse SFX has fired (so it fires once, even on a big tick). */
+    collapseSfxFired: boolean;
   } | null = null;
   /**
    * Persistent shared Graphics that draws the orbiting Options pods. Created
@@ -1181,7 +1185,11 @@ export class CombatCoreScene<
       endX: destination.x,
       endY: destination.y,
       elapsedSeconds: 0,
+      collapseSfxFired: false,
     };
+    // The grow SFX fires once on the sequence's opening edge (parent
+    // AH-0MWW50H0B002U6XU, slice AH-0MWWDJLJ2000O7DG). Headless-safe.
+    playTeleportGrowSound();
   }
 
   /**
@@ -1201,6 +1209,15 @@ export class CombatCoreScene<
     sequence.tunnel.update(dtSeconds);
 
     const phase = teleportTunnelPhaseAt(sequence.elapsedSeconds);
+    // Fire the collapse SFX exactly once, when the sequence reaches its
+    // collapse (or jumps straight to complete on a large tick).
+    if (
+      (phase === 'collapse' || phase === 'complete') &&
+      !sequence.collapseSfxFired
+    ) {
+      sequence.collapseSfxFired = true;
+      playTeleportCollapseSound();
+    }
     if (phase !== 'grow') {
       // The ship travels the tunnel at real time during transit; the progress
       // clamps at 1 across collapse and completion, so it finishes exactly at
