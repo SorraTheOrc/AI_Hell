@@ -595,13 +595,18 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
   tick(dt: number): void {
     if (!this.player) return;
 
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): world consumers run at ¼ speed during grow;
+    // `_tickPlayer` applies the same factor internally.
+    const wdt = dt * this.teleportTimeScale();
+
     // Shared input → timers → multipliers → physics → auto-fire step
     // (AH-0MUII39KX007YUQ0). Auto-fires the active weapon(s) toward the
     // direction of travel via the shared `_autoFire` path.
     this._tickPlayer(dt);
 
     // Bullet lifecycle: advance + wrap + lifetime expiry (shared helper).
-    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
+    this.playerBullets = advancePlayerBullets(this.playerBullets, wdt);
 
     // Automatic defence danger feed, before collision gating (shared).
     this._updateAutoDefence(dt);
@@ -611,10 +616,10 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
     this._handleCollisions();
 
     // Post-hit invulnerability blink (shared).
-    this._updateInvulnerability(dt);
+    this._updateInvulnerability(wdt);
 
     // Timed effects (none collected here, but keeps the shared ordering).
-    this.effectsRegistry.tick(dt);
+    this.effectsRegistry.tick(wdt);
   }
 
   // ── Public test accessors ────────────────────────────────────────

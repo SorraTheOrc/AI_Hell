@@ -390,13 +390,18 @@ export class GymPowerUpLeveling extends CombatScene<
   tick(dt: number): void {
     if (!this.player) return;
 
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): world consumers run at ¼ speed during grow;
+    // `_tickPlayer` applies the same factor internally.
+    const wdt = dt * this.teleportTimeScale();
+
     this._tickPlayer(dt);
-    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
+    this.playerBullets = advancePlayerBullets(this.playerBullets, wdt);
 
-    this._applyDropMagnet(this.drops, dt);
-    this.advanceDrops(dt);
+    this._applyDropMagnet(this.drops, wdt);
+    this.advanceDrops(wdt);
 
-    this.spawnTimer -= dt;
+    this.spawnTimer -= wdt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer += POWER_UP_SPAWN_INTERVAL;
       this._spawnRoundRobin();
@@ -404,17 +409,17 @@ export class GymPowerUpLeveling extends CombatScene<
 
     // Periodic mineral so the hold fills without player action being
     // required (the choice demonstrates permanent leveling).
-    this.mineralTimer -= dt;
+    this.mineralTimer -= wdt;
     if (this.mineralTimer <= 0) {
       this.mineralTimer += 2.0;
       this._spawnMineral();
     }
 
     this.collectOverlapping();
-    this._updateCollectAnimations(dt);
+    this._updateCollectAnimations(wdt);
     this._collectMineralsOverlapping();
 
-    this.effectsRegistry.tick(dt);
+    this.effectsRegistry.tick(wdt);
     this.hud?.setMineralStore(this.hold.store, this.hold.capacity);
     this.hud?.refresh();
     this.refreshReadout();

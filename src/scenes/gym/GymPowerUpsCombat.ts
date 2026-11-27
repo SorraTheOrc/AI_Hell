@@ -392,31 +392,37 @@ export class GymPowerUpsCombat extends CombatScene<
   tick(dt: number): void {
     if (!this.player) return;
 
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): the deliberate world consumers run at ¼ speed
+    // during the teleport grow phase. `_tickPlayer` applies the same factor
+    // internally and advances the teleport sequence at real time.
+    const wdt = dt * this.teleportTimeScale();
+
     // ── Shared player-control step: timers → multipliers → input →
     // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1/AC4). The player is
     // advanced from the supplied `dt`; auto-fire is a no-op here.
     this._tickPlayer(dt);
 
     // ── Formation drift ─────────────────────────────────────────
-    this._tickFormation(dt);
+    this._tickFormation(wdt);
 
     // ── Scout aim + shooting ────────────────────────────────────
     this._tickScouts();
 
     // ── Enemy bullets ───────────────────────────────────────────
-    this._advanceEnemyBullets(dt);
+    this._advanceEnemyBullets(wdt);
 
     // ── Spawner: one drop per interval, round-robin ─────────────
     if (this.spawnTimer <= 0) {
       this.spawnTimer += POWER_UP_SPAWN_INTERVAL;
       this._spawnRoundRobin();
     } else {
-      this.spawnTimer -= dt;
+      this.spawnTimer -= wdt;
     }
 
     // ── Shared drop layer (gap 4): Bomb notice, Magnet magnet,
     //    lifecycle, overlap collection, absorb VFX ──
-    this.drops = this._updateDropLayer(this.drops, dt);
+    this.drops = this._updateDropLayer(this.drops, wdt);
 
     // ── Automatic defence (Phase Shift / Teleport): feed live danger
     //    before gating so an activation this frame protects this frame ──
@@ -424,27 +430,27 @@ export class GymPowerUpsCombat extends CombatScene<
 
     // ── Shared spawn presentation: grow each scout from 1 px while it is
     // spawn-protected, exactly as the game does (D4, docs/GYM_PARITY.md) ──
-    this._updateSpawnAnimations(dt);
+    this._updateSpawnAnimations(wdt);
 
     // ── Hit response (bullets + bodies), gated by phase/shield ──
     this._handleCollisions();
 
     // ── Invulnerability blink ───────────────────────────────────
-    this._updateInvulnerability(dt);
+    this._updateInvulnerability(wdt);
 
     // ── Effect timers ───────────────────────────────────────────
-    this.effectsRegistry.tick(dt);
+    this.effectsRegistry.tick(wdt);
 
     // ── Visuals (shield bubble + phase ghost + Bomb pulse ring) ─
     this._updateVisuals();
-    this._updatePhaseShiftJuice(dt);
+    this._updatePhaseShiftJuice(wdt);
 
     // ── Shared wave-timeout: detonate survivors, then refresh ──────
     // Runs before wipe/countdown tick so a timeout wipe is observed by
     // the shared lifecycle (AH-0MUNR5LM1004B223).
-    this._advanceWaveTimeout(dt);
+    this._advanceWaveTimeout(wdt);
     this._drawWaveTimeoutBar();
-    this._tickRespawnCountdown(dt);
+    this._tickRespawnCountdown(wdt);
 
     // ── HUD ─────────────────────────────────────────────────────
     this.hud?.refresh();

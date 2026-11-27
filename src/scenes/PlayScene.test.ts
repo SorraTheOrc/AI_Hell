@@ -3464,6 +3464,63 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(juice!.flashRemaining).toBeGreaterThan(0);
   });
 
+  it('AC — world dt runs at ¼ during grow and returns to full speed after (slice AH-0MWWDJCPS0005UQB)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(scene.getEffectsRegistry().hasTeleport()).toBe(true);
+
+    expect(scene.triggerTeleport()).toBe(true);
+    expect(scene.getTeleportPhase()).toBe('grow');
+
+    // During grow, the deliberate world consumers receive dt × ¼.
+    const moveSpy = vi.spyOn(
+      scene as unknown as { _moveEnemies(dt: number): void },
+      '_moveEnemies',
+    );
+    const effectSpy = vi.spyOn(scene.getEffectsRegistry(), 'tick');
+    scene.tick(0.1);
+    expect(moveSpy.mock.lastCall?.[0]).toBeCloseTo(0.1 * 0.25, 10);
+    expect(effectSpy.mock.lastCall?.[0]).toBeCloseTo(0.1 * 0.25, 10);
+    moveSpy.mockRestore();
+    effectSpy.mockRestore();
+
+    // After completion the same tick passes the full dt again.
+    scene.tick(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
+    expect(scene.getTeleportPhase()).toBe('complete');
+    const moveSpy2 = vi.spyOn(
+      scene as unknown as { _moveEnemies(dt: number): void },
+      '_moveEnemies',
+    );
+    scene.tick(0.1);
+    expect(moveSpy2.mock.lastCall?.[0]).toBeCloseTo(0.1, 10);
+    moveSpy2.mockRestore();
+  });
+
+  it('AC — enemy-bullet dt composes teleport (¼) with Chrono Field (no double-scale)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(scene.triggerTeleport()).toBe(true);
+    expect(scene.getTeleportPhase()).toBe('grow');
+
+    // Chrono Field halves the enemy-bullet step; the teleport grow composes
+    // multiplicatively, so the effective step is dt × ¼ × ½ (never double).
+    const registry = scene.getEffectsRegistry();
+    vi.spyOn(registry, 'enemyBulletTimeScale').mockReturnValue(0.5);
+    const bullet = scene.spawnEnemyBullet(400, 300, 100, 0, 0xff0000, 10);
+    const beforeX = bullet.graphics.x;
+    scene.tick(0.1);
+    const moved = bullet.graphics.x - beforeX;
+    expect(moved).toBeCloseTo(100 * 0.1 * 0.25 * 0.5, 2);
+  });
+
   it('P7 destination avoids live enemies (lands away from an enemy body)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;

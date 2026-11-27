@@ -1755,6 +1755,13 @@ export class GymFormationScene<
   tick(dt: number): void {
     const { config } = this;
 
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): during the teleport grow phase the deliberate
+    // world consumers below run at ¼ speed via this composed factor. The shared
+    // player step (`_tickPlayer`) applies the same factor internally and
+    // advances the teleport sequence at real time, so the tunnel never slows.
+    const wdt = dt * this.teleportTimeScale();
+
     // Advance the formation base unconditionally. A `march` block (Space
     // Invaders archetype, AH-0MV01EDZS0005R20) steps, reverses at the arena
     // edge and drops a row via the shared pure policy; every other formation
@@ -1768,14 +1775,14 @@ export class GymFormationScene<
       );
       this.marchState = advanceMarch(
         this.marchState,
-        dt,
+        wdt,
         alive,
         this._marchOptions(),
       );
       this.formationBaseX = this.marchState.x;
       this.formationBaseY = this.marchState.y;
     } else {
-      this.formationBaseX += config.driftSpeed * dt;
+      this.formationBaseX += config.driftSpeed * wdt;
       if (this.formationBaseX > GAME_WIDTH + 60) {
         this.formationBaseX = this._respawnX();
       }
@@ -1801,7 +1808,7 @@ export class GymFormationScene<
     for (const entity of this.entities) {
       // Roaming enemies (e.g. Asteroid) advance their own straight-line
       // motion + wrap + rotation; a no-op for formation enemies.
-      entity.updatePosition?.(dt);
+      entity.updatePosition?.(wdt);
 
       // Only re-anchor-capable entities (Divers) ride the Diver re-anchor
       // offset; every other enemy uses the shared base alone and therefore
@@ -1810,7 +1817,7 @@ export class GymFormationScene<
       entity.applyFormationPosition(
         this.formationBaseX + (isDiver ? this.reanchor.anchorX : 0),
         this.formationBaseY + (isDiver ? this.reanchor.anchorY : 0),
-        dt,
+        wdt,
         config.spacingX,
         config.spacingY,
       );
@@ -1822,7 +1829,7 @@ export class GymFormationScene<
     // If a re-anchor fired (now or on an earlier frame), ease every entity
     // from its old position to the live (drifting) slot over a short glide
     // (AH-0MUL15N63003PUDB). The shared controller owns the rule (D2).
-    this.reanchor.afterPositioning(dt, reanchorApplied);
+    this.reanchor.afterPositioning(wdt, reanchorApplied);
 
     // Shared post-motion edge wrap (AH-0MVKXBWDY008R0YH, parent
     // AH-0MV9G3DZ9003P7P8 AC3): the same seam `PlayScene._moveEnemies` runs,
@@ -1833,25 +1840,25 @@ export class GymFormationScene<
 
     // Advance the wormhole spawn animation (AC1–AC4): grown enemies are
     // marked spawned and the wormhole closes once every entity has finished.
-    this._updateSpawnAnimations(dt);
+    this._updateSpawnAnimations(wdt);
 
     // Shared boss advance (AH-0MUII3E5E006A93F, AC1): appended boss bullets
     // are advanced by the shared bullet lifecycle below, matching the
     // PlayScene ordering relative to collisions. A no-op without a boss.
-    this._advanceBoss(dt);
+    this._advanceBoss(wdt);
 
     // Advance bullets; wrap across all four edges and expire by lifetime
     // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen
     // position. Shared with PlayScene/GymPowerUpsCombat so the semantics
     // cannot drift (AH-0MUII3CF00024EDM, gap 3).
-    this._advanceEnemyBullets(dt);
+    this._advanceEnemyBullets(wdt);
 
     // ── Player ship: shared control step + bullet lifecycle ────
     if (this.player) {
       // Shared input → timers → multipliers → physics → auto-fire step
       // (AH-0MUII39KX007YUQ0, AC1).
       this._tickPlayer(dt);
-      this._advancePlayerBullets(dt);
+      this._advancePlayerBullets(wdt);
 
       // Automatic defence (Phase Shift / Teleport): feed live danger before
       // collision gating so a trigger this frame protects this frame
@@ -1860,35 +1867,35 @@ export class GymFormationScene<
 
       // Collisions + post-hit invulnerability blink (player component only).
       this._handleCollisions();
-      this._updateInvulnerability(dt);
+      this._updateInvulnerability(wdt);
     }
 
     // ── Mineral layer: collection + hold-full choice ────────────────
-    this._updateMinerals(dt);
+    this._updateMinerals(wdt);
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
-    this._updatePowerUpLayer(dt);
+    this._updatePowerUpLayer(wdt);
 
     // ── Effect timers + HUD — independent of the opt-in drop layer ───
     // Timed effects (e.g. Phase Shift granted on teleport arrival) and the HUD must
     // advance in every gym, not only those with field drops.
-    this.effectsRegistry.tick(dt);
+    this.effectsRegistry.tick(wdt);
     this.hud?.refresh();
 
     // ── Shared Shield/Phase Shift player visuals (parity with the other scenes) ──
     // Runs after the power-up layer so a drop collected this frame is
     // reflected immediately. Safe when no player is present.
     this._updateEffectVisuals();
-    this._updatePhaseShiftJuice(dt);
+    this._updatePhaseShiftJuice(wdt);
 
     // ── Opt-in wave-timeout: detonate survivors before wipe detection ──
     // Runs first so a timeout that wipes the wave is observed by the
     // countdown tick below (AH-0MUNR5LM1004B223).
-    this._advanceWaveTimeout(dt);
+    this._advanceWaveTimeout(wdt);
     this._drawWaveTimeoutBar();
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
-    this._tickRespawnCountdown(dt);
+    this._tickRespawnCountdown(wdt);
   }
 
   /**

@@ -270,19 +270,25 @@ export class GymRechargeTuning extends CombatScene<Raider, ScoutBullet, never> {
   tick(dt: number): void {
     if (!this.player) return;
 
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): world consumers run at ¼ speed during grow;
+    // `_tickPlayer` applies the same factor internally and advances the
+    // teleport sequence at real time.
+    const wdt = dt * this.teleportTimeScale();
+
     // Shared player-control step: timers → multipliers → input → physics →
     // auto-fire (a no-op here).
     this._tickPlayer(dt);
 
     // Raider patrol / attack-run movement plus the live aim seam.
-    this._tickRaiders(dt);
+    this._tickRaiders(wdt);
 
     // Aimed fire only during a committed attack run, routed through the one
     // shared dispatcher.
     this._collectRaiderFire();
 
     // Enemy bullets through the shared projectile lifecycle.
-    this._advanceEnemyBullets(dt);
+    this._advanceEnemyBullets(wdt);
 
     // Automatic defence (Phase Shift / Teleport): feed live danger before
     // gating so an activation this frame protects this frame.
@@ -290,21 +296,21 @@ export class GymRechargeTuning extends CombatScene<Raider, ScoutBullet, never> {
 
     // Shared spawn presentation: grow each raider from 1 px while it is
     // spawn-protected, exactly as the game does.
-    this._updateSpawnAnimations(dt);
+    this._updateSpawnAnimations(wdt);
 
     // Hit response (bullets + bodies), gated by phase / shield.
     this._handleCollisions();
 
     // Invulnerability blink.
-    this._updateInvulnerability(dt);
+    this._updateInvulnerability(wdt);
 
     // Effect timers (including the shared store's recharge timers).
-    this.effectsRegistry.tick(dt);
+    this.effectsRegistry.tick(wdt);
 
     // Shared wave-timeout: detonate survivors, then refresh.
-    this._advanceWaveTimeout(dt);
+    this._advanceWaveTimeout(wdt);
     this._drawWaveTimeoutBar();
-    this._tickRespawnCountdown(dt);
+    this._tickRespawnCountdown(wdt);
 
     this.hud?.refresh();
   }

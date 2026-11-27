@@ -1943,12 +1943,20 @@ export class PlayScene extends CombatScene<
     // overlay that requested it has closed, so opening a fresh one is safe).
     this._flushPendingHoldFullChoice();
 
-    this.effectsRegistry.tick(dt);
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): during the teleport grow phase the deliberate
+    // world consumers below run at ¼ speed via this composed factor. The shared
+    // player step (`_tickPlayer`) applies the same factor internally to the
+    // player's own physics/clocks and advances the teleport sequence at real
+    // time; the tunnel/transit therefore never slow.
+    const wdt = dt * this.teleportTimeScale();
+
+    this.effectsRegistry.tick(wdt);
     this.hud?.refresh();
 
     // The announcement banner is transient: it always expires on its own
     // timer, even while enemies remain alive (AH-0MU7JTEMC006QPSN).
-    this._advanceBanner(dt);
+    this._advanceBanner(wdt);
 
     // Level/wave transition pause. Enemy spawning, enemy movement/fire and
     // enemy-based collisions are suspended, but carried-over asteroids
@@ -1958,11 +1966,11 @@ export class PlayScene extends CombatScene<
     // (AH-0MU7JTF9W008B8HW).
     const transitioning = this.transitionTimer > 0;
     if (transitioning) {
-      this.transitionTimer = Math.max(0, this.transitionTimer - dt);
+      this.transitionTimer = Math.max(0, this.transitionTimer - wdt);
       // The level-change warp advances from the scene's own tick so it stays
       // locked to the transition pause's schedule (AC2 —
       // AH-0MVSEBW8L009O3JD).
-      this._advanceBackgroundWarp(dt);
+      this._advanceBackgroundWarp(wdt);
       // The transition banner is shown once at `_startTransition()`; its own
       // timer then governs how long it stays up, so it outlives the 1.5 s
       // pause and is no longer hidden when the transition completes
@@ -1973,7 +1981,7 @@ export class PlayScene extends CombatScene<
       // handles both formation enemies and asteroids. Enemy bullets vs the
       // player stay suspended for the pause (AH-0MU7JTF9W008B8HW grace), so a
       // timed-out wave still gives the player the transition breather.
-      this._moveEnemies(dt);
+      this._moveEnemies(wdt);
       this._collectEnemyFire();
       this._handleCarriedSurvivorCollisions();
       // Between-waves mineral passes (AH-0MUX96GJF006CAZP, AC1/AC3): the
@@ -1981,11 +1989,11 @@ export class PlayScene extends CombatScene<
       // through the transition breather, and the shared Mineral Scoop scoop keeps
       // attracting them. `true` bypasses the Phase Shift phase gate for the pause only
       // (AC2) — normal wave play still blocks phased collection (Q7).
-      this._applyMineralScoop(this.minerals, dt);
+      this._applyMineralScoop(this.minerals, wdt);
       this._handleMinerals(true);
       if (this.transitionTimer === 0) this._onTransitionComplete();
     } else {
-      this._moveEnemies(dt);
+      this._moveEnemies(wdt);
       this._collectEnemyFire();
       // Shared boss advance (AH-0MUII3E5E006A93F, AC1) — same ordering
       // relative to collisions as every gym.
@@ -2003,7 +2011,7 @@ export class PlayScene extends CombatScene<
     // auto-fire) — identical in every scene (AH-0MUII39KX007YUQ0, AC1).
     this._tickPlayer(dt);
 
-    this._advanceBullets(dt);
+    this._advanceBullets(wdt);
     if (!transitioning) {
       // Automatic defence (Phase Shift / Teleport): feed live danger before
       // collision gating so a trigger this frame protects this frame
@@ -2011,11 +2019,11 @@ export class PlayScene extends CombatScene<
       this._updateAutoDefence(dt);
       // Advance the wormhole spawn animation first so an enemy that finishes
       // growing this frame is collidable on the same frame it becomes whole.
-      this._updateSpawnAnimations(dt);
+      this._updateSpawnAnimations(wdt);
       // Mineral Scoop attractor runs before the shared mineral collection
       // inside _handleCollisions, so a mineral pulled into the hull this frame
       // is collected this frame (parity with every gym).
-      this._applyMineralScoop(this.minerals, dt);
+      this._applyMineralScoop(this.minerals, wdt);
       this._handleCollisions();
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
@@ -2044,14 +2052,14 @@ export class PlayScene extends CombatScene<
       // (AH-0MV01EPM40008N8T); these are NOT registered with the WaveManager
       // (non-blocking world hazard, the Asteroid accounting).
       this._releaseDueLaneTrafficSpawns();
-      this._advanceWaveTimer(dt);
+      this._advanceWaveTimer(wdt);
     }
-    this._updateInvulnerability(dt);
+    this._updateInvulnerability(wdt);
     this._updateVisuals();
-    this._updatePhaseShiftJuice(dt);
-    this._updateDrops(dt);
+    this._updatePhaseShiftJuice(wdt);
+    this._updateDrops(wdt);
     this._refreshHudText();
-    this._refreshDangerTacho(dt);
+    this._refreshDangerTacho(wdt);
     this._drawWaveTimer();
     // Per-tick telemetry last, so the recorded state matches the frame the
     // player actually saw (AH-0MUY08VVQ007HSSH). No-op when off.

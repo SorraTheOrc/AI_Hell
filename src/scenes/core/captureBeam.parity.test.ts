@@ -179,7 +179,10 @@ describe('shared capture-beam seam — defined once in the shared core', () => {
       path.resolve(process.cwd(), 'src/scenes/core/CombatCoreScene.ts'),
       'utf8',
     );
-    expect(source).toContain('this._updateCaptureBeams(dt)');
+    // The capture step runs from the shared `_tickPlayer` with the world
+    // delta (scaled by the teleport slow-motion factor, `wdt`), before the
+    // auto-fire gate below it.
+    expect(source).toContain('this._updateCaptureBeams(wdt)');
     expect(source).toContain('!this.isCaptureDisabled()');
   });
 });

@@ -1298,22 +1298,28 @@ export class CombatCoreScene<
     // are never slowed by the ¼-speed world factor the sequence itself
     // produces (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE).
     this._tickTeleportSequence(dt);
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): every player-side clock, input/physics step and
+    // auto-fire cadence runs at the composed teleport factor (¼ during grow,
+    // 1× otherwise). The teleport sequence itself was advanced above at real
+    // time, and the beat clock below stays real so audio/exposions do not stall.
+    const wdt = dt * this.teleportTimeScale();
     // Advance the danger-multiplier decay clock before anything else so the
     // chain loses a tier exactly `GRAZE_DECAY_SECONDS` after the last graze —
     // in the game and every gym, since this is the one shared player step
     // (AH-0MWL7ORK8007LXJI AC4).
-    this.grazeTracker.update(dt);
+    this.grazeTracker.update(wdt);
     const player = this.getPlayer();
     if (!player) {
       // Collector drones keep flying even while the ship is respawning: they
       // retain their last home target and finish their sortie rather than
       // freezing mid-air (AH-0MV9G113S009B37I).
-      this._updateDrones(dt);
+      this._updateDrones(wdt);
       return;
     }
     // Turn this frame's `mystery_ufo` pickups into visible drones and advance
     // the permanent auto-spawn timer before the drones tick.
-    this._updateDroneSpawning(dt);
+    this._updateDroneSpawning(wdt);
     // Flush any cluster warheads queued by a split on the previous frame so
     // they take part in this frame's advance/collision passes
     // (AH-0MV1BIVIJ007KYXU).
@@ -1321,12 +1327,12 @@ export class CombatCoreScene<
     // Advance and redraw the Gradius Options escort pods before auto-fire so a
     // pod fired this frame leaves from its current orbit position
     // (AH-0MV1BIVVK0043TEM).
-    this._updateOptionsEscort(dt);
+    this._updateOptionsEscort(wdt);
     // Advance timed-weapon countdowns before auto-fire so an expired
     // weapon stops firing this frame. The teleport slow-motion beat scales the
     // effect/recharge clocks to ¼ during grow (producer Q1 = a), so the same
     // shot-cadence slowdown the world sees applies to the player's weapons too.
-    player.tickWeaponTimers(dt * 1000 * this.teleportTimeScale());
+    player.tickWeaponTimers(wdt * 1000);
     // Speed Boost live boost: a weapons-only fire-rate boost. Ship movement
     // is untouched, so the movement config is never rescaled (AC1).
     const registry = this.getEffectsRegistry();
@@ -1337,13 +1343,13 @@ export class CombatCoreScene<
     if (!this.isTeleportSteeringLocked()) {
       const input = this._readPlayerInput();
       if (input) player.setInput(input);
-      player.physicsTick(dt, this.scale.width, this.scale.height);
+      player.physicsTick(wdt, this.scale.width, this.scale.height);
     }
     // Tractor-beam step (Galaga capturer, AH-0MV01EFII008298D): apply the
     // bounded pull and resolve the temporary capture before auto-fire, so a
     // capture on this frame suppresses fire on this frame. Runs after physics
     // so the drag is applied to the ship's current position.
-    this._updateCaptureBeams(dt);
+    this._updateCaptureBeams(wdt);
     if (this.playerFireSuppressed() || !this.botFireAllowed()) {
       // Run-end suppression (AH-0MVCB6LBE007I6R8) and the bot's fire
       // discipline (AH-0MWPOET5A002IPTP) share one outcome: spawn no bullets,
@@ -1356,33 +1362,33 @@ export class CombatCoreScene<
         player.setBeatClock(this.beatClock);
       }
     } else if (this.autoFireEnabled() && !this.isCaptureDisabled()) {
-      this._autoFire(dt);
+      this._autoFire(wdt);
     }
     // Bomb bomb: advance the shared pulse state and fire a ranged clear when
     // one is due. Runs after physics so the pulse is centred on the player's
     // current position, and from this single shared step so the game and
     // every gym cannot diverge (AH-0MUVM9RAO004Y3LB).
-    this._updateP4Bomb(dt);
+    this._updateP4Bomb(wdt);
     // Smart Bomb: advance the shared screen-pulse state and resolve the
     // screen-wide area effect when one is due (AH-0MV1BIWP9003EHRQ). The
     // pulse resolves through the scene's AOE seam via `onSmartBombPulse`.
-    this._updateSmartBomb(dt);
+    this._updateSmartBomb(wdt);
     // Orbital Strike (AH-0MVH80ZJ7009W18Z): a field pickup fires one bolt at
     // the nearest enemy; a permanent reward then strikes on its resolved
     // interval. Detection lives in this shared step, application behind one
     // hook, so the game and every gym cannot diverge.
-    this._updateOrbitalStrike(dt);
+    this._updateOrbitalStrike(wdt);
     // Mining Laser (AH-0MW9QMP2P0032BWW): a field pickup / hold-full reward
     // auto-fires at the nearest live **asteroid** on the level-resolved beat
     // cadence. Detection lives in this shared step, the target rule in the
     // shared `selectMiningLaserTarget`, and application behind one hook, so
     // the game and every gym cannot diverge (parent AH-0MW81181P007BDRU).
-    this._updateMiningLaser(dt);
+    this._updateMiningLaser(wdt);
     // Collector drones (Mystery UFO reward) run after physics so they track
     // the ship's current position on their return leg; minerals vacuumed
     // this step are cleaned up by the same frame's later mineral pass
     // (AH-0MV9G113S009B37I).
-    this._updateDrones(dt);
+    this._updateDrones(wdt);
   }
 
   /**

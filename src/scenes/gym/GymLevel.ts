@@ -1946,11 +1946,17 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   tick(dt: number): void {
     if (!this.player) return;
 
+    // World slow-motion beat (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJCPS0005UQB): world consumers run at ¼ speed during grow;
+    // `_tickPlayer` applies the same factor internally and advances the
+    // teleport sequence at real time.
+    const wdt = dt * this.teleportTimeScale();
+
     // Enemy movement (drift + per-entity positioning).
-    this._moveEnemies(dt);
+    this._moveEnemies(wdt);
 
     // Enemy bullets: wrap + lifetime expiry (shared helper).
-    advanceWrappingBullets(this.enemyBullets, dt, GAME_WIDTH, GAME_HEIGHT);
+    advanceWrappingBullets(this.enemyBullets, wdt, GAME_WIDTH, GAME_HEIGHT);
 
     // Live aim tracking: push the ship's live position into every alive
     // aimed enemy BEFORE this frame's fire is collected — the identical seam
@@ -1974,7 +1980,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this._tickPlayer(dt);
 
     // Player bullets: advance + wrap + lifetime expiry (shared helper).
-    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
+    this.playerBullets = advancePlayerBullets(this.playerBullets, wdt);
 
     // Automatic defence danger feed (shared), before collision gating.
     this._updateAutoDefence(dt);
@@ -1982,26 +1988,26 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     // Advance the wormhole spawn animation before the shared collision pass,
     // so an enemy that finishes growing this frame is collidable on the same
     // frame it becomes whole (identical ordering to `PlayScene`).
-    this._updateSpawnAnimations(dt);
+    this._updateSpawnAnimations(wdt);
 
     // Shared collision pass.
     this._handleCollisions();
 
     // Post-hit invulnerability blink (shared).
-    this._updateInvulnerability(dt);
+    this._updateInvulnerability(wdt);
 
     // Supply layer: mineral collection/absorption + power-up/weapon drops,
     // through the shared `collectMinerals` / drop-layer paths.
-    this._updateSupplies(dt);
+    this._updateSupplies(wdt);
 
     // Timed effects (shared ordering).
-    this.effectsRegistry.tick(dt);
+    this.effectsRegistry.tick(wdt);
     this.hud?.refresh();
 
     // Shared player Phase Shift treatment (AH-0MVNTY0700053T9E): the level
     // gym advances the juice through the same shared step as the game and
     // every other gym, so a phased ship is unmistakable here too.
-    this._updatePhaseShiftJuice(dt);
+    this._updatePhaseShiftJuice(wdt);
 
     // Wave progression: release any asteroid spawns whose planned time has
     // passed before the wave clock advances (so a timeout cannot release the
@@ -2011,7 +2017,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       // Spawner-delivered content (ghosts/centipede/horde/lane traffic/
       // orbital strikes) releases on the same shared schedule (D3).
       this._releaseDueDynamicSpawns();
-      this._advanceWaveTimeout(dt);
+      this._advanceWaveTimeout(wdt);
     }
     this._drawWaveTimeoutBar();
     this._checkWaveComplete();
