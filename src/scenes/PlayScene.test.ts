@@ -3427,6 +3427,43 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isPhased).toBe(false);
   });
 
+  it('P7 teleport-arrival Phase Shift suppresses the full-screen flash (slice AH-0MWWDJH0H00691PO)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.hasTeleport()).toBe(true);
+
+    expect(scene.triggerTeleport()).toBe(true);
+    // The arrival Phase Shift activates on the next tick while the sequenced
+    // warp is in flight, so the juice is told to skip only the flash.
+    scene.tick(0.016);
+    expect(registry.isPhased).toBe(true);
+    const juice = (
+      scene as unknown as { phaseShiftJuice: { flashRemaining: number; flashAlpha: number } | null }
+    ).phaseShiftJuice;
+    expect(juice).not.toBeNull();
+    expect(juice!.flashRemaining).toBe(0);
+    expect(juice!.flashAlpha).toBe(0);
+  });
+
+  it('P7 a genuine Phase Shift activation still plays the full-screen flash (regression)', async () => {
+    const scene = await bootPlay();
+    const registry = scene.getEffectsRegistry();
+    // Activate the phase directly (trigger-independent), as other P6 tests do.
+    registry.applyPhaseShift();
+    scene.tick(0.016);
+    expect(registry.isPhased).toBe(true);
+    const juice = (
+      scene as unknown as { phaseShiftJuice: { flashRemaining: number } | null }
+    ).phaseShiftJuice;
+    expect(juice).not.toBeNull();
+    expect(juice!.flashRemaining).toBeGreaterThan(0);
+  });
+
   it('P7 destination avoids live enemies (lands away from an enemy body)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;

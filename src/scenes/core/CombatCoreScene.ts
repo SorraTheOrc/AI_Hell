@@ -1102,7 +1102,13 @@ export class CombatCoreScene<
     this.phaseShiftJuice ??= new PhaseShiftJuice(this, {
       registry: this.phaseShiftEffects,
     });
-    this.phaseShiftJuice.update(this.getEffectsRegistry().isPhased, dt);
+    // A teleport-arrival Phase Shift (granted by `consumeTeleport()` while the
+    // sequenced warp is in flight) suppresses only the full-screen phase flash —
+    // the tunnel is the screen-wide read there — while a genuine activation
+    // still flashes (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJH0H00691PO).
+    this.phaseShiftJuice.update(this.getEffectsRegistry().isPhased, dt, {
+      skipFlash: this._teleportSequence !== null,
+    });
   }
 
   // ── Teleport sequence (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE) ──

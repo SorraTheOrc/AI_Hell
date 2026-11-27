@@ -20,6 +20,7 @@ import {
   PHASE_SHIFT_DIM_ALPHA,
   PHASE_SHIFT_DIM_COLOR,
   PHASE_SHIFT_ENABLE_DIM,
+  PHASE_SHIFT_ENABLE_FLASH,
   PHASE_SHIFT_ENABLE_SPLIT,
   PHASE_SHIFT_OVERLAY_DEPTH,
   PHASE_SHIFT_SPLIT_ALPHA,
@@ -170,8 +171,56 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     }
   });
 
-  it('does not re-create overlays while the phase stays active', async () => {
+  it('plays the full-screen flash on a genuine (non-teleport) phase activation', async () => {
     const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    // Default params keep the flash layer enabled (PHASE_SHIFT_ENABLE_FLASH).
+    const juice = new PhaseShiftJuice(scene, { registry });
+
+    expect(juice.update(true, 0.016)).toBe(true);
+    expect(juice.isActive).toBe(true);
+    // The flash code + toggle are retained and still fire for a genuine activation.
+    expect(PHASE_SHIFT_ENABLE_FLASH).toBe(true);
+    expect(juice.flashRemaining).toBeGreaterThan(0);
+    expect(juice.flashAlpha).toBeGreaterThan(0);
+  });
+
+  it('suppresses only the full-screen flash for a teleport-arrival activation', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const juice = new PhaseShiftJuice(scene, { registry });
+
+    // A teleport-arrival Phase Shift suppresses only the flash layer.
+    expect(juice.update(true, 0.016, { skipFlash: true })).toBe(true);
+    expect(juice.isActive).toBe(true);
+    expect(juice.flashRemaining).toBe(0);
+    expect(juice.flashAlpha).toBe(0);
+    // Every other layer still applies (dim / split / vignette / shimmer).
+    expect(juice.activeOverlays.length).toBeGreaterThan(0);
+
+    // The flash stays absent for the rest of the episode.
+    juice.update(true, 0.05, { skipFlash: true });
+    expect(juice.flashAlpha).toBe(0);
+    expect(juice.flashRemaining).toBe(0);
+  });
+
+  it('ignores skipFlash once an episode is already active (decision is on the edge)', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const juice = new PhaseShiftJuice(scene, { registry });
+
+    // Genuine activation flashes.
+    juice.update(true, 0.016);
+    const flashed = juice.flashRemaining;
+    expect(flashed).toBeGreaterThan(0);
+    // A later skipFlash flag does not retroactively remove an in-flight flash;
+    // the flash continues to decay normally (it is not zeroed by the flag).
+    juice.update(true, 0.016, { skipFlash: true });
+    expect(juice.flashRemaining).toBeGreaterThan(0);
+    expect(juice.flashRemaining).toBeLessThanOrEqual(flashed);
+  });
+
+  it('does not re-create overlays while the phase stays active', async () => {    const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
     const juice = new PhaseShiftJuice(scene, { registry, params: baseOnlyParams() });

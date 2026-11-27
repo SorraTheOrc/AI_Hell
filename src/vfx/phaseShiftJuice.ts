@@ -315,6 +315,18 @@ export interface PhaseShiftJuiceOptions {
 }
 
 /**
+ * Per-call options for {@link PhaseShiftJuice.update}.
+ *
+ * `skipFlash` suppresses only the full-screen flash layer for a fresh phase
+ * episode (the teleport-arrival activation); every other layer and the
+ * gameplay effect still apply. Defaults to `false`, so existing callers are
+ * unchanged (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJH0H00691PO).
+ */
+export interface PhaseShiftJuiceUpdateOptions {
+  skipFlash?: boolean;
+}
+
+/**
  * Owns the screen-wide Phase Shift treatment for one scene.
  *
  * `update(active, dt)` is edge-triggered: when `active` rises, the overlays
@@ -369,18 +381,39 @@ export class PhaseShiftJuice {
   }
 
   /**
+   * Alpha of the live full-screen activation-flash overlay (`0` when the flash
+   * is suppressed, disabled or its episode has finished). Exposed so the
+   * teleport-arrival suppression and the genuine-activation flash can be
+   * asserted directly (slice AH-0MWWDJH0H00691PO).
+   */
+  get flashAlpha(): number {
+    return this.flash?.alpha ?? 0;
+  }
+
+  /** Milliseconds of activation-flash lifetime remaining (`0` when none). */
+  get flashRemaining(): number {
+    return this.flashRemainingMs;
+  }
+
+  /**
    * Advances the treatment for the current frame.
    *
    * @param active — whether Phase Shift is currently active.
    * @param dt — frame delta (seconds); drives the flash decay, the sustained
    *   shimmer and the filter-driver ticks while the phase stays active.
+   * @param options.skipFlash — when `true` and this call starts a fresh phase
+   *   episode, the **full-screen flash layer is suppressed** for that episode
+   *   (all other layers and the gameplay effect still apply). Used by the
+   *   teleport-arrival Phase Shift so its own tunnel is the screen-wide read
+   *   (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJH0H00691PO). Ignored once a
+   *   phase episode is already active (the flash decision is made on the edge).
    * @returns whether the treatment is applied after this call.
    */
-  update(active: boolean, dt = 0): boolean {
+  update(active: boolean, dt = 0, options: PhaseShiftJuiceUpdateOptions = {}): boolean {
     if (active && !this.active) {
       this.active = true;
       this.elapsed = 0;
-      this._apply();
+      this._apply(options.skipFlash === true);
     } else if (!active && this.active) {
       this.active = false;
       this._clear();
@@ -404,7 +437,7 @@ export class PhaseShiftJuice {
 
   // ── Internals ─────────────────────────────────────────────────────
 
-  private _apply(): void {
+  private _apply(skipFlash = false): void {
     if (this.params.dimEnabled) {
       this._addOverlay(
         this.params.dimColor,
@@ -453,7 +486,10 @@ export class PhaseShiftJuice {
     // Unmistakable activation edge: a full-screen phase flash plus a cyan
     // edge/vignette frame, and the camera distortion burst + sustained
     // filter layers through the injected (or auto-created) filter driver.
-    if (this.params.flashEnabled) {
+    // The flash is skipped for a teleport-arrival activation (slice
+    // AH-0MWWDJH0H00691PO): the tunnel is the screen-wide read there, while the
+    // other layers below still apply and a genuine activation still flashes.
+    if (this.params.flashEnabled && !skipFlash) {
       this.flash = this._addOverlay(
         this.params.flashColor,
         this.params.flashAlpha,
