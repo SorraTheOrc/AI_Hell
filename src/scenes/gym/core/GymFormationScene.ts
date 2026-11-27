@@ -168,6 +168,10 @@ import { createSeededRng } from '../../../core/rng';
 import type { EliteBehaviour } from '../../../core/eliteVocabulary';
 import type { EliteSpawnModifiers } from '../../../entities/enemyFactory';
 import {
+  stepEliteSplitBurst,
+  type EliteSplitBurstState,
+} from '../../core/eliteMechanics';
+import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
   formationExtents,
@@ -191,6 +195,14 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
   shootEnabled: boolean;
   /** The entity's slot within the formation. */
   readonly offset: FormationOffset;
+  /**
+   * Optional: the transient outward burst a `splitter` elite's child leaves the
+   * wreck with (AH-0MWZERK75006FD3B). Seeded by the shared `eliteMechanics`
+   * dispatcher through `setEliteSplitBurst`; the positioning pass below adds
+   * its offset to the slot it already derives, so the escape needs no separate
+   * movement class. Absent on every ordinary spawn (and on stubs).
+   */
+  readonly eliteSplitBurst?: EliteSplitBurstState;
   /**
    * Destroys the entity: hides the body, plays the explosion animation.
    * `scale` enlarges the explosion geometry (the wave-timeout penalty uses
@@ -1034,12 +1046,12 @@ export class GymFormationScene<
     } else {
       playDestructionSound();
     }
-    // Elite death behaviour (AH-0MWU6673N008FO1D): this gym-only EXPLODE control
-    // bypasses the shared kill finalisation, so it dispatches the same
-    // `eliteMechanics` decision before the destruction hooks — a splitter
-    // still releases its children and a volatile still bursts, exactly as a
-    // player-bullet kill does.
-    this._applyEliteDeathBehaviour(victim);
+    // Elite death behaviour (AH-0MWU6673N008FO1D, AH-0MWZERK75006FD3B): this
+    // gym-only EXPLODE control bypasses the shared kill finalisation, but the
+    // dispatch is not lost — every kill path ends in `destroySelf()`, which
+    // runs the shared pre-destruction seam before the hull is hidden, so a
+    // splitter's children burst out of the still-visible wreck and a volatile
+    // still bursts, exactly as a player-bullet kill does.
     // Shared mineral kill-drop rule (GDD §4.5) — the EXPLODE path bypasses
     // `onEnemyDestroyed`, so it must drop here too (no double-drop: the two
     // paths are mutually exclusive).
@@ -1814,9 +1826,14 @@ export class GymFormationScene<
       // offset; every other enemy uses the shared base alone and therefore
       // stays where it is when a Diver re-anchors (AC5).
       const isDiver = entity.consumeFormationReanchor != null;
+      // A splitter elite's child leaves the wreck at speed and settles back
+      // into ordinary movement (AH-0MWZERK75006FD3B). The shared stepper owns
+      // the geometry; the offset is added to the slot the pass already
+      // derives, so no archetype needs a burst-aware movement path.
+      const burst = stepEliteSplitBurst(entity.eliteSplitBurst, wdt);
       entity.applyFormationPosition(
-        this.formationBaseX + (isDiver ? this.reanchor.anchorX : 0),
-        this.formationBaseY + (isDiver ? this.reanchor.anchorY : 0),
+        this.formationBaseX + (isDiver ? this.reanchor.anchorX : 0) + burst.x,
+        this.formationBaseY + (isDiver ? this.reanchor.anchorY : 0) + burst.y,
         wdt,
         config.spacingX,
         config.spacingY,

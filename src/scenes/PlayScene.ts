@@ -257,8 +257,9 @@ import { enemyForceFieldHits } from '../core/enemyForceField';
 import {
   ELITE_VOLATILE_BURST_LIFETIME,
   eliteForceFieldHits,
+  stepEliteSplitBurst,
   type EliteBurstShot,
-  type EliteSplitOffset,
+  type EliteSplitSpawn,
 } from './core/eliteMechanics';
 import { playEliteDeathCue, resolveEliteReward } from '../core/eliteReward';
 import {
@@ -2408,31 +2409,37 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Elite death behaviour — `splitter` children (AH-0MWU665XK000ZT4S AC2).
+   * Elite death behaviour — `splitter` children (AH-0MWU665XK000ZT4S AC2,
+   * AH-0MWZERK75006FD3B).
    *
-   * The shared `eliteMechanics` dispatcher has already decided *how many* and
-   * *where*; this seam only performs the shipped spawn: the child is built by
-   * the same `createEnemyFromConfig` factory the wave and every dynamic
-   * spawner (Harvester, ghost, horde, lane traffic) use, then appended to the
-   * live list and registered with the `WaveManager` so it gates the wave. The
-   * registration happens before the parent's death is accounted (the shared
-   * finalisation dispatches us first), so the alive count never dips to zero
-   * in the gap and the wave cannot clear early.
+   * The shared `eliteMechanics` dispatcher has already decided *how many*,
+   * *where* (within a few px of the wreck) and *at what speed*; this seam only
+   * performs the shipped spawn: the child is built by the same
+   * `createEnemyFromConfig` factory the wave and every dynamic spawner
+   * (Harvester, ghost, horde, lane traffic) use, seeded with the burst the
+   * dispatcher created, then appended to the live list and registered with the
+   * `WaveManager` so it gates the wave. It runs on the lethal blow *before* the
+   * elite's hull is hidden (the shared pre-destruction seam), so the player
+   * sees the children shoot out of the doomed elite, and before the parent's
+   * death is accounted, so the alive count never dips to zero in the gap and
+   * the wave cannot clear early.
    *
    * Children are ordinary: no elite behaviour and no bonus hit points — their
-   * field strength is the archetype's normal level curve.
+   * field strength is the archetype's normal level curve. They stay fully
+   * combat-ready during the burst (no immunity window), and the impulse is a
+   * transient displacement, not a new movement class.
    */
   protected override spawnEliteSplitChild(
     enemy: EnemyEntity,
-    offset: EliteSplitOffset,
+    spawn: EliteSplitSpawn,
   ): void {
     const parent = this.spawned.find(
       (candidate) => candidate.entity === enemy,
     );
     const enemyKey = parent?.enemyKey ?? enemy.archetype;
     const cfg = loadEnemyConfig(enemyKey);
-    const x = enemy.x + offset.x;
-    const y = enemy.y + offset.y;
+    const x = enemy.x + spawn.offset.x;
+    const y = enemy.y + spawn.offset.y;
     const child = createEnemyFromConfig(
       this,
       cfg,
@@ -2443,6 +2450,7 @@ export class PlayScene extends CombatScene<
       enemyForceFieldHits(this.waveManager.level, cfg),
     );
     child.shootEnabled = enemy.shootEnabled;
+    child.setEliteSplitBurst(spawn.burst);
     this.add.existing(child);
     this.spawned.push({
       entity: child,
@@ -3194,9 +3202,14 @@ export class PlayScene extends CombatScene<
       const baseX =
         s.march && this.marchState ? this.marchState.x : s.startX + this.driftX;
       const baseY = s.march && this.marchState ? this.marchState.y : s.startY;
+      // A splitter elite's child leaves the wreck at speed and settles back
+      // into ordinary movement (AH-0MWZERK75006FD3B). The shared stepper owns
+      // the geometry; the offset is added to the slot derived above, so no
+      // archetype needs a burst-aware movement path.
+      const burst = stepEliteSplitBurst(s.entity.eliteSplitBurst, dt);
       s.entity.applyFormationPosition(
-        baseX + (isDiver ? this.reanchor.anchorX : 0),
-        baseY + (isDiver ? this.reanchor.anchorY : 0),
+        baseX + (isDiver ? this.reanchor.anchorX : 0) + burst.x,
+        baseY + (isDiver ? this.reanchor.anchorY : 0) + burst.y,
         dt,
         s.spacingX,
         s.spacingY,

@@ -19,6 +19,7 @@ import Phaser from 'phaser';
 
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import type { EliteBehaviour } from '../core/eliteVocabulary';
+import type { EliteSplitBurstState } from '../scenes/core/eliteMechanics';
 import { resolveMineralRedropCount } from '../core/mineralPayout';
 import { loadRules } from '../core/rules';
 import { playEnemyForceFieldBreakSound } from '../audio/effects';
@@ -321,6 +322,16 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Whether the elite aura/tag are currently drawn. */
   protected _eliteDecorationActive = false;
 
+  /**
+   * The transient outward burst a `splitter` elite's child leaves the wreck
+   * with (AH-0MWZERK75006FD3B), or `undefined` for every other spawn. The
+   * shared `eliteMechanics` dispatcher seeds it through
+   * {@link setEliteSplitBurst}; each scene's existing position pass adds its
+   * `stepEliteSplitBurst` offset to the slot it already derives, so the
+   * impulse needs no movement class and no per-scene copy.
+   */
+  protected _eliteSplitBurst: EliteSplitBurstState | undefined = undefined;
+
   // ── Abstract method: pattern name for explosion VFX ────────────────
 
   /**
@@ -533,6 +544,12 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    */
   destroySelf(scale = 1): void {
     if (!this._alive) return;
+    // Pre-destruction seam (AH-0MWZERK75006FD3B): the owning scene applies the
+    // elite's on-death behaviour here — on the lethal blow, while the hull is
+    // still visible — so a `splitter`'s children visibly burst out of the
+    // doomed elite and the hull then explodes. A structural optional call: a
+    // host without the seam (test doubles, non-combat scenes) is unchanged.
+    this._notifyBeforeDestroy();
     this.destroySilently();
     this.playExplosion(scale);
   }
@@ -639,6 +656,39 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
       this.destroySelf();
     }
     return this._health;
+  }
+
+  /**
+   * Hands this hull to its scene's pre-destruction seam, if it has one
+   * (AH-0MWZERK75006FD3B). Called from {@link destroySelf} before the body is
+   * hidden, so an elite's children spawn from a still-visible wreck.
+   */
+  private _notifyBeforeDestroy(): void {
+    const host = this.scene as unknown as
+      | { onEnemyBeforeDestroyed?: (enemy: unknown) => void }
+      | undefined;
+    host?.onEnemyBeforeDestroyed?.(this);
+  }
+
+  /**
+   * Seats the transient outward burst a `splitter` elite's child leaves the
+   * wreck with (AH-0MWZERK75006FD3B). Set only by a scene's
+   * `spawnEliteSplitChild` seam, from the state the shared dispatcher created,
+   * so the geometry is never re-derived per scene.
+   *
+   * @param burst — the deterministic burst state for this child.
+   */
+  setEliteSplitBurst(burst: EliteSplitBurstState): void {
+    this._eliteSplitBurst = burst;
+  }
+
+  /**
+   * The live outward burst of a `splitter` elite's child, or `undefined` for
+   * every other spawn. The scene's position pass reads it once per frame
+   * through `stepEliteSplitBurst`.
+   */
+  get eliteSplitBurst(): EliteSplitBurstState | undefined {
+    return this._eliteSplitBurst;
   }
 
   /**

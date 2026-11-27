@@ -4525,7 +4525,8 @@ The text below is retained as the original proposal.
 - **Mechanic:** a wave may author **one elite** (or a seeded budget grants one on
   about **15 %** of waves): a variant of a **counted** archetype with a distinct
   aura, **1–3 bonus HP** and **one** bounded extra behaviour — `splitter`
-  (releases two ordinary children on death), `reinforced` (one extra force-field
+  (releases two ordinary children that burst out of the wreck on the lethal
+  blow), `reinforced` (one extra force-field
   hit through the shipped field rule) or `volatile` (a short radial burst on
   death). Each behaviour reuses a shipped seam, and **level 1 never spawns an
   elite**, so onboarding and the baseline are untouched.

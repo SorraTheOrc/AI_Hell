@@ -25,10 +25,12 @@ import { DEFAULT_ENEMY_CONFIGS } from '../../core/enemyConfig';
 import { resetConfigStore, seedConfigStore } from '../../core/configStore';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
-  ELITE_SPLITTER_CHILD_OFFSET_PX,
+  ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX,
+  ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
   ELITE_VOLATILE_BURST_COUNT,
   ELITE_VOLATILE_BURST_LIFETIME,
   ELITE_VOLATILE_BURST_SPEED,
+  type EliteSplitSpawn,
 } from '../core/eliteMechanics';
 import { resolveSpawnTransitTarget } from '../core/spawnTransit';
 import {
@@ -157,7 +159,41 @@ describe('GymFodderEnemies — elite parity (AH-0MWU6673N008FO1D)', () => {
     );
   });
 
-  it('AC1 — a splitter elite releases two ordinary children through the shared death seam', async () => {
+  /**
+   * Records whether the elite's hull was still visible each time the gym's
+   * splitter seam ran: the `spawn-at-wreck` ordering AC (AH-0MWZERK75006FD3B)
+   * requires the children to be created on the lethal blow, before
+   * `destroySelf()` hides the hull.
+   */
+  function recordHullVisibleAtSpawn(scene: GymFodderEnemies): {
+    hullAlive: boolean[];
+    restore: () => void;
+  } {
+    const seam = scene as unknown as {
+      spawnEliteSplitChild(
+        enemy: { alive: boolean },
+        spawn: EliteSplitSpawn,
+      ): void;
+    };
+    const original = seam.spawnEliteSplitChild;
+    const hullAlive: boolean[] = [];
+    seam.spawnEliteSplitChild = function (
+      this: unknown,
+      enemy: { alive: boolean },
+      spawn: EliteSplitSpawn,
+    ): void {
+      hullAlive.push(enemy.alive);
+      original.call(this, enemy, spawn);
+    };
+    return {
+      hullAlive,
+      restore: () => {
+        seam.spawnEliteSplitChild = original;
+      },
+    };
+  }
+
+  it('AC1 — a splitter elite releases two ordinary children from the visible wreck that burst outward', async () => {
     seedConfigStore([scoutConfig({ eliteBonusHp: 2 })]);
     const scene = await bootWithElite('scout', 'splitter');
 
@@ -166,12 +202,18 @@ describe('GymFodderEnemies — elite parity (AH-0MWU6673N008FO1D)', () => {
     expect(elite.maxHealth).toBe(base.health + 2);
 
     const before = new Set(scene.formationEntities);
-    killWithPlayerBullets(scene, elite);
+    const hull = recordHullVisibleAtSpawn(scene);
+    try {
+      killWithPlayerBullets(scene, elite);
+    } finally {
+      hull.restore();
+    }
 
+    // The children were spawned on the lethal blow, while the hull was still
+    // visible.
+    expect(hull.hullAlive).toEqual([true, true]);
     expect(elite.alive).toBe(false);
-    // The wreck's final position: the children spawn from it in the kill
-    // frame, and the formation drifts between hits, so read it after the kill.
-    const deathX = elite.x;
+
     const children = scene.formationEntities.filter(
       (entity) => !before.has(entity) && (entity as unknown as EliteProbe).alive,
     ) as unknown as EliteProbe[];
@@ -181,16 +223,40 @@ describe('GymFodderEnemies — elite parity (AH-0MWU6673N008FO1D)', () => {
       expect(child.eliteBehaviour).toBeUndefined();
       expect(child.maxHealth).toBe(base.health);
       expect(child.forceFieldHits).toBe(gymDirectForceFieldHits(base));
+      // No immunity window: the child is combat-active during the burst.
+      expect(child.health).toBeGreaterThan(0);
+      expect(child.shootEnabled).toBe(elite.shootEnabled);
     }
-    // Deterministic mirrored fan around the wreck.
+    // Spawn-at-wreck: the pair straddles the wreck within the deterministic
+    // jitter, on the same mirrored sides as the game.
+    const deathX = elite.x;
     const offsets = children.map((child) => child.x - deathX).sort((a, b) => a - b);
-    expect(offsets[1] - offsets[0]).toBeCloseTo(
-      2 * ELITE_SPLITTER_CHILD_OFFSET_PX,
-      3,
-    );
-    expect(
-      Math.abs(offsets[0] + ELITE_SPLITTER_CHILD_OFFSET_PX),
-    ).toBeLessThanOrEqual(2);
+    expect(offsets[0]).toBeCloseTo(-ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX, 3);
+    expect(offsets[1]).toBeCloseTo(ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX, 3);
+
+    // Burst outward: the shared stepper drives the pair apart to the full
+    // burst distance (measured pair-relative so the gym's formation drift
+    // cancels out), then holds once the burst has settled.
+    const separation = (): number =>
+      Math.abs(children[0].x - children[1].x);
+    const atSpawn = separation();
+    scene.tick(0.1);
+    expect(separation()).toBeGreaterThan(atSpawn + 10);
+    for (let step = 0; step < 8; step += 1) scene.tick(0.1);
+    const full =
+      2 *
+      (ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX +
+        ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX);
+    const settled = separation();
+    // ±5 px covers the Scout's own per-child idle wiggle (±2 px each).
+    expect(settled).toBeGreaterThan(full - 5);
+    expect(settled).toBeLessThan(full + 5);
+    scene.tick(0.5);
+    expect(Math.abs(separation() - settled)).toBeLessThan(5);
+
+    // Settled children remain fully combat-ready.
+    killWithPlayerBullets(scene, children[0]);
+    expect(children[0].alive).toBe(false);
   });
 
   it('AC1 — a reinforced elite carries one extra field hit through the shared bonus rule', async () => {

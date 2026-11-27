@@ -53,7 +53,7 @@ import {
   ELITE_VOLATILE_BURST_LIFETIME,
   eliteForceFieldBonus,
   type EliteBurstShot,
-  type EliteSplitOffset,
+  type EliteSplitSpawn,
 } from '../core/eliteMechanics';
 import { Asteroid } from '../../entities/Asteroid';
 import type { SceneSetupState } from '../core/sceneSetup';
@@ -1173,21 +1173,22 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
    * factory, so a child is an ordinary spawn of the same archetype with no
    * behaviour and no bonus hit points — exactly as `PlayScene` spawns them
    * through `createEnemyFromConfig`. The shared dispatcher
-   * (`applyEliteDeathBehaviour`) owns how many and where; this seam owns only
-   * the gym's spawn mechanics.
+   * (`applyEliteDeathBehaviour`) owns how many, where (within a few px of the
+   * wreck) and at what speed (the outward burst, seeded below); this seam owns
+   * only the gym's spawn mechanics.
    */
   protected override spawnEliteSplitChild(
     enemy: EnemyEntity,
-    offset: EliteSplitOffset,
+    spawn: EliteSplitSpawn,
   ): void {
     const cfg = loadEnemyConfig(enemy.archetype || this.pendingKey);
-    const x = enemy.x + offset.x;
-    const y = enemy.y + offset.y;
+    const x = enemy.x + spawn.offset.x;
+    const y = enemy.y + spawn.offset.y;
     // The gym positions every live entity from its formation base + offset
     // each frame, so the child is slotted at the wreck through the equivalent
-    // fractional offset — it stays at the death site and drifts with the
-    // formation, the same relationship `PlayScene` keeps by giving a child its
-    // own `startX`/`startY` plus the global drift.
+    // fractional offset — it leaves the death site on its shared outward burst
+    // and then drifts with the formation, the same relationship `PlayScene`
+    // keeps by giving a child its own `startX`/`startY` plus the global drift.
     const spacingX = this.config.spacingX;
     const spacingY = this.config.spacingY;
     const childOffset: FormationOffset = {
@@ -1206,6 +1207,7 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
       gymDirectForceFieldHits(cfg),
     );
     child.shootEnabled = enemy.shootEnabled;
+    child.setEliteSplitBurst(spawn.burst);
     this.add.existing(child);
     this.registerDynamicEntity(child);
   }

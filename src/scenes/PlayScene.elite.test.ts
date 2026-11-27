@@ -34,10 +34,12 @@ import { MenuScene } from './MenuScene';
 import { MiniBossWheelScene } from './MiniBossWheelScene';
 import { PlayScene } from './PlayScene';
 import {
-  ELITE_SPLITTER_CHILD_OFFSET_PX,
+  ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX,
+  ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
   ELITE_VOLATILE_BURST_COUNT,
   ELITE_VOLATILE_BURST_LIFETIME,
   ELITE_VOLATILE_BURST_SPEED,
+  type EliteSplitSpawn,
 } from './core/eliteMechanics';
 
 /**
@@ -178,7 +180,38 @@ describe('PlayScene — elite behaviours (AH-0MWU665XK000ZT4S)', () => {
     return { scene, spawned };
   }
 
-  it('AC2 — a splitter elite releases two counted children through the shared spawn path', async () => {
+  /**
+   * Records whether the elite's hull was still visible each time the scene's
+   * splitter seam ran: the `spawn-at-wreck` ordering AC (AH-0MWZERK75006FD3B)
+   * requires the children to be created on the lethal blow, before
+   * `destroySelf()` hides the hull.
+   */
+  function recordHullVisibleAtSpawn(scene: PlayScene): {
+    hullAlive: boolean[];
+    restore: () => void;
+  } {
+    const seam = scene as unknown as {
+      spawnEliteSplitChild(enemy: EnemyEntity, spawn: EliteSplitSpawn): void;
+    };
+    const original = seam.spawnEliteSplitChild;
+    const hullAlive: boolean[] = [];
+    seam.spawnEliteSplitChild = function (
+      this: unknown,
+      enemy: EnemyEntity,
+      spawn: EliteSplitSpawn,
+    ): void {
+      hullAlive.push(enemy.alive);
+      original.call(this, enemy, spawn);
+    };
+    return {
+      hullAlive,
+      restore: () => {
+        seam.spawnEliteSplitChild = original;
+      },
+    };
+  }
+
+  it('AC2 — a splitter elite releases two counted children from the visible wreck that burst outward', async () => {
     seedConfigStore([
       scoutConfig({ eliteBehaviour: 'splitter', eliteBonusHp: 2 }),
     ]);
@@ -193,27 +226,42 @@ describe('PlayScene — elite behaviours (AH-0MWU665XK000ZT4S)', () => {
     expect(wm.enemiesAlive).toBe(1);
 
     const entitiesBeforeKill = new Set(scene.getEnemies());
-    killWithPlayerBullets(scene, elite);
+    const hull = recordHullVisibleAtSpawn(scene);
+    try {
+      killWithPlayerBullets(scene, elite);
+    } finally {
+      hull.restore();
+    }
 
+    // The children were spawned on the lethal blow, while the hull was still
+    // visible (never beside an already-hidden corpse).
+    expect(hull.hullAlive).toEqual([true, true]);
     expect(elite.alive).toBe(false);
-    // The wreck's final position: children spawn from it in the same frame.
-    const deathX = elite.x;
+
     const children = scene
       .getEnemies()
       .filter((enemy) => !entitiesBeforeKill.has(enemy) && enemy.alive);
     expect(children).toHaveLength(2);
     expect(children.every((child) => child instanceof Scout)).toBe(true);
-    // Deterministic mirrored fan around the wreck (the pair is exact; each
-    // child may drift a pixel or two between the kill frame and the read).
-    const offsets = children
+
+    // Spawn-at-wreck: each child appears within the deterministic jitter of the
+    // elite's own position (the pair straddles the wreck, drifting with it).
+    const deathX = elite.x;
+    const spawnedOffsets = children
       .map((child) => child.x - deathX)
       .sort((a, b) => a - b);
-    expect(offsets[1] - offsets[0]).toBeCloseTo(
-      2 * ELITE_SPLITTER_CHILD_OFFSET_PX,
+    expect(spawnedOffsets[0]).toBeCloseTo(
+      -ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
       3,
     );
-    expect(Math.abs(offsets[0] + ELITE_SPLITTER_CHILD_OFFSET_PX)).toBeLessThanOrEqual(2);
-    expect(Math.abs(offsets[1] - ELITE_SPLITTER_CHILD_OFFSET_PX)).toBeLessThanOrEqual(2);
+    expect(spawnedOffsets[1]).toBeCloseTo(
+      ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
+      3,
+    );
+    expect(ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX).toBeGreaterThan(
+      4 * ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
+    );
+
     // Children are ordinary: no behaviour, no bonus HP, the archetype curve.
     const cfg = loadEnemyConfig('scout');
     for (const child of children) {
@@ -222,11 +270,50 @@ describe('PlayScene — elite behaviours (AH-0MWU665XK000ZT4S)', () => {
       expect(child.forceFieldHits).toBe(
         enemyForceFieldHits(ELITE_LEVEL, cfg),
       );
+      // The burst is a displacement, not a movement class: the child keeps the
+      // parent's live movement state and stays combat-active (no immunity).
+      expect(child.shootEnabled).toBe(elite.shootEnabled);
+      expect(child.alive).toBe(true);
+      expect(child.health).toBeGreaterThan(0);
     }
+
     // Counted wave enemies: +2 children, -1 parent, and the wave did NOT
     // clear in the gap between the deaths.
     expect(wm.enemiesAlive).toBe(2);
     expect(scene.isTransitioning()).toBe(false);
+
+    // Burst outward: the pair's separation grows from the spawn jitter to the
+    // full mirrored burst distance (measured pair-relative, so the formation's
+    // own drift cancels out), then holds once the burst has settled.
+    const separation = (): number =>
+      Math.abs(children[0].x - children[1].x);
+    const atSpawn = separation();
+    expect(atSpawn).toBeCloseTo(2 * ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX, 3);
+
+    const restoreAutoFire = disableAutoFire(scene);
+    try {
+      scene.tick(0.1);
+      const midBurst = separation();
+      expect(midBurst).toBeGreaterThan(atSpawn + 10);
+      // Several frames later the burst has settled at its full distance …
+      for (let step = 0; step < 8; step += 1) scene.tick(0.1);
+      const full = 2 *
+        (ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX +
+          ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX);
+      const settled = separation();
+      // ±5 px covers the Scout's own per-child idle wiggle (±2 px each).
+      expect(settled).toBeGreaterThan(full - 5);
+      expect(settled).toBeLessThan(full + 5);
+      // … and does not keep separating (no permanent movement class).
+      scene.tick(0.5);
+      expect(Math.abs(separation() - settled)).toBeLessThan(5);
+
+      // Settled children are fully combat-ready: they can still be hit.
+      killWithPlayerBullets(scene, children[0]);
+      expect(children[0].alive).toBe(false);
+    } finally {
+      restoreAutoFire();
+    }
   });
 
   it('AC3 — a reinforced elite spawns behind one extra field hit and the shared bubble', async () => {

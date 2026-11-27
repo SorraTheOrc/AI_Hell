@@ -2878,6 +2878,14 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['eliteBonusHealth', 'src/scenes/core/eliteMechanics.ts'],
   ['eliteVolatileBurstShots', 'src/scenes/core/eliteMechanics.ts'],
   ['applyEliteDeathBehaviour', 'src/scenes/core/eliteMechanics.ts'],
+  // Splitter escape (AH-0MWZERK75006FD3B): the deterministic outward burst a
+  // child leaves the wreck with is pure maths in the same shared module. Both
+  // position passes (`PlayScene._moveEnemies` and the gym base's per-frame
+  // positioning loop) call the one stepper, so a scene that re-introduces burst
+  // geometry fails this guard rather than drifting from the game.
+  ['startEliteSplitBurst', 'src/scenes/core/eliteMechanics.ts'],
+  ['eliteSplitBurstOffset', 'src/scenes/core/eliteMechanics.ts'],
+  ['stepEliteSplitBurst', 'src/scenes/core/eliteMechanics.ts'],
 ];
 
 /**
@@ -2935,10 +2943,12 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['setPlayerEnabled', 'src/scenes/gym/core/GymFormationScene.ts'],
   ['registerDynamicEntity', 'src/scenes/gym/core/GymFormationScene.ts'],
   // Elite death-behaviour dispatch (AH-0MWU665XK000ZT4S): the one bounded
-  // behaviour of a dead elite is applied once in the shared core — before
-  // `onEnemyDestroyed`, so a splitter's children are wave-registered while
-  // the parent is still counted. A scene or gym that re-implements the
-  // dispatch (instead of overriding the spawn seams) fails this guard.
+  // behaviour of a dead elite is applied once in the shared core — from the
+  // entity's `destroySelf()` on the lethal blow, while the wreck is still
+  // visible and the parent is still counted (AH-0MWZERK75006FD3B). A scene or
+  // gym that re-implements the dispatch (instead of wiring the shared
+  // pre-destruction seam / overriding the spawn seams) fails this guard.
+  ['onEnemyBeforeDestroyed', 'src/scenes/core/CombatCoreScene.ts'],
   ['_applyEliteDeathBehaviour', 'src/scenes/core/CombatCoreScene.ts'],
 ];
 

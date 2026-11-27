@@ -955,6 +955,48 @@ Tuning an archetype is therefore a **one-field change**: flip `wrapAware` in
 the CSV (or the gym editor's `wrapAware` checkbox, §8.5) and the game and every
 gym pick up the same behaviour on the next load.
 
+### 1.8 Elite (anomaly) mechanics — numbers and per-death decisions (AH-0MWU665XK000ZT4S, AH-0MWZERK75006FD3B)
+
+An elite is **not** a new entity class: it is one ordinary, counted spawn of an
+existing archetype, elevated to carry one bounded behaviour and a bonus hit
+pool at spawn (`EliteSpawnModifiers` through `createEnemyFromConfig`). The
+authored vocabulary lives in `src/core/eliteVocabulary.ts`; the numbers and the
+per-death decisions live **once** in the shared `src/scenes/core/eliteMechanics.ts`
+(no Phaser, no scene import), consumed by the game and every gym — never a
+divergent per-scene copy.
+
+- **`splitter`** — on the **lethal blow**, *while the hull is still visible*, the
+  shared dispatcher asks the scene's `spawnEliteSplitChild` seam for two ordinary
+  children. Each child appears **at — or within a few pixels of — the wreck**
+  (`ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX`) and leaves it on a deterministic,
+  mirrored left/right **outward burst**: a transient displacement
+  (`ELITE_SPLITTER_CHILD_BURST_SPEED_PX` / `…_DISTANCE_PX`, ease-out so it settles
+  to rest) computed by `startEliteSplitBurst`/`stepEliteSplitBurst` and applied by
+  each scene's *existing* position pass, because both scenes derive enemy
+  positions each frame and formation enemies carry no per-entity velocity. The
+  split never consumes an RNG draw, so the same seeded run reproduces the same
+  fan; the children are wave-registered **before** the parent's death is
+  accounted (the wave can never clear in the gap); and after the burst they
+  settle into their ordinary archetype movement, fully combat-ready — the burst
+  is not a movement class and there is no immunity window.
+- **`reinforced`** — one extra force-field hit on top of the shared
+  `enemyForceFieldHits` curve (`eliteForceFieldBonus`), rendered by the shared
+  bubble layer.
+- **`volatile`** — on death it leaves a short radial burst of ordinary
+  enemy bullets through the shared enemy-bullet seam.
+
+**Ordering seam.** Every kill path (bullet, AOE, ram, hitscan, the gyms'
+EXPLODE control) ends in `BaseEnemy.destroySelf()`, which now runs the shared
+**pre-destruction** seam (`CombatCoreScene.onEnemyBeforeDestroyed`) *before* the
+body is hidden — so a splitter's children visibly burst out of the doomed elite
+and the hull then explodes (previously the dispatch ran in
+`finaliseEnemyKill`, after the hull was already hidden). The children are
+ordinary counted enemies of the archetype, so wave accounting is unchanged.
+The official elite parity matrix lives in
+[`docs/GYM_PARITY.md`](./GYM_PARITY.md#elite-anomaly-parity-ah-0mwu6673n008fo1d);
+the headless bot arena models the same shared decisions
+(`docs/BALANCING.md`, *Harness fidelity boundary*).
+
 ---
 
 ## 2. Core library architecture

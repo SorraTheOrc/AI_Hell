@@ -7,10 +7,17 @@
  * blank `eliteBehaviour` yields zero extra children, zero extra field hits,
  * the archetype's own health and zero death burst.
  *
- * The end-to-end seam walk (children spawned and wave-counted, burst bullets
- * through the scene's enemy-bullet list, reinforced bubble) lives in
- * `src/scenes/PlayScene.elite.test.ts`; the repo-wide duplicate-body guard is
- * updated in `CombatScene.equivalence.test.ts`.
+ * The splitter's escape is pinned here too (AH-0MWZERK75006FD3B): the children
+ * spawn within a few pixels of the wreck and leave on a deterministic, eased
+ * outward burst that starts at the dedicated burst speed and settles to rest at
+ * the burst distance.
+ *
+ * The end-to-end seam walk (children spawned while the hull is visible and
+ * wave-counted, the burst applied by the scene's own position pass, burst
+ * bullets through the scene's enemy-bullet list, reinforced bubble) lives in
+ * `src/scenes/PlayScene.elite.test.ts` and
+ * `src/scenes/gym/GymFodderEnemies.elite.test.ts`; the repo-wide
+ * duplicate-body guard is updated in `CombatScene.equivalence.test.ts`.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -23,8 +30,11 @@ import {
 import {
   ELITE_MECHANIC_SET,
   ELITE_REINFORCED_FIELD_BONUS,
+  ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX,
+  ELITE_SPLITTER_CHILD_BURST_DURATION_S,
+  ELITE_SPLITTER_CHILD_BURST_SPEED_PX,
   ELITE_SPLITTER_CHILD_COUNT,
-  ELITE_SPLITTER_CHILD_OFFSET_PX,
+  ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
   ELITE_VOLATILE_BURST_COUNT,
   ELITE_VOLATILE_BURST_LIFETIME,
   ELITE_VOLATILE_BURST_SPEED,
@@ -32,10 +42,14 @@ import {
   eliteBonusHealth,
   eliteForceFieldHits,
   eliteMechanicsFor,
+  eliteSplitBurstOffset,
   eliteSplitChildCount,
   eliteSplitChildOffset,
   eliteVolatileBurstShots,
+  startEliteSplitBurst,
+  stepEliteSplitBurst,
   type EliteDeathHost,
+  type EliteSplitSpawn,
 } from './eliteMechanics';
 
 /** A force-field curve that is shielded from level 2 and grows to 4 hits. */
@@ -48,16 +62,16 @@ const CURVE = {
 /** A recorded host that logs every spawn the dispatcher asks for. */
 function recordingHost(): {
   host: EliteDeathHost;
-  children: ReturnType<typeof eliteSplitChildOffset>[];
+  children: EliteSplitSpawn[];
   bullets: { index: number; vx: number; vy: number }[];
 } {
-  const children: ReturnType<typeof eliteSplitChildOffset>[] = [];
+  const children: EliteSplitSpawn[] = [];
   const bullets: { index: number; vx: number; vy: number }[] = [];
   return {
     children,
     bullets,
     host: {
-      spawnSplitChild: (offset) => children.push(offset),
+      spawnSplitChild: (spawn) => children.push(spawn),
       spawnVolatileBullet: (shot) =>
         bullets.push({ index: shot.index, vx: shot.vx, vy: shot.vy }),
     },
@@ -96,13 +110,13 @@ describe('eliteMechanics — splitter children', () => {
     expect(eliteSplitChildCount(undefined)).toBe(0);
   });
 
-  it('places the children in a deterministic mirrored fan around the wreck', () => {
+  it('spawns the children within a few pixels of the wreck, mirrored left/right', () => {
     expect(eliteSplitChildOffset(0)).toEqual({
-      x: -ELITE_SPLITTER_CHILD_OFFSET_PX,
+      x: -ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
       y: 0,
     });
     expect(eliteSplitChildOffset(1)).toEqual({
-      x: ELITE_SPLITTER_CHILD_OFFSET_PX,
+      x: ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
       y: 0,
     });
     // Deterministic (same input, same result) and total for junk input.
@@ -110,6 +124,63 @@ describe('eliteMechanics — splitter children', () => {
     expect(eliteSplitChildOffset(Number.NaN)).toEqual(
       eliteSplitChildOffset(0),
     );
+  });
+
+  it('seeds a deterministic mirrored outward burst for each child', () => {
+    const left = startEliteSplitBurst(0);
+    const right = startEliteSplitBurst(1);
+    expect(left).toEqual({ dirX: -1, dirY: 0, elapsed: 0 });
+    expect(right).toEqual({ dirX: 1, dirY: 0, elapsed: 0 });
+    // Deterministic (same input, same result) and total for junk input.
+    expect(startEliteSplitBurst(0)).toEqual(startEliteSplitBurst(0));
+    expect(startEliteSplitBurst(Number.NaN)).toEqual(
+      startEliteSplitBurst(0),
+    );
+  });
+
+  it('leaves the wreck at the burst speed and settles at the burst distance', () => {
+    const state = startEliteSplitBurst(1);
+    // t = 0: exactly at the wreck, no displacement yet.
+    expect(eliteSplitBurstOffset(state)).toEqual({ x: 0, y: 0 });
+    // The eased profile leaves at the burst speed (a legible, fast escape).
+    const dt = 0.016;
+    const first = stepEliteSplitBurst(state, dt);
+    expect(first.x / dt).toBeGreaterThan(
+      ELITE_SPLITTER_CHILD_BURST_SPEED_PX * 0.9,
+    );
+    expect(first.x / dt).toBeLessThanOrEqual(
+      ELITE_SPLITTER_CHILD_BURST_SPEED_PX * 1.01,
+    );
+    // After the full duration the child sits exactly at the burst distance on
+    // its outward side, then stops moving relative to its slot.
+    expect(stepEliteSplitBurst(state, ELITE_SPLITTER_CHILD_BURST_DURATION_S)).toEqual(
+      { x: ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX, y: 0 },
+    );
+    const settled = eliteSplitBurstOffset(state);
+    expect(settled).toEqual({
+      x: ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX,
+      y: 0,
+    });
+    expect(stepEliteSplitBurst(state, 1)).toEqual(settled);
+  });
+
+  it('the burst is materially faster than every archetype drift', () => {
+    // The fastest authored formation drift is 140 px/s (`raider`): the escape
+    // must read as a burst, never as drift.
+    expect(ELITE_SPLITTER_CHILD_BURST_SPEED_PX).toBeGreaterThan(140 * 2);
+    expect(ELITE_SPLITTER_CHILD_BURST_DISTANCE_PX).toBeGreaterThan(
+      ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX,
+    );
+    expect(ELITE_SPLITTER_CHILD_BURST_DURATION_S).toBeCloseTo(0.5, 6);
+  });
+
+  it('an entity without a burst is a total no-op', () => {
+    expect(stepEliteSplitBurst(undefined, 0.05)).toEqual({ x: 0, y: 0 });
+    // Non-finite / negative time steps advance nothing.
+    const state = startEliteSplitBurst(0);
+    expect(stepEliteSplitBurst(state, Number.NaN)).toEqual({ x: 0, y: 0 });
+    expect(state.elapsed).toBe(0);
+    expect(stepEliteSplitBurst(state, -1)).toEqual({ x: 0, y: 0 });
   });
 });
 
@@ -183,13 +254,19 @@ describe('eliteMechanics — volatile death burst', () => {
 });
 
 describe('eliteMechanics — per-death dispatch', () => {
-  it('asks the host for two splitter children and nothing else', () => {
+  it('asks the host for two splitter children, spawn-at-wreck + burst, and nothing else', () => {
     const { host, children, bullets } = recordingHost();
     const outcome = applyEliteDeathBehaviour('splitter', host);
     expect(outcome).toEqual({ children: ELITE_SPLITTER_CHILD_COUNT, bullets: 0 });
     expect(children).toEqual([
-      { x: -ELITE_SPLITTER_CHILD_OFFSET_PX, y: 0 },
-      { x: ELITE_SPLITTER_CHILD_OFFSET_PX, y: 0 },
+      {
+        offset: { x: -ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX, y: 0 },
+        burst: { dirX: -1, dirY: 0, elapsed: 0 },
+      },
+      {
+        offset: { x: ELITE_SPLITTER_CHILD_SPAWN_JITTER_PX, y: 0 },
+        burst: { dirX: 1, dirY: 0, elapsed: 0 },
+      },
     ]);
     expect(bullets).toEqual([]);
   });

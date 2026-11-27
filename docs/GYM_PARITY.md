@@ -853,13 +853,22 @@ modifiers differ.
 
 | Behaviour | Gym scenario | Shared seam (game + `GymFodderEnemies`) | Game reference |
 |---|---|---|---|
-| `splitter` | `GymFodderEnemies` → `elite` = `splitter`; kill the elevated spawn with player bullets | `applyEliteDeathBehaviour` decides the two-child fan; the scene seam spawns each ordinary child through `createEnemyFromConfig` + `registerDynamicEntity` | `PlayScene.spawnEliteSplitChild` |
+| `splitter` | `GymFodderEnemies` → `elite` = `splitter`; kill the elevated spawn with player bullets | `applyEliteDeathBehaviour` decides the two-child spawn (at the wreck) and seeds the shared outward burst (`startEliteSplitBurst`/`stepEliteSplitBurst`, applied by the gym's positioning pass); the scene seam spawns each ordinary child through `createEnemyFromConfig` + `registerDynamicEntity` | `PlayScene.spawnEliteSplitChild` |
 | `reinforced` | `GymFodderEnemies` → `elite` = `reinforced`; read the elevated spawn's field | `eliteForceFieldBonus` (via `eliteForceFieldHits` in the game, `gymEliteForceFieldHits` over this gym's direct-hits base here) composes the extra hit onto the shared `enemyForceFieldHits`/shipped bubble layer | `PlayScene._spawnEnemy` → `eliteForceFieldHits` |
 | `volatile` | `GymFodderEnemies` → `elite` = `volatile`; kill the elevated spawn | `applyEliteDeathBehaviour` owns the radial fan; the scene seam creates each shot through the shared cached-texture bullet path (`createBullet`) in the live enemy-bullet list | `PlayScene.spawnEliteVolatileBullet` |
 
 - **One spawn, not one archetype.** The game leaves an elite-capable
   archetype's ordinary spawns neutral; the gym does the same — the elevation is
   a scenario flag on one slot, never a property of the selected config.
+- **Splitter children escape the wreck (AH-0MWZERK75006FD3B).** On the lethal
+  blow, *before the hull is hidden* (the shared pre-destruction seam
+  `CombatCoreScene.onEnemyBeforeDestroyed`, called from the entity's own
+  `destroySelf()`), the two children appear within a few pixels of the wreck and
+  leave on the deterministic mirrored outward burst the shared dispatcher seeded.
+  The gym's per-frame positioning pass and the game's `PlayScene._moveEnemies`
+  apply the **same** `stepEliteSplitBurst` offset to the slot they already
+  derive, so the escape cannot diverge; the burst settles to rest and the
+  children then move exactly like any ordinary spawn (no immunity window).
 - **Eligibility is the shared rule.** An uncounted hazard
   (`asteroid`/`lane-traffic`/`centipede`/ghost/strike keys) is never elevated; the
   Centipede gym option (a shared chain, not a CSV config) is neutral too.

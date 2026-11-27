@@ -297,9 +297,9 @@ run), all on eligible counted archetypes:
 
 | Elite archetype | Behaviour | Kills | Death effect recorded |
 |---|---|---|---|
-| `swarm` | `splitter` | 78 | 2 ordinary children each |
+| `swarm` | `splitter` | 78 | 2 ordinary children each (burst out of the wreck) |
 | `diver` | `volatile` | 63 | 8-shot radial burst each |
-| `scout` | `splitter` | 22 | 2 ordinary children each |
+| `scout` | `splitter` | 22 | 2 ordinary children each (burst out of the wreck) |
 | `tank` | `reinforced` | 19 | +1 force-field hit, no death spawn |
 
 The committed validator was run over the elites-on report and exited **0**:
@@ -343,8 +343,11 @@ The headless arena (`src/ai/eval/arena.ts`) models the elite through the
 
 - **Modelled:** the seeded plan and its `elite` flag on one counted spawn;
   authored bonus HP (`eliteBonusHealth`); the `reinforced` extra field hit
-  (`eliteForceFieldHits`); `splitter` children as counted wave enemies
-  (`applyEliteDeathBehaviour` + `registerDynamicSpawn`); `volatile` shots as
+  (`eliteForceFieldHits`); `splitter` children as counted wave enemies spawned
+  at the wreck (`applyEliteDeathBehaviour` + `registerDynamicSpawn`) — their
+  outward burst is a derived-position *presentation* transient in the shipped
+  game and gyms (`stepEliteSplitBurst`), so it is not simulated and changes no
+  combat outcome; `volatile` shots as
   live enemy bullets; the guaranteed power-up drop and the reward numbers
   (`resolveEliteReward`); an `elite_killed` telemetry event carrying the
   archetype, behaviour, children/bullet count, `guaranteedDrop` and

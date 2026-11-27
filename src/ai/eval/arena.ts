@@ -307,7 +307,7 @@ import {
   eliteForceFieldHits,
   ELITE_VOLATILE_BURST_LIFETIME,
   type EliteBurstShot,
-  type EliteSplitOffset,
+  type EliteSplitSpawn,
 } from '../../scenes/core/eliteMechanics';
 import { resolveEliteReward } from '../../core/eliteRewardRules';
 import type { EliteBehaviour } from '../../core/eliteVocabulary';
@@ -2349,11 +2349,11 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     };
     if (hostile.eliteBehaviour) {
       const splitHost = {
-        spawnSplitChild: (offset: EliteSplitOffset): void => {
+        spawnSplitChild: (spawn: EliteSplitSpawn): void => {
           spawnHostile(
             {
-              x: hostile.x + offset.x,
-              y: hostile.y + offset.y,
+              x: hostile.x + spawn.offset.x,
+              y: hostile.y + spawn.offset.y,
               archetype: hostile.archetype,
               isAsteroid: false,
             },

@@ -123,7 +123,7 @@ import type { EliteBehaviour } from '../../core/eliteVocabulary';
 import {
   applyEliteDeathBehaviour,
   type EliteBurstShot,
-  type EliteSplitOffset,
+  type EliteSplitSpawn,
 } from './eliteMechanics';
 import { EffectsRegistry } from '../../powerups/effects';
 import { stopMysteryUfoWarbleSound } from '../../audio/effects';
@@ -642,20 +642,21 @@ export class CombatCoreScene<
   // ── Elite death behaviours (AH-0MWU665XK000ZT4S) ────────────────
 
   /**
-   * Scene seam: spawns one ordinary `splitter` child at `offset` from the
-   * dead elite's wreck.
+   * Scene seam: spawns one ordinary `splitter` child at the spawn order the
+   * shared dispatcher decided — within a few pixels of the dead elite's wreck
+   * and seeded with its outward burst.
    *
    * A scene implements it with its **shipped spawn path** — the game uses
    * `createEnemyFromConfig` + `registerDynamicSpawn`, a gym registers the
    * child in its live formation list — so the child construction is never
    * re-implemented inside the shared decision. The default is a no-op, so a
    * scene that never fields an elite (or has not wired the seam yet) is
-   * unchanged. The shared `_applyEliteDeathBehaviour` owns *how many* and
-   * *where*; only the spawn mechanics live here.
+   * unchanged. The shared `_applyEliteDeathBehaviour` owns *how many*, *where*
+   * and *at what speed*; only the spawn mechanics live here.
    */
   protected spawnEliteSplitChild(
     _enemy: TEnemy,
-    _offset: EliteSplitOffset,
+    _spawn: EliteSplitSpawn,
   ): void {}
 
   /**
@@ -670,17 +671,35 @@ export class CombatCoreScene<
   ): void {}
 
   /**
+   * The shared **pre-destruction** seam (AH-0MWZERK75006FD3B): an entity calls
+   * it from its own `destroySelf()` on the lethal blow, *before* the body is
+   * hidden, so an elite's on-death behaviour happens while the hull is still
+   * visible — a `splitter`'s children visibly burst out of the doomed elite
+   * and the hull then explodes.
+   *
+   * The single entry point for every kill path (bullet, AOE, ram, hitscan, the
+   * gyms' EXPLODE control), because every path ends in `destroySelf()`. Hosts
+   * without the seam (test doubles, non-combat scenes) are untouched.
+   *
+   * @param enemy — the hull that is about to be hidden.
+   */
+  onEnemyBeforeDestroyed(enemy: TEnemy): void {
+    this._applyEliteDeathBehaviour(enemy);
+  }
+
+  /**
    * Applies a dead elite's one bounded behaviour through the shared
    * `eliteMechanics` dispatcher.
    *
-   * Called exactly once per kill from the shared finalisation seam *before*
-   * `onEnemyDestroyed`, so a `splitter`'s children are wave-registered while
-   * the parent is still counted (the wave can never clear in the gap). A
-   * blank/absent behaviour is a total no-op — today's kill, byte-for-byte.
+   * Called exactly once per kill from {@link onEnemyBeforeDestroyed} — on the
+   * lethal blow *before* the hull is hidden — so a `splitter`'s children are
+   * wave-registered while the parent is still counted (the wave can never
+   * clear in the gap) and while the wreck is still visible. A blank/absent
+   * behaviour is a total no-op — today's kill, byte-for-byte.
    */
   protected _applyEliteDeathBehaviour(enemy: TEnemy): void {
     applyEliteDeathBehaviour(enemy.eliteBehaviour, {
-      spawnSplitChild: (offset) => this.spawnEliteSplitChild(enemy, offset),
+      spawnSplitChild: (spawn) => this.spawnEliteSplitChild(enemy, spawn),
       spawnVolatileBullet: (shot) =>
         this.spawnEliteVolatileBullet(enemy, shot),
     });
