@@ -1301,7 +1301,7 @@ balance report.
 
   | line | before (no matchup) | after (matchup live) | window | verdict |
   |---|---|---|---|---|
-  | ring 1 grind | 16.2 min | **23.74 min** (23.52–23.92) | 30–90 | missed (below) |
+  | ring 1 grind | 16.2 min | **22.57 min** (21.92–23.01) | 30–90 | missed (below) |
   | ring 2 grind | 48.7 min | **51.68 min** (50.84–52.49) | 60–180 | within tolerance |
   | ring 1 rush | 10.2 min | 10.18 min (9.43–10.90) | 30–90 | not applicable (rush line) |
   | ring 2 rush | 21.5 min | 21.54 min (19.81–24.90) | 60–180 | not applicable (rush line) |
@@ -1311,6 +1311,15 @@ balance report.
   bound before this change and remain the scope of the in-flight grind-budget
   rebalances (ring 1: AH-0MWFDQ9EY004NO4X; ring 2: AH-0MWFDQCFV007BZE5), which
   this measurement is attached to. No tuned constant changed here.
+
+  **Ring-1 opening retune (AH-0MWW28ET2002PNI8).** `hex-r1-1` dropped from
+  aggression 2 to 1, so two of the opening ring's six hexes are now easy
+  footholds. That is a data edit, not a budget ruling: ring 1 grind re-measures
+  at **22.57 min** (21.92–23.01, from 23.74) and ring 2 is unchanged at
+  **51.68 min** (50.84–52.49), with both verdicts (`missed` / within tolerance)
+  and every window, tolerance and `RING_TIMING_TARGETS` value untouched. Ring
+  1's held-hex income mass also drops `18 → 17` (`10 × aggression` → 170/tick
+  for a fully held ring 1); the income rate itself is unchanged.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 

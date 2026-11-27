@@ -85,7 +85,10 @@ describe('hex matchup intel documentation (AH-0MWL898RM009X9B8)', () => {
   it('the balance doc records the re-measured ring-timing numbers', () => {
     const balancing = read('docs/BALANCING.md');
     expect(balancing).toContain('The matchup rule is in the measurement of record');
-    expect(balancing).toContain('23.74 min');
+    // Ring 1 re-measured 23.74 → 22.57 min when `hex-r1-1` dropped to
+    // aggression 1 (AH-0MWW28ET2002PNI8); ring 2 is unchanged. The pin
+    // tracks the measurement of record, so a stale doc quote fails here.
+    expect(balancing).toContain('22.57 min');
     expect(balancing).toContain('51.68 min');
     // The rebalance items that own the remaining window gap are named.
     expect(balancing).toContain('AH-0MWFDQ9EY004NO4X');

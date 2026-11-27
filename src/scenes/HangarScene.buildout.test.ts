@@ -63,8 +63,11 @@ function memoryStorage(initial?: HangarWarPayload): CountingStorage {
 
 /**
  * The authored ring 1 with every catalogue kind owned and the requested
- * starting-weapon selection. The default target is the weakest unheld hex
- * `hex-r1-2`, where `spread` is resisted and `wave_laser` counters the boss.
+ * starting-weapon selection. The ring's default target moved to `hex-r1-1`
+ * (AH-0MWW28ET2002PNI8, the sorted-id tie-break between two aggression-1
+ * hexes), and that boss (`the-dawnbreaker`) does not resist `spread`, so tests
+ * that need a resisted weapon pass `targetHexId: 'hex-r1-2'` explicitly —
+ * `shroud-merchant` resists `spread` and is countered by `wave_laser`.
  */
 function ownedPayload(startingWeapons: readonly string[]): HangarWarPayload {
   const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
@@ -141,7 +144,11 @@ describe('HangarScene auto-fit on open and apply-suggested-buildout (AH-0MWOWEPO
     const initial = ownedPayload([]);
     initial.hangar.activeLoadout.modifiers = ['hardened_plating'];
     const storage = memoryStorage(initial);
-    const scene = await bootHangar({ storage });
+    // Explicit target: `hex-r1-2` (shroud-merchant) resists `spread` and is
+    // countered by `wave_laser`, so the fit assertions stay about the matchup
+    // rule. The ring's default target is `hex-r1-1` since
+    // AH-0MWW28ET2002PNI8, whose boss does not resist a starter weapon.
+    const scene = await bootHangar({ storage, targetHexId: 'hex-r1-2' });
 
     const model = scene.getModel();
     const fitted = model.suggestedLoadout.startingWeapons;
@@ -196,8 +203,9 @@ describe('HangarScene auto-fit on open and apply-suggested-buildout (AH-0MWOWEPO
     const storage = memoryStorage(initial);
     const scene = await bootHangar({ storage });
 
-    // The suggestion would drop `spread` (the boss resists it), but opening the
-    // screen must leave the hand-picked list alone and write nothing.
+    // The suggestion is not the hand-picked list (and a boss that resists
+    // `spread` is targetable), but opening the screen must leave the
+    // hand-picked list alone and write nothing.
     expect(scene.getModel().suggestedLoadout.startingWeapons).not.toEqual([
       'spread',
     ]);

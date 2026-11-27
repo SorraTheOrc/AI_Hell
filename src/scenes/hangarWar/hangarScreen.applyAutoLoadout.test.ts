@@ -30,8 +30,11 @@ function clone(payload: HangarWarPayload): HangarWarPayload {
 
 /**
  * The authored ring 1 with every catalogue kind owned and the requested
- * starting-weapon selection. The default target is the weakest unheld hex
- * `hex-r1-2`, where `spread` is resisted and `wave_laser` counters the boss.
+ * starting-weapon selection. Ring 1's default target is `hex-r1-1` since
+ * AH-0MWW28ET2002PNI8 (the sorted-id tie-break between two aggression-1
+ * hexes), whose boss does not resist `spread`; a test that needs that matchup
+ * passes `targetHexId: 'hex-r1-2'` explicitly — `shroud-merchant` resists
+ * `spread` and `wave_laser` counters it.
  */
 function ownedPayload(startingWeapons: readonly string[]): HangarWarPayload {
   const payload = clone(VALID_HANGAR_WAR_PAYLOAD);
@@ -84,7 +87,11 @@ describe('applyAutoLoadout — the scene equips the published suggestion', () =>
 
   it('never equips a weapon the boss resists', () => {
     const payload = ownedPayload(['spread']);
-    const model = buildHangarScreenModel(payload);
+    // Explicit target: `hex-r1-2` (shroud-merchant) resists `spread`, which the
+    // ring-1 default (`hex-r1-1` since AH-0MWW28ET2002PNI8) does not.
+    const model = buildHangarScreenModel(payload, HANGAR_CATALOGUE, {
+      targetHexId: 'hex-r1-2',
+    });
     const result = applyAutoLoadout(payload, HANGAR_CATALOGUE, model.bossIntel);
 
     expect(model.suggestedLoadout.startingWeapons).not.toContain('spread');

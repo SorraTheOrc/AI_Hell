@@ -571,11 +571,13 @@ describe('target intel and weapon matchups (AH-0MWMT4QXF0095CBN)', () => {
     const payload = authoredRingPayload();
     const model = buildHangarScreenModel(payload);
 
-    // Each ring-1 hex is unheld, so the default is the lowest-aggression one
-    // (`hex-r1-2`, aggression 1) — exactly what `selectDeploymentHex` picks.
-    expect(model.deployRow.hexId).toBe('hex-r1-2');
+    // Each ring-1 hex is unheld, so the default is the lowest-aggression one.
+    // Two hexes share aggression 1 since AH-0MWW28ET2002PNI8 (`hex-r1-1`,
+    // `hex-r1-2`), and the shared selector breaks the tie by sorted id, so
+    // `hex-r1-1` is the default — exactly what `selectDeploymentHex` picks.
+    expect(model.deployRow.hexId).toBe('hex-r1-1');
     expect(model.bossIntel.hexId).toBe(model.deployRow.hexId);
-    expect(model.bossIntel.boss).toBe('shroud-merchant');
+    expect(model.bossIntel.boss).toBe('the-dawnbreaker');
     expect(model.bossIntel.known).toBe(true);
   });
 
@@ -1712,7 +1714,12 @@ describe('HangarScene', () => {
 
   it('does nothing when no row is actionable (unaffordable tree)', async () => {
     const storage = memoryStorage(UNARMED_PAYLOAD);
-    const scene = await bootHangar({ storage });
+    // Explicit target: `hex-r1-2` (shroud-merchant) resists the always-owned
+    // starter `spread`, so opening the screen auto-fits nothing and the payload
+    // stays byte-identical. The ring-1 default (`hex-r1-1` since
+    // AH-0MWW28ET2002PNI8) does not resist it, so a default-target boot would
+    // legitimately fit `spread` and blur the "refused rows wrote nothing" claim.
+    const scene = await bootHangar({ storage, targetHexId: 'hex-r1-2' });
 
     // Only the saved-build save row, the apply-suggested-buildout row, the
     // deployment, the map and the restart row are focusable; no
@@ -1914,10 +1921,12 @@ describe('HangarScene', () => {
     const scene = await bootHangar({ payload, storage: null });
 
     // Menu entry carries no hex: the shipped default (`selectDeploymentHex`)
-    // still picks the lowest-aggression unheld hex.
-    expect(scene.getModel().deployRow.hexId).toBe('hex-r1-2');
-    expect(rowFor(scene, 'deploy').label).toContain('hex hex-r1-2');
-    expect(scene.deploy().hexId).toBe('hex-r1-2');
+    // still picks the lowest-aggression unheld hex — `hex-r1-1`, the sorted-id
+    // tie-break winner between the two aggression-1 hexes
+    // (AH-0MWW28ET2002PNI8).
+    expect(scene.getModel().deployRow.hexId).toBe('hex-r1-1');
+    expect(rowFor(scene, 'deploy').label).toContain('hex hex-r1-1');
+    expect(scene.deploy().hexId).toBe('hex-r1-1');
   });
 
   it('resets the carried target on the next scene start', async () => {
@@ -1930,14 +1939,15 @@ describe('HangarScene', () => {
     expect(scene.getModel().deployRow.hexId).toBe('hex-r1-3');
 
     // A later menu entry starts the same scene without a target: a stale
-    // target must never leak across visits.
+    // target must never leak across visits. The default is the sorted-id
+    // tie-break winner `hex-r1-1` (AH-0MWW28ET2002PNI8).
     booted!.game.scene.start(HANGAR_SCENE_KEY, { payload, storage: null });
     await advanceGame(booted!.game, 200);
     const revisited = booted!.game.scene.getScene(
       HANGAR_SCENE_KEY,
     ) as HangarScene;
-    expect(revisited.getModel().deployRow.hexId).toBe('hex-r1-2');
-    expect(revisited.deploy().hexId).toBe('hex-r1-2');
+    expect(revisited.getModel().deployRow.hexId).toBe('hex-r1-1');
+    expect(revisited.deploy().hexId).toBe('hex-r1-1');
   });
 
   it('opens the hex map with this hangar payload from the HEX MAP row', async () => {

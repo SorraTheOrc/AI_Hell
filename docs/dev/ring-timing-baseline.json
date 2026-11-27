@@ -12,7 +12,7 @@
         "seed": 1,
         "deployments": [
           {
-            "hexId": "hex-r1-2",
+            "hexId": "hex-r1-1",
             "heldInRing": 0,
             "baseAggression": 1,
             "aggression": 1,
@@ -35,27 +35,26 @@
             }
           },
           {
-            "hexId": "hex-r1-1",
+            "hexId": "hex-r1-2",
             "heldInRing": 1,
-            "baseAggression": 2,
-            "aggression": 2,
-            "level": 3,
-            "seconds": 203,
+            "baseAggression": 1,
+            "aggression": 1,
+            "level": 2,
+            "seconds": 90.86666666666666,
             "captured": true,
             "minerals": 18,
             "hits": 0,
             "retries": 0,
-            "minutes": 3.3833333333333333,
+            "minutes": 1.5144444444444443,
             "loadout": {
-              "hullId": "hull-1",
+              "hullId": "hull-2",
               "lives": 4,
-              "speedMultiplier": 1,
+              "speedMultiplier": 0.85,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
-                "hull-1"
+                "hull-1",
+                "hull-2"
               ]
             }
           },
@@ -179,11 +178,11 @@
             }
           }
         ],
-        "deploymentMinutes": 10.349166666666667,
+        "deploymentMinutes": 8.48027777777778,
         "betweenSortieMinutes": 12,
         "retryMinutes": 1.4411111111111112,
         "retakeMinutes": 0,
-        "totalMinutes": 23.79027777777778,
+        "totalMinutes": 21.92138888888889,
         "captured": 3,
         "losses": 3,
         "expectedRetakes": 0,
@@ -198,7 +197,7 @@
         "seed": 2,
         "deployments": [
           {
-            "hexId": "hex-r1-2",
+            "hexId": "hex-r1-1",
             "heldInRing": 0,
             "baseAggression": 1,
             "aggression": 1,
@@ -221,27 +220,26 @@
             }
           },
           {
-            "hexId": "hex-r1-1",
+            "hexId": "hex-r1-2",
             "heldInRing": 1,
-            "baseAggression": 2,
-            "aggression": 2,
-            "level": 3,
-            "seconds": 188.36666666666667,
+            "baseAggression": 1,
+            "aggression": 1,
+            "level": 2,
+            "seconds": 143.83333333333334,
             "captured": true,
             "minerals": 18,
             "hits": 0,
             "retries": 0,
-            "minutes": 3.1394444444444445,
+            "minutes": 2.3972222222222226,
             "loadout": {
-              "hullId": "hull-1",
+              "hullId": "hull-2",
               "lives": 4,
-              "speedMultiplier": 1,
+              "speedMultiplier": 0.85,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
-                "hull-1"
+                "hull-1",
+                "hull-2"
               ]
             }
           },
@@ -365,11 +363,11 @@
             }
           }
         ],
-        "deploymentMinutes": 10.432499999999997,
+        "deploymentMinutes": 9.690277777777776,
         "betweenSortieMinutes": 12,
         "retryMinutes": 1.0861111111111112,
         "retakeMinutes": 0,
-        "totalMinutes": 23.51861111111111,
+        "totalMinutes": 22.77638888888889,
         "captured": 3,
         "losses": 3,
         "expectedRetakes": 0,
@@ -384,7 +382,7 @@
         "seed": 3,
         "deployments": [
           {
-            "hexId": "hex-r1-2",
+            "hexId": "hex-r1-1",
             "heldInRing": 0,
             "baseAggression": 1,
             "aggression": 1,
@@ -407,27 +405,26 @@
             }
           },
           {
-            "hexId": "hex-r1-1",
+            "hexId": "hex-r1-2",
             "heldInRing": 1,
-            "baseAggression": 2,
-            "aggression": 2,
-            "level": 3,
-            "seconds": 206.29999999999998,
+            "baseAggression": 1,
+            "aggression": 1,
+            "level": 2,
+            "seconds": 151.83333333333334,
             "captured": true,
             "minerals": 18,
             "hits": 0,
             "retries": 0,
-            "minutes": 3.438333333333333,
+            "minutes": 2.530555555555556,
             "loadout": {
-              "hullId": "hull-1",
+              "hullId": "hull-2",
               "lives": 4,
-              "speedMultiplier": 1,
+              "speedMultiplier": 0.85,
               "weapons": [],
-              "modifiers": [
-                "hardened_plating"
-              ],
+              "modifiers": [],
               "ownedHulls": [
-                "hull-1"
+                "hull-1",
+                "hull-2"
               ]
             }
           },
@@ -551,11 +548,11 @@
             }
           }
         ],
-        "deploymentMinutes": 10.46611111111111,
+        "deploymentMinutes": 9.558333333333332,
         "betweenSortieMinutes": 12,
         "retryMinutes": 1.4555555555555555,
         "retakeMinutes": 0,
-        "totalMinutes": 23.921666666666667,
+        "totalMinutes": 23.013888888888886,
         "captured": 3,
         "losses": 3,
         "expectedRetakes": 0,
@@ -570,15 +567,15 @@
     "summary": {
       "totalMinutes": {
         "count": 3,
-        "mean": 23.743518518518517,
-        "min": 23.51861111111111,
-        "max": 23.921666666666667
+        "mean": 22.570555555555558,
+        "min": 21.92138888888889,
+        "max": 23.013888888888886
       },
       "deploymentMinutes": {
         "count": 3,
-        "mean": 10.415925925925926,
-        "min": 10.349166666666667,
-        "max": 10.46611111111111
+        "mean": 9.242962962962963,
+        "min": 8.48027777777778,
+        "max": 9.690277777777776
       },
       "losses": {
         "count": 3,
@@ -620,7 +617,7 @@
       },
       "tolerancePercent": 10,
       "toleranceMinutes": 6,
-      "measuredMinutes": 23.743518518518517,
+      "measuredMinutes": 22.570555555555558,
       "withinWindow": false,
       "withinTolerance": false,
       "verdict": "missed"

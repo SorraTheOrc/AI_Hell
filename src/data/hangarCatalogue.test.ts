@@ -270,13 +270,14 @@ describe('hangar catalogue — the ring-1 grant-only reward hull', () => {
     // One more rating point than the fresh starter fleet (DEF 3 vs DEF 2) ...
     expect(rewardStrength - scrapStrength).toBe(1);
     // ... and therefore at most one point of ring-1 aggression mass
-    // (ring 1's authored mass is 18 for the minimum fleet).
+    // (ring 1's authored mass is 17 for the minimum fleet after
+    // AH-0MWW28ET2002PNI8 lowered `hex-r1-1` 2 → 1).
     expect(ringAggressionBudget(scrapStrength, ringOne, DEFAULT_FRONTIER_TUNING)).toBe(
-      18,
+      17,
     );
     expect(
       ringAggressionBudget(rewardStrength, ringOne, DEFAULT_FRONTIER_TUNING),
-    ).toBe(19);
+    ).toBe(18);
     // Modest beside the ring-2 Bulwark fleet budget (58).
     expect(
       ringAggressionBudget(rewardStrength, ringOne, DEFAULT_FRONTIER_TUNING),

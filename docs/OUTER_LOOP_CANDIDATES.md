@@ -969,7 +969,8 @@ economy, no wall clock and no new RNG draw**, so a replay reproduces it exactly
 and no new persisted field is needed (it derives from the already-stored `held`
 and `aggression`). The landing map announces a non-zero payout as
 `HEX INCOME BANKED: +N MINERALS` beside the win bonus. **`10 × aggression` is a
-balance knob**: at `10` a fully held ring 1 (`Σ aggression = 18`) pays `180`/tick,
+balance knob**: at `10` a fully held ring 1 (`Σ aggression = 17` after
+AH-0MWW28ET2002PNI8 lowered `hex-r1-1` to aggression 1) pays `170`/tick,
 well above the win bonus and the measured ~24-minerals-per-deployment anchor, so
 retuning it (a one-line change) is a separate balance follow-up.
 
@@ -1062,10 +1063,11 @@ replace storage behind the same injectable interface (§6.6).
   attempts replaying their own measured length) and 0.0 of re-capture
   (22.2 + 24 + 5.5 + 0.0 = 51.7) — so ring 2 reads **within-tolerance** of its
   derived 60–180 window (±12 min, floor 48) with its rebalancing ruling live on
-  AH-0MWFDQCFV007BZE5; ring 1 measures **23.7 minutes** (10.4 of measured
+  AH-0MWFDQCFV007BZE5; ring 1 measures **22.6 minutes** (9.2 of measured
   deployments + 12 between sorties + 1.3 of modelled retries + 0.0 of
-  re-capture) and still **misses** the derived 30–90 window, 0.3 minutes under
-  its 24-minute tolerance floor (AH-0MWFDQ9EY004NO4X).
+  re-capture) and still **misses** the derived 30–90 window, 1.4 minutes under
+  its 24-minute tolerance floor (AH-0MWFDQ9EY004NO4X; re-measured from 23.7
+  minutes when AH-0MWW28ET2002PNI8 lowered `hex-r1-1` to aggression 1).
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.

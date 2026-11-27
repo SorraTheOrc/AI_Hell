@@ -442,15 +442,38 @@ describe('authored hex variety content (shipped rings)', () => {
     });
   });
 
-  it('leaves ring 1\'s aggression band and recommended order untouched', () => {
-    // No authored aggression changes: the weapon hex stays the ring's hardest
-    // and the authored variety hexes sit inside the existing band.
+  it('opens ring 1 with two aggression-1 footholds and keeps its gradient', () => {
+    // AH-0MWW28ET2002PNI8: the opening ring deliberately authors roughly 40%
+    // of its hexes at aggression 1. 2 of 6 (≈33%) is the nearest whole count
+    // to 40%, so `hex-r1-1` dropped 2 → 1 beside the existing `hex-r1-2`.
     expect(hexRingDefinitionsFor(1).map((hex) => hex.baseAggression)).toEqual([
-      2, 1, 3, 2, 4, 6,
+      1, 1, 3, 2, 4, 6,
     ]);
     const ringOne = hexRingDefinitionsFor(1);
+    const easiest = ringOne.filter((hex) => hex.baseAggression === 1);
+    expect(easiest.map((hex) => hex.id)).toEqual(['hex-r1-1', 'hex-r1-2']);
+    // 2 of 6 ≈ 33%, the whole-hex count nearest the requested 40%.
+    expect(easiest).toHaveLength(2);
+    expect(easiest.length / ringOne.length).toBeCloseTo(1 / 3, 5);
+
+    // "Aggression level 1" means the authored value 1, which still resolves to
+    // campaign level 2 through the unchanged aggression → level mapping. Pinned
+    // here so the phrase can never silently drift from its documented meaning.
+    expect(hexAggressionLevel(1)).toBe(2);
+    for (const hex of easiest) {
+      expect(
+        hexAggressionLevel(hex.baseAggression),
+        `${hex.id} deploys at campaign level 2`,
+      ).toBe(2);
+    }
+
+    // The gradient survives the retune: a hex at 3, one at 4, and the weapon
+    // hex at 6 as the ring's strict maximum (one weapon hex per ring).
+    expect(ringOne.map((hex) => hex.baseAggression)).toContain(3);
+    expect(ringOne.map((hex) => hex.baseAggression)).toContain(4);
     const weaponHex = ringOne.find((hex) => hex.weaponHex)!;
     expect(weaponHex.id).toBe('hex-r1-6');
+    expect(weaponHex.baseAggression).toBe(6);
     expect(weaponHex.baseAggression).toBe(
       Math.max(...ringOne.map((h) => h.baseAggression)),
     );
@@ -460,6 +483,21 @@ describe('authored hex variety content (shipped rings)', () => {
         `${hex.id} stays easier than the weapon hex`,
       ).toBeLessThan(weaponHex.baseAggression);
     }
+    // The retune keeps every ring rule valid: one weapon hex, distinct grants,
+    // coverage, membership — and ring 2 strictly harder.
+    expect(validateRingDefinitions(1, HEX_RING_DEFINITIONS)).toEqual({
+      ok: true,
+      issues: [],
+    });
+    // Ring 2 stays strictly harder: its floor is above ring 1's floor and its
+    // maximum above ring 1's maximum (the retune must not invert the pair).
+    const ringTwo = hexRingDefinitionsFor(2);
+    expect(Math.min(...ringTwo.map((h) => h.baseAggression))).toBeGreaterThan(
+      Math.min(...ringOne.map((h) => h.baseAggression)),
+    );
+    expect(Math.max(...ringTwo.map((h) => h.baseAggression))).toBeGreaterThan(
+      Math.max(...ringOne.map((h) => h.baseAggression)),
+    );
     // The ring-1 contract pays less than ring 2's (the tutorial ring is not
     // the place to out-earn the harder frontier), and both bonuses stay well
     // under the shipped cache payout (140 salvage).

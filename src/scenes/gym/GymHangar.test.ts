@@ -316,12 +316,20 @@ describe('GymHangar', () => {
 
   it('renders the known target intel and ▲/▼ matchup marks read-only (AH-0MWMT4STK001PSK4)', async () => {
     // The authored ring makes the default target a hex the shipped definition
-    // table knows (`hex-r1-2`, the weakest unheld), so the intel is populated
-    // and every owned weapon row carries a matchup verdict. The gym must render
-    // the *identical* shared model — intel and marks included — with no
-    // handlers, so nothing on the screen can act on the advice.
+    // table knows, so the intel is populated and every owned weapon row carries
+    // a matchup verdict. The gym must render the *identical* shared model —
+    // intel and marks included — with no handlers, so nothing on the screen can
+    // act on the advice.
+    //
+    // `hex-r1-1` is held so the default target falls to `hex-r1-2`
+    // (`shroud-merchant`): since AH-0MWW28ET2002PNI8 both hexes author
+    // aggression 1 and the sorted-id tie-break would otherwise pick
+    // `hex-r1-1` (`the-dawnbreaker`), which resists none of the owned weapons
+    // and so would render no ▲/▼ marks at all.
     const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
     payload.ring = createRingState(1, HEX_RING_DEFINITIONS);
+    const heldHex = payload.ring.hexes.find((hex) => hex.id === 'hex-r1-1')!;
+    heldHex.held = true;
     payload.hangar.unlockedHulls = ['hull-1', 'hull-2', 'hull-3', 'hull-4'];
     payload.hangar.unlockedWeapons = [
       'spread',

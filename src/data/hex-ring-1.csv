@@ -30,10 +30,12 @@
 # landmark sits on the ring's special mission (AH-0MWJ51KUS005WQK6): the
 # fortress on `hex-r1-5` (last hex before the weapon hex) and the
 # +60-salvage/+1-core contract on `hex-r1-4`. The special's hull is paid on the
-# fortress's second capture pass. No ring-1 hex authors a personality, so the
-# opening ring stays inside its aggression band.
+# fortress's second capture pass. Ring 1 opens with two aggression-1 footholds
+# (`hex-r1-1`, `hex-r1-2` — 2 of 6, ≈40%: AH-0MWW28ET2002PNI8), which is why
+# both lead rows carry `baseAggression` 1. No ring-1 hex authors a personality,
+# so the opening ring stays inside its aggression band.
 id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,isSpecialMission,baseAggression,personality,contractObjective,contractBonusSalvage,contractBonusCores,landmark
-hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,false,2,,,,,
+hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,false,1,,,,,
 hex-r1-2,1,-1,1,shroud-merchant,spread,waveLaser,extra-life,false,false,1,,,,,
 hex-r1-3,0,-1,1,iron-crusher,rapid,mortar,rapid,false,false,3,,,,,
 hex-r1-4,-1,0,1,ember-reaver,cannon,ricochet,ricochet,false,false,2,,Crack the ember nest and hold the hex,60,1,

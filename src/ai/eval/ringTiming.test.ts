@@ -618,14 +618,16 @@ describe('ring timing: budget verdicts', () => {
  * an accidental recalibration.
  *
  * Re-rated against the derived windows, the regenerated one-level sortie
- * misses ring 1 (23.7 min against 30–90) and sits within-tolerance on ring 2
+ * misses ring 1 (22.6 min against 30–90) and sits within-tolerance on ring 2
  * (51.7 min against 60–180): a window
  * change is a producer ruling, not a re-word of the measurement, so the per-hex
  * pin stays authored and each ruling is re-ruled by its linked rebalancing item
  * (AH-0MWFDQ9EY004NO4X ring 1, AH-0MWFDQCFV007BZE5 ring 2). The figures moved
  * from a retry-dominated 15.4/57.0 min to 23.7/51.7 min when the per-level
  * arena began honouring the wave `shootEnabled` gate and the ring's
- * capture-progress aggression ramp landed (AH-0MWFDQ9EY004NO4X);
+ * capture-progress aggression ramp landed (AH-0MWFDQ9EY004NO4X), and ring 1
+ * re-measured at 22.6 min when `hex-r1-1` dropped to aggression 1
+ * (AH-0MWW28ET2002PNI8 — a mechanical re-measurement, not a budget ruling);
  * `docs/EVALUATION.md` records the regenerated measurements as the evidence.
  */
 describe('ring timing: the design windows are pinned literally', () => {
@@ -758,14 +760,16 @@ describe('ring timing: real arena evidence', () => {
     expect(first.summary.deploymentMinutes.mean).toBeGreaterThan(0);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the one-level MVP grind measures ~24 min and misses the derived 30–90 window (AH-0MWFDQ9EY004NO4X)', () => {
+  it('the one-level MVP grind measures ~22.6 min and misses the derived 30–90 window (AH-0MWFDQ9EY004NO4X)', () => {
     // One hex, one level, five-wave sortie: the levels 1–3 opening is a
     // no-fire sortie (the per-level arena honours the wave `shootEnabled`
-    // gate), so the weaker hexes are captured and the ring measures 23.7 min —
+    // gate), so the weaker hexes are captured and the ring measures 22.6 min —
     // still short of the derived 30–90-minute window (6 × 5–15 per hex) and
     // below its 24-minute tolerance floor. The verdict is pinned against the
     // committed artifact and tracked as the rebalancing item
-    // AH-0MWFDQ9EY004NO4X.
+    // AH-0MWFDQ9EY004NO4X; re-measured from 23.7 min when `hex-r1-1` dropped to
+    // aggression 1 (AH-0MWW28ET2002PNI8), which is a mechanical consequence of
+    // the data edit, not a budget re-judgement.
     const report = simulateRingTiming({
       ringIndex: 1,
       strategy: 'grind',
@@ -779,10 +783,10 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.verdict).toBe('missed');
     expect(report.budget.verdict).toBe(committed.budget.verdict);
     expect(report.budget.withinTolerance).toBe(false);
-    // The real arena still measures the regenerated artifact's numbers: 23.7 min
+    // The real arena still measures the regenerated artifact's numbers: 22.6 min
     // mean on seeds 1–3, below the derived 30-minute floor (and its 24-minute
     // tolerance floor).
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(23.7435, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(22.5706, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
       6,
@@ -977,14 +981,17 @@ describe('ring timing: the one-level fire-gate boundary under the deployment loa
         loadout,
       });
     };
-    // hex-r1-2 is aggression 1 → level 2; hex-r1-1 is aggression 2 → level 3
+    // hex-r1-2 is aggression 1 → level 2; hex-r1-4 is aggression 2 → level 3
     // (the aggression → level mapping is the shipped one). Both are no-fire
-    // levels, so every seed clears the sortie without taking a hit.
+    // levels, so every seed clears the sortie without taking a hit. (`hex-r1-1`
+    // used to carry the level-3 case; it dropped to aggression 1 → level 2 in
+    // AH-0MWW28ET2002PNI8, so the level-3 pin moved to the next aggression-2
+    // hex rather than being dropped.)
     for (const seed of [1, 2, 3]) {
       const atLevel2 = deploy('hex-r1-2', seed);
       expect(atLevel2.captured).toBe(true);
       expect(atLevel2.hits).toBe(0);
-      const atLevel3 = deploy('hex-r1-1', seed);
+      const atLevel3 = deploy('hex-r1-4', seed);
       expect(atLevel3.captured).toBe(true);
       expect(atLevel3.hits).toBe(0);
     }
@@ -1086,29 +1093,32 @@ describe('ring timing: committed baseline evidence', () => {
    * moving the verdicts, and each ruling is tracked as its own rebalancing
    * item.
    */
-  it('ring 1 grind: 23.7 min (23.5–23.9) misses the derived 30–90 min window', () => {
+  it('ring 1 grind: 22.6 min (21.9–23.0) misses the derived 30–90 min window', () => {
     // Ruled by AH-0MWFDQ9EY004NO4X: the producer refused a window re-word,
     // refused the allowance changes, and asked for the ring's aggression to
     // ramp with in-ring captures plus the wave `shootEnabled` gate to be
     // honoured. Both landed (15.4 → 23.7 min), and the honest verdict is still
-    // `missed`: 4.3 min under the window floor and 0.3 min under its tolerance
-    // floor. The remaining gap is the per-hex budget itself (a measured
-    // deployment clears in ~1.7 min against a 5–15-minute authored unit).
+    // `missed`: under the window floor and under its tolerance floor. The
+    // measurement then moved 23.7 → 22.6 min when `hex-r1-1` dropped to
+    // aggression 1 (AH-0MWW28ET2002PNI8, a mechanical re-measurement of the
+    // same model — the window, its tolerance and the verdict logic are
+    // untouched). The remaining gap is the per-hex budget itself (a measured
+    // deployment clears in ~1.5 min against a 5–15-minute authored unit).
     const report = committedGrindReport(1);
     expect(report.budget.verdict).toBe('missed');
     expect(report.budget.withinWindow).toBe(false);
     expect(report.budget.withinTolerance).toBe(false);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(23.7435, 4);
-    expect(report.summary.totalMinutes.min).toBeCloseTo(23.5186, 4);
-    expect(report.summary.totalMinutes.max).toBeCloseTo(23.9217, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(22.5706, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(21.9214, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(23.0139, 4);
     // The derived window (6 × 5–15) and its tolerance are computed, not pinned.
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[1]);
     expect(report.budget.toleranceMinutes).toBeCloseTo(6, 6);
-    // Δ to the window floor: 23.7435 − 30 = −6.2565 min (and −0.2565 min
+    // Δ to the window floor: 22.5706 − 30 = −7.4294 min (and −1.4294 min
     // below the 24-minute tolerance floor).
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[1].minMinutes,
-    ).toBeCloseTo(-6.2565, 4);
+    ).toBeCloseTo(-7.4294, 4);
     // Re-judged through the shipped budget rule, the artifact's measurement is
     // still `missed`: the verdict is not merely a stored string.
     expect(
@@ -1182,10 +1192,11 @@ describe('ring timing: committed baseline evidence', () => {
     // restated from the artifact's measured deployment length; pin those means
     // here so a re-measurement that moves them fails the docs guard instead of
     // letting prose silently drift. Ring 2 grind 22.1842 and ring 1 grind
-    // 10.4159 are the values whose 2-dp forms the docs quote (22.18 / 10.42);
-    // the rush lines quote 0.21 / 0.43.
+    // 9.2430 are the values whose 2-dp forms the docs quote (22.18 / 9.24);
+    // the rush lines quote 0.21 / 0.43. (Ring 1 grind moved 10.4159 → 9.2430
+    // when `hex-r1-1` dropped to aggression 1: AH-0MWW28ET2002PNI8.)
     expect(committedReport(1, 'grind').summary.deploymentMinutes.mean).toBeCloseTo(
-      10.4159,
+      9.243,
       4,
     );
     expect(committedReport(1, 'rush').summary.deploymentMinutes.mean).toBeCloseTo(
@@ -1315,10 +1326,12 @@ describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
     expect(r2g.captureRate).toBeGreaterThan(0.11);
     expect(r2g.mineralsPerDeployment).toBeGreaterThan(1.86);
     // Every captured one-level sortie banks the minerals held at its
-    // mini-boss checkpoint (10.67 per captured ring-1 sortie on the regenerated
+    // mini-boss checkpoint (11.67 per captured ring-1 sortie on the regenerated
     // artifact: pass-through collection, then the ring's capture-progress
-    // aggression ramp made the firing tail harder — AH-0MWFDQ9EY004NO4X).
-    expect(r1g.mineralsPerCapturedDeployment).toBeCloseTo(10.67, 2);
+    // aggression ramp made the firing tail harder — AH-0MWFDQ9EY004NO4X;
+    // 10.67 → 11.67 after `hex-r1-1` dropped to aggression 1,
+    // AH-0MWW28ET2002PNI8).
+    expect(r1g.mineralsPerCapturedDeployment).toBeCloseTo(11.67, 2);
     // The rush line (one weapon hex per ring) banks nothing: its sorties are
     // the ring's hardest and the bot loses them — recorded, not assumed.
     expect(line(1, 'rush').income.captured).toBe(0);
@@ -1334,14 +1347,15 @@ describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
     );
     // Campaign-slice before: hull-2 55 / wave_laser 30 / ricochet 23 /
     // cluster 40 / hardened_plating 20 ring-1-grind deployments. Re-baselined
-    // after pass-through collection and the ring's capture-progress aggression
-    // ramp (AH-0MWFDQ9EY004NO4X): 42 / 23 / 17 / 30 / 15 — still shorter than
-    // the campaign slice for every entry.
-    expect(pace.get('hull-2')).toBe(42);
-    expect(pace.get('wave_laser')).toBe(23);
-    expect(pace.get('ricochet')).toBe(17);
-    expect(pace.get('cluster')).toBe(30);
-    expect(pace.get('hardened_plating')).toBe(15);
+    // After pass-through collection and the ring's capture-progress aggression
+    // ramp, then the ring-1 opening retune (AH-0MWFDQ9EY004NO4X re-baseline,
+    // then AH-0MWW28ET2002PNI8's `hex-r1-1` 2 → 1): 38 / 21 / 16 / 28 / 14 —
+    // still shorter than the campaign slice for every entry.
+    expect(pace.get('hull-2')).toBe(38);
+    expect(pace.get('wave_laser')).toBe(21);
+    expect(pace.get('ricochet')).toBe(16);
+    expect(pace.get('cluster')).toBe(28);
+    expect(pace.get('hardened_plating')).toBe(14);
   });
 });
 

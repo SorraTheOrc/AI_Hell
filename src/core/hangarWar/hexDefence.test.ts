@@ -1909,9 +1909,10 @@ describe('runFrontierTick — owned hexes provide minerals (AH-0MWL8CDGN005878A)
     expect(record.hexIncome).toBe(
       HEX_INCOME_MINERALS_PER_AGGRESSION * authoredRingBaseMass(next.ring),
     );
-    // Ring 1's authored base aggression is 18 → 180 minerals a tick (the
-    // producer's documented rate, AC1/constraints).
-    expect(record.hexIncome).toBe(180);
+    // Ring 1's authored base aggression is 17 after AH-0MWW28ET2002PNI8
+    // lowered `hex-r1-1` 2 → 1 → 170 minerals a tick (the documented rate
+    // stays 10 × aggression; only the authored mass moved).
+    expect(record.hexIncome).toBe(170);
     expect(next.hangar.bankedMinerals).toBe(startBalance + record.hexIncome);
     // The transition stays pure: the input payload is never mutated.
     expect(payload.hangar.bankedMinerals).toBe(startBalance);

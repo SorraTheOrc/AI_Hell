@@ -467,19 +467,31 @@ describe('HexMapScene', () => {
     const panel = scene.getPanelText();
     expect(panel).toContain(panelHex.id);
     expect(panel).toContain(panelHex.boss!);
-    expect(panel).toContain(`WEAKNESSES: ${panelHex.weaknesses.join(',')}`);
+    // Every authored weapon carries its combat glyph (AH-0MWL8965R008K588), so
+    // the joined list is asserted by title plus each weapon name.
+    expect(panel).toContain('WEAKNESSES:');
+    for (const weakness of panelHex.weaknesses) {
+      expect(panel).toContain(weakness);
+    }
     expect(panel).toContain(`GRANT: ${panelHex.grants}`);
     expect(panel).toContain(`AGGRESSION: ${panelHex.aggression}`);
 
     // A concrete authored hex: ring 1's easiest (the default focus), its boss
-    // and its grant all reachable through the panel.
+    // and its grant all reachable through the panel. Two hexes author
+    // aggression 1 since AH-0MWW28ET2002PNI8 (`hex-r1-1`, `hex-r1-2`) and the
+    // shared sorted-id tie-break makes `hex-r1-1` the default focus.
     const easiest = scene
       .getRows()
+      .find((row) => row.key === 'hex:hex-r1-1')!;
+    expect(easiest.label).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,0)`);
+    expect(panel).toContain('the-dawnbreaker');
+    expect(panel).toContain('WEAKNESSES: nova');
+    expect(panel).toContain('GRANT: hull-2');
+    // The other aggression-1 hex keeps its authored badge too.
+    const otherEasiest = scene
+      .getRows()
       .find((row) => row.key === 'hex:hex-r1-2')!;
-    expect(easiest.label).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,-1)`);
-    expect(panel).toContain('shroud-merchant');
-    expect(panel).toContain('WEAKNESSES: waveLaser');
-    expect(panel).toContain('GRANT: extra-life');
+    expect(otherEasiest.label).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,-1)`);
   });
 
   it(
@@ -628,6 +640,10 @@ describe('HexMapScene', () => {
 
   it('keeps the hangar one click away with no carried target', async () => {
     const payload = ringPayload(1);
+    // A hand-picked loadout keeps the hangar's open-time auto-fit
+    // (AH-0MWOWEPO2004B0MR) from rewriting the payload, so the hand-off can be
+    // asserted byte-for-byte.
+    payload.hangar.activeLoadout.startingWeapons = ['spread'];
     const scene = await bootMap({ payload, storage: null });
 
     expect(scene.focusRow(HEX_MAP_HANGAR_ROW_KEY)).toBe(true);

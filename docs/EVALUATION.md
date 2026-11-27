@@ -459,7 +459,7 @@ Committed evidence:
 
 | Ring | Line | Per-deployment (mean) | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 10.42 min | **23.7 min** (23.5–23.9) | 3.0 | 3.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | grind | 9.24 min | **22.6 min** (21.9–23.0) | 3.0 | 3.0 | 30–90 min · **missed** (AH-0MWFDQ9EY004NO4X) |
 | 1 (6 hexes) | rush | 0.21 min | **10.2 min** (9.4–10.9) | 1.0 | 4.5 | not applicable (ring not secured) |
 | 2 (12 hexes) | grind | 22.18 min | **51.7 min** (50.8–52.5) | 6.0 | 6.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
 | 2 (12 hexes) | rush | 0.43 min | **21.5 min** (19.8–24.9) | 1.0 | 8.7 | not applicable (ring not secured) |
@@ -478,16 +478,17 @@ Reading the baseline:
 - **The verdicts are re-rated against the per-hex budget.** The per-level arena
 honours each wave's `shootEnabled` gate (AH-0MWFDQ9EY004NO4X), so the levels
 1–3 opening is the no-fire sortie it is in the game: the weaker hexes are
-captured and the firing tail is lost. Ring 1 grind measures **23.7 min** and
-**misses** the derived 30–90 window (0.3 min under the 24-minute tolerance
-floor), while ring 2 grind **51.7 min** sits **within-tolerance** of the
+captured and the firing tail is lost. Ring 1 grind measures **22.6 min** and
+**misses** the derived 30–90 window (1.4 min under the 24-minute tolerance
+floor; 22.57 min once `hex-r1-1` dropped to aggression 1 in
+AH-0MWW28ET2002PNI8), while ring 2 grind **51.7 min** sits **within-tolerance** of the
 derived 60–180 window (the ±12-minute tolerance floor is 48 min).
 The budget assertion states a **10 %
 tolerance** of each window's width (±6 min for ring 1, ±12 min for ring 2).
 Each verdict is re-computed by the harness and re-ruled by its own linked
 rebalancing item — **AH-0MWFDQ9EY004NO4X** (ring 1) and
 **AH-0MWFDQCFV007BZE5** (ring 2) — never re-worded.
-- **The playstyle trade is real.** The rush line is **faster** (10.2 vs 23.7 min
+- **The playstyle trade is real.** The rush line is **faster** (10.2 vs 22.6 min
 for ring 1; 21.5 vs 51.7 min for ring 2) but **riskier** — it leaves five (ring
 1) / eleven (ring 2) hexes exposed (≈3.5 / 7.7 expected retakes), forfeits the
 salvage of its failed attempts and does not secure the ring, while the grind

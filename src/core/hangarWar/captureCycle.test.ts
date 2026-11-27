@@ -852,8 +852,10 @@ describe('the capture-cycle assault gate', () => {
     return payload;
   }
 
-  // Ring 1's authored stored aggression: 2 + 1 + 3 + 2 + 4 + 6 = 18 (mean 3).
-  const RING_ONE_AGGRESSION_SUM = 18;
+  // Ring 1's authored stored aggression: 1 + 1 + 3 + 2 + 4 + 6 = 17 (mean
+  // 2.83, which the assault resolver rounds to 3). Lowered from 18 by
+  // AH-0MWW28ET2002PNI8 (`hex-r1-1` 2 → 1).
+  const RING_ONE_AGGRESSION_SUM = 17;
 
   describe('AC1 — the final-hex capture triggers the assault', () => {
     it('resolves the massed assault from the ring’s stored numbers', () => {
@@ -872,9 +874,9 @@ describe('the capture-cycle assault gate', () => {
       expect(assault!.attackerBase).toBe(RING_ONE_AGGRESSION_SUM);
       expect(assault!.aggression).toBe(3);
       expect(assault!.aggressionMultiplierPercent).toBe(145);
-      // round(18 × 145 × 100 / 10000) = round(26.1) = 26.
-      expect(assault!.attackStrength).toBe(26);
-      expect(assault!.margin).toBe(52 - 26);
+      // round(17 × 145 × 100 / 10000) = round(24.65) = 25.
+      expect(assault!.attackStrength).toBe(25);
+      expect(assault!.margin).toBe(52 - 25);
       expect(assault!.outcome).toBe('repelled');
     });
 
@@ -1010,7 +1012,7 @@ describe('the capture-cycle assault gate', () => {
   describe('AC3 — a failed assault resets the whole campaign', () => {
     it('wipes the hangar and the ring together, issues a fresh seed and keeps bestScore', () => {
       const payload = stockedPayload();
-      // Zero-rated defenders cannot match the ring's 18-point massed base.
+      // Zero-rated defenders cannot match the ring's 17-point massed base.
       holdAllButWithRating(payload, 'hex-r1-6', 0);
 
       const result = finalCapture(payload);

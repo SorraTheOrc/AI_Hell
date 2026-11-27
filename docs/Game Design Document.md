@@ -3575,7 +3575,8 @@ from the already-stored `held` and `aggression`, so older saves tick as soon as
 they load.
 
 **`10 × aggression` is a balance knob** (producer **Q1**, 2026-11-17). At that
-rate a fully held ring 1 (aggression total `18`) pays `180`/tick — well above
+rate a fully held ring 1 (aggression total `17` after AH-0MWW28ET2002PNI8
+lowered `hex-r1-1` 2 → 1) pays `170`/tick — well above
 the `WIN_BONUS_MINERALS` bonus and the measured ~24-minerals-per-deployment
 anchor (see *Measured per-deployment income* below). The multiplier is the
 single constant `HEX_INCOME_MINERALS_PER_AGGRESSION`; retuning it is a one-line
@@ -3906,6 +3907,21 @@ variety pass, so `hex-r1-6` remains the ring's hardest hex and the
 aggression-ordered recommended path is unaltered. (The only later grant change
 is the special-mission conversion above.) Each authored axis is published in
 the known-ahead intel before the player commits a life.
+
+**Ring 1's opening aggression (AH-0MWW28ET2002PNI8).** The opening ring now
+authors **two aggression-1 footholds** — `hex-r1-1` dropped 2 → 1 beside
+`hex-r1-2` — so 2 of its 6 hexes (≈33 %, the whole-hex count nearest the
+requested ~40 %) deploy at campaign level **2** through the unchanged
+`hexAggressionLevel` mapping. The ring's band is `1, 1, 3, 2, 4, 6`: the
+gradient survives, `hex-r1-4`'s contract and `hex-r1-5`'s fortress/special
+mission sit at 2 and 4, `hex-r1-6` stays the weapon hex and the strict
+maximum, and ring 2 stays strictly harder (floor 2 > 1, maximum 8 > 6). Two
+consequences are recorded rather than retuned: the ring's held-hex income
+mass drops `18 → 17` (170/tick when fully held, § *Held-hex income*), and the
+ring's attract/default-focus hex moves `hex-r1-2 → hex-r1-1` because
+`pickAttractHex` breaks the aggression tie by sorted id. The ring-timing
+budget is not re-judged here (AH-0MWFDQ9EY004NO4X owns it); the measured
+baseline is re-quoted above.
 The axes are exercised by the gyms (§ *Gym coverage and parity*): `GymHexWar`
 publishes the personality/contract/landmark intel and `GymMiniBoss`'s HEX mode
 applies the two mechanics through the same shared mapping the game runs.
@@ -4131,7 +4147,7 @@ Measured baseline (seeds 1–3, competent bot; artifact
 
 | Ring | Line | Total mean (min–max) | Losses | Budget |
 |---|---|---|---|---|
-| 1 (6 hexes) | grind | **23.7 min** (23.5–23.9) | 3.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | grind | **22.6 min** (21.9–23.0) | 3.0 | 30–90 · **missed** (AH-0MWFDQ9EY004NO4X) |
 | 1 (6 hexes) | rush | **10.2 min** (9.4–10.9) | 1.0 | ring not secured |
 | 2 (12 hexes) | grind | **51.7 min** (50.8–52.5) | 6.0 | 60–180 · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
 | 2 (12 hexes) | rush | **21.5 min** (19.8–24.9) | 1.0 | ring not secured |
@@ -4144,8 +4160,8 @@ for ring 2 (60–180). The measured figures are **not** re-worded. The per-level
 arena honours each wave's `shootEnabled` gate (the levels 1–3
 "enemies are the bullets" opening) and each ring's deployments ramp in
 aggression with the ring's captures (AH-0MWFDQ9EY004NO4X), so the weaker hexes
-are captured and the firing tail is lost. Ring 1 grind **23.7 min** against its
-derived 30–90 window reads **`missed`** (0.3 min under the 24-minute tolerance
+are captured and the firing tail is lost. Ring 1 grind **22.6 min** against its
+derived 30–90 window reads **`missed`** (1.4 min under the 24-minute tolerance
 floor), and ring 2 grind **51.7 min** against 60–180 reads
 **`within-tolerance`** (51.7 is inside the 48-minute tolerance floor) —
 verdicts computed by the harness from the producer's per-hex budget, never a
@@ -4181,7 +4197,7 @@ and ~0.11 (ring 2, 1.33 of 12). The after-figures below are **measured**.
 | Ring · line | Captures | Deposit per deployment (minerals / cores) | At the mini-boss checkpoint (per captured) | Mineral-eq per deployment |
 |---|---|---|---|---|
 | 1 grind (before) | 1.33 of 6 (22.2 %) | 4.0 / 0.22* | 18.0 / 1* | 26.2 |
-| 1 grind (after) | 9 of 18 (50.0 %) | **5.3 / 0.5** | **10.7 / 1.0** | **55.3** |
+| 1 grind (after) | 9 of 18 (50.0 %) | **5.8 / 0.5** | **11.7 / 1.0** | **55.8** |
 | 1 rush (before) | 0 of 1 | 0 / 0 | — | 0 |
 | 1 rush (after) | 0 of 3 | 0 / 0 | — | 0 |
 | 2 grind (before) | 1.33 of 12 (11.1 %) | 1.86 / 0.11* | 16.75 / 1* | 13.0 |
@@ -4200,22 +4216,23 @@ AH-0MWJ1680Z001QYV2 audit follow-up made collection **pass-through** (the bot
 flies through a pickup instead of retro-braking onto it and sweeps fewer of them
 up) and the ring's capture-progress aggression ramp (AH-0MWFDQ9EY004NO4X) makes
 the firing tail of each ring harder, so the lost sorties bank less; a captured
-sortie now banks 10.7 (ring 1) / 6.1 (ring 2) minerals at its mini-boss
-checkpoint. The unlock pace therefore still **shortens** for every rings-1–2
+sortie now banks 11.7 (ring 1) / 6.1 (ring 2) minerals at its mini-boss
+checkpoint (ring 1 re-measured from 10.7 after AH-0MWW28ET2002PNI8 lowered
+`hex-r1-1` to aggression 1). The unlock pace therefore still **shortens** for every rings-1–2
 entry versus the campaign slice, but it is longer than the pre-follow-up
 measurement:
 
 | Entry (price) | Before (ring-1 grind) | After (ring-1 grind) | After (ring-2 grind) |
 |---|---|---|---|
-| Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **42** | 72 |
-| Juggernaut Hull `hull-3` (320 / 4) | — | **60** | 105 |
-| Wave Laser `wave_laser` (120 / 1) | 30 | **23** | 40 |
-| Ricochet `ricochet` (90 / 2) | 23 | **17** | 30 |
-| Cluster Missile `cluster` (160 / 1) | 40 | **30** | 53 |
-| Hardened Plating `hardened_plating` (80 / 1) | 20 | **15** | 27 |
-| Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **21** | 36 |
-| Bomb Rack `bomb` (130 / 1) | — | **25** | 43 |
-| Salvage Magnet `magnet` (200 / 2) | — | **38** | 66 |
+| Bulwark Hull `hull-2` (220 minerals / 3 cores) | 55 deployments | **38** | 72 |
+| Juggernaut Hull `hull-3` (320 / 4) | — | **55** | 105 |
+| Wave Laser `wave_laser` (120 / 1) | 30 | **21** | 40 |
+| Ricochet `ricochet` (90 / 2) | 23 | **16** | 30 |
+| Cluster Missile `cluster` (160 / 1) | 40 | **28** | 53 |
+| Hardened Plating `hardened_plating` (80 / 1) | 20 | **14** | 27 |
+| Anti-Maw Plating `anti_maw_plating` (110 / 2) — added by AH-0MVWZYJ740037EZ1 | — | **19** | 36 |
+| Bomb Rack `bomb` (130 / 1) | — | **23** | 43 |
+| Salvage Magnet `magnet` (200 / 2) | — | **35** | 66 |
 
 The ring-1 reward `hull-4` Vanguard Hull is **grant-only** (no purchase path),
 so it has no unlock-pace row: the special mission pays it and the hangar never
@@ -4268,7 +4285,7 @@ hand-edited.
 Two lines are measured, and both are viable:
 
 - **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
-  secured: **23.7 min** for ring 1 and **51.7 min** for ring 2, banking salvage
+  secured: **22.6 min** for ring 1 and **51.7 min** for ring 2, banking salvage
   and ending with a held ring.
 - **Rush** — the weapon hex first, then straight into the next ring: **10.2 min**
   and **21.5 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
@@ -4280,7 +4297,7 @@ and banks the salvage. Both lines are playable in the shipped capture cycle —
 the captured weapon hex is the ring's capstone, so holding it opens the next
 ring (`isRingOpenable`) while the skipped hexes are carried with their own
 aggression and defenders for the frontier tick. The re-measured grind totals
-are re-rated against the per-hex budget's derived windows: ring 1 **23.7 min**
+are re-rated against the per-hex budget's derived windows: ring 1 **22.6 min**
 vs 30–90 reads **`missed`**, ring 2 **51.7 min** vs 60–180 reads
 **`within-tolerance`** (inside the 48-minute floor) — each is recorded with its
 new measurement and re-ruled
@@ -4497,9 +4514,11 @@ The text below is retained as the original proposal.
 **Status (shipped, AH-0MWL898RM009X9B8):** the rule below is live — the authored
 lists are resolved once per hex and applied at the shared player-damage seam,
 with the glyph vocabulary, the deflect/critical feedback and the gym toggle.
-Ring timing re-measured with the rule in play: ring 1 grind 23.74 min (window
-30–90, still the in-flight rebalance's scope) and ring 2 grind 51.68 min
-(within tolerance); the numbers live in `docs/BALANCING.md`.
+Ring timing re-measured with the rule in play: ring 1 grind 22.57 min (window
+30–90, still the in-flight rebalance's scope — the measurement moved from
+23.74 min when the ring-1 opening retuned `hex-r1-1` to aggression 1,
+AH-0MWW28ET2002PNI8) and ring 2 grind 51.68 min (within tolerance); the
+numbers live in `docs/BALANCING.md`.
 
 - **Tier:** middle loop / outer loop (a deployment, a ring).
 - **Gap:** the authored `strengths` / `weaknesses` lines on the ring's hexes are

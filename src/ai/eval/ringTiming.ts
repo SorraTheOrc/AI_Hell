@@ -142,8 +142,10 @@
  * the ring; a rush segment is reported `not-applicable` for the budget.
  *
  * Re-rated against the derived windows (AH-0MWHU5AV800969NA), the shipped
- * one-level deployment measures ring 1 grind as **`missed`** (23.7 min against
- * 30–90 — 0.3 min under the 24-minute tolerance floor) and ring 2 grind as
+ * one-level deployment measures ring 1 grind as **`missed`** (22.6 min against
+ * 30–90 — 1.4 min under the 24-minute tolerance floor; re-measured from
+ * 23.7 min when `hex-r1-1` dropped to aggression 1 in AH-0MWW28ET2002PNI8) and
+ * ring 2 grind as
  * **`within-tolerance`** (51.7 min against 60–180: 8.3 min under the window
  * floor, inside the ±12-minute tolerance whose floor is 48 — seeds 1–3 in
  * `docs/dev/ring-timing-baseline.json`).
@@ -325,12 +327,14 @@ export function deriveRingTimingTarget(
  * and the per-hex target is authored once.
  *
  * Re-rated against these derived windows (AH-0MWHU5AV800969NA), the shipped
- * one-level sortie measures ring 1 grind at **23.7 minutes** (`missed`) and
+ * one-level sortie measures ring 1 grind at **22.6 minutes** (`missed`) and
  * ring 2 grind at **51.7 minutes** (`within-tolerance` of 60–180: 8.3 min under
  * the window floor, inside the ±12-min tolerance whose floor is 48). Ring 1's
  * figure moved 15.4 → 23.7 when the producer's ruling on
  * **AH-0MWFDQ9EY004NO4X** landed (honour the wave `shootEnabled` gate; ramp a
- * ring's aggression with its captures) and it still **misses** — the windows
+ * ring's aggression with its captures), then 23.7 → 22.6 when `hex-r1-1`
+ * dropped to aggression 1 (AH-0MWW28ET2002PNI8) — a mechanical re-measurement
+ * of the same model — and it still **misses** — the windows
  * are never re-worded to match a measurement. Ring 2's own ruling is tracked by
  * **AH-0MWFDQCFV007BZE5**, not silently changed here.
  */

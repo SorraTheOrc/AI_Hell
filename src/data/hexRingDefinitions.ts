@@ -44,6 +44,10 @@
  *   the shipped two capture passes and the hull is paid on the second. Every
  *   field is optional, so older saves stay field-presence migratable. The CSV
  *   seeds carry the matching columns so the parity test covers them too.
+ * - **Ring 1 opens gently**: two of its six hexes are authored at aggression 1
+ *   (`hex-r1-1`, `hex-r1-2`), so roughly 40% of the opening ring is an easy
+ *   foothold while the ring still keeps its 3/4/6 gradient and the weapon hex
+ *   as its strict maximum (AH-0MWW28ET2002PNI8).
  * - **Ring 2 is the harder frontier**: its hardest hex outranks ring 1's, and
  *   its aggression floor is above the opening ring's.
  * - **Authorship order is pinned** by the harness fixtures
@@ -80,7 +84,12 @@ export const HEX_RING_DEFINITIONS = Object.freeze([
     grants: 'hull-2',
     weaponHex: false,
     isSpecialMission: false,
-    baseAggression: 2,
+    // Ring 1 opens with two aggression-1 footholds (AH-0MWW28ET2002PNI8):
+    // together with `hex-r1-2` that is 2 of 6 hexes (≈33%, the nearest whole
+    // count to the requested ~40%), so the opening ring's first captures are
+    // achievable before its 3/4/6 tail. Aggression 1 still resolves to
+    // campaign level 2 through the unchanged `hexAggressionLevel` mapping.
+    baseAggression: 1,
   }),
   Object.freeze({
     id: 'hex-r1-2',

@@ -142,9 +142,11 @@ function clone(payload: HangarWarPayload): HangarWarPayload {
 
 /**
  * The authored ring 1 with every catalogue kind owned and the requested
- * starting-weapon selection. The default target is the authored `hex-r1-2`
- * (the weakest unheld hex), where `spread` is resisted and `wave_laser`
- * counters the boss.
+ * starting-weapon selection. Ring 1's default target is `hex-r1-1` since
+ * AH-0MWW28ET2002PNI8 (the sorted-id tie-break between two aggression-1
+ * hexes), whose boss does not resist `spread`; a test that needs that matchup
+ * passes `targetHexId: 'hex-r1-2'` explicitly — `shroud-merchant` resists
+ * `spread` and `wave_laser` counters it.
  */
 function ownedPayload(startingWeapons: readonly string[]): HangarWarPayload {
   const payload = clone(VALID_HANGAR_WAR_PAYLOAD);
@@ -257,11 +259,12 @@ describe('default/empty means an empty startingWeapon selection, never "no stron
 describe('a hand-picked loadout is never silently replaced by the model', () => {
   it('keeps the picked list, shows the suggestion separately and mutates nothing', async () => {
     const { isDefaultHangarLoadout } = await screenExtras();
-    // `spread` is resisted by the default target, so the suggestion would drop
-    // it — which makes "the model left it alone" a meaningful assertion.
+    // `spread` is resisted by the explicitly targeted `hex-r1-2`
+    // (shroud-merchant), so the suggestion would drop it — which makes "the
+    // model left it alone" a meaningful assertion.
     const payload = ownedPayload(['spread']);
     const before = clone(payload);
-    const model = modelOf(payload);
+    const model = modelOf(payload, { targetHexId: 'hex-r1-2' });
 
     expect(model.suggestedLoadout.startingWeapons).not.toContain('spread');
     // The equipped list still reflects the hand-picked loadout, not the

@@ -11,11 +11,11 @@
       "deployments": 18,
       "captured": 9,
       "captureRate": 0.5,
-      "mineralsPerDeployment": 5.333333333333333,
+      "mineralsPerDeployment": 5.833333333333333,
       "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 10.666666666666666,
+      "mineralsPerCapturedDeployment": 11.666666666666666,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 55.333333333333336
+      "mineralEquivalentPerDeployment": 55.833333333333336
     },
     "unlockPace": [
       {
@@ -27,9 +27,9 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 42,
+        "mineralBoundDeployments": 38,
         "coreBoundDeployments": 6,
-        "deploymentsToAfford": 42
+        "deploymentsToAfford": 38
       },
       {
         "id": "hull-3",
@@ -40,48 +40,9 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 60,
+        "mineralBoundDeployments": 55,
         "coreBoundDeployments": 8,
-        "deploymentsToAfford": 60
-      },
-      {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 23,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 23
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 17,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 17
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 30,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 30
+        "deploymentsToAfford": 55
       },
       {
         "id": "hardened_plating",
@@ -92,9 +53,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 15,
+        "mineralBoundDeployments": 14,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 15
+        "deploymentsToAfford": 14
       },
       {
         "id": "anti_maw_plating",
@@ -105,9 +66,9 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 21,
+        "mineralBoundDeployments": 19,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 21
+        "deploymentsToAfford": 19
       },
       {
         "id": "bomb",
@@ -118,9 +79,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 25,
+        "mineralBoundDeployments": 23,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 25
+        "deploymentsToAfford": 23
       },
       {
         "id": "magnet",
@@ -131,9 +92,48 @@
           "cores": 2
         },
         "minRing": 2,
-        "mineralBoundDeployments": 38,
+        "mineralBoundDeployments": 35,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 38
+        "deploymentsToAfford": 35
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 21,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 21
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 16,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 16
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 28,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 28
       }
     ]
   },
@@ -183,45 +183,6 @@
         "deploymentsToAfford": null
       },
       {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
         "id": "hardened_plating",
         "name": "Hardened Plating",
         "kind": "modifier",
@@ -269,6 +230,45 @@
           "cores": 2
         },
         "minRing": 2,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
         "mineralBoundDeployments": null,
         "coreBoundDeployments": null,
         "deploymentsToAfford": null
@@ -321,45 +321,6 @@
         "deploymentsToAfford": 105
       },
       {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 40,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 40
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 30,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 30
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 53,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 53
-      },
-      {
         "id": "hardened_plating",
         "name": "Hardened Plating",
         "kind": "modifier",
@@ -410,6 +371,45 @@
         "mineralBoundDeployments": 66,
         "coreBoundDeployments": 4,
         "deploymentsToAfford": 66
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 40,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 40
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 30,
+        "coreBoundDeployments": 4,
+        "deploymentsToAfford": 30
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": 53,
+        "coreBoundDeployments": 2,
+        "deploymentsToAfford": 53
       }
     ]
   },
@@ -454,45 +454,6 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
-        },
-        "minRing": 1,
         "mineralBoundDeployments": null,
         "coreBoundDeployments": null,
         "deploymentsToAfford": null
@@ -545,6 +506,45 @@
           "cores": 2
         },
         "minRing": 2,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "wave_laser",
+        "name": "Wave Laser",
+        "kind": "weapon",
+        "price": {
+          "minerals": 120,
+          "cores": 1
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "ricochet",
+        "name": "Ricochet",
+        "kind": "weapon",
+        "price": {
+          "minerals": 90,
+          "cores": 2
+        },
+        "minRing": 1,
+        "mineralBoundDeployments": null,
+        "coreBoundDeployments": null,
+        "deploymentsToAfford": null
+      },
+      {
+        "id": "cluster",
+        "name": "Cluster Missile",
+        "kind": "weapon",
+        "price": {
+          "minerals": 160,
+          "cores": 1
+        },
+        "minRing": 1,
         "mineralBoundDeployments": null,
         "coreBoundDeployments": null,
         "deploymentsToAfford": null

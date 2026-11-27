@@ -540,7 +540,7 @@ describe('hex map model — tile label (AC3)', () => {
     // The tile badge is the aggression + ownership marker with the coordinates
     // below; the full block is panel text.
     expect(held.tileLabel).toBe(`AGG 1 ${HELD_TILE_MARKER}\n(1,-1)`);
-    expect(other.tileLabel).toBe(`AGG 2 ${UNHELD_TILE_MARKER}\n(1,0)`);
+    expect(other.tileLabel).toBe(`AGG 1 ${UNHELD_TILE_MARKER}\n(1,0)`);
     expect(held.label).toContain('STATE: HELD');
     expect(held.label).toContain('AGGRESSION: 1 · !9');
     expect(held.label).toContain('DEFENDER: hull-1 (2)');
@@ -551,7 +551,7 @@ describe('hex map model — tile label (AC3)', () => {
     expect(other.pendingAttack?.force).toBe(9);
     expect(other.pendingAttack?.resolution).toBeNull();
     expect(other.label).toContain('STATE: UNHELD');
-    expect(other.label).toContain('AGGRESSION: 2 · !9');
+    expect(other.label).toContain('AGGRESSION: 1 · !9');
 
     expect(model.heldCount).toBe(1);
     expect(model.ringLine).toContain('1/6');
@@ -596,8 +596,11 @@ describe('hex map model — attract constraint (AC5)', () => {
 
     expect(pickAttractHex(payload)).toBe(weakest.id);
     expect(buildHexMapModel(payload).attractHexId).toBe(weakest.id);
-    // Ring 1's authored easiest hex, not merely the first clockwise one.
-    expect(weakest.id).toBe('hex-r1-2');
+    // Ring 1's authored easiest hex, not merely the first clockwise one. Two
+    // hexes now share aggression 1 (`hex-r1-1`, `hex-r1-2`) after
+    // AH-0MWW28ET2002PNI8, and the sorted-id tie-break makes `hex-r1-1` the
+    // attract target.
+    expect(weakest.id).toBe('hex-r1-1');
   });
 
   it('never falls back to a hidden hex (ring 2 unrevealed returns null)', () => {
