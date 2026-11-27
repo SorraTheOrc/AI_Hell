@@ -9,6 +9,7 @@ import {
   GAME_HEIGHT,
   GAME_WIDTH,
   PLAYER_BULLET_SPEED,
+  TELEPORT_TUNNEL_DURATION_SECONDS,
 } from '../../core/constants';
 import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
@@ -482,6 +483,21 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     expect(gymMoved).toBe(true);
     expect(play.getEffectsRegistry().hasTeleport()).toBe(false);
     expect(gym.getEffectsRegistry().hasTeleport()).toBe(false);
+
+    // Sequenced seam (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE):
+    // both scenes start in grow at ¼ speed with the ship held, then return to
+    // exactly 1× once the warp completes — the same code in the game and a gym.
+    expect(play.getTeleportPhase()).toBe('grow');
+    expect(gym.getTeleportPhase()).toBe('grow');
+    expect(play.teleportTimeScale()).toBeCloseTo(0.25, 10);
+    expect(gym.teleportTimeScale()).toBeCloseTo(0.25, 10);
+
+    play.tick(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
+    gym.tick(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
+    expect(play.getTeleportPhase()).toBe('complete');
+    expect(gym.getTeleportPhase()).toBe('complete');
+    expect(play.teleportTimeScale()).toBe(1);
+    expect(gym.teleportTimeScale()).toBe(1);
   });
 
   it('an enemy bullet on the player registers a hit and invulnerability in both scenes', async () => {
@@ -1139,6 +1155,14 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     expect(combatScene.triggerTeleport()).toBe(true);
     expect(formationScene.triggerTeleport()).toBe(true);
 
+    // Both resolve the nearest safe ray candidate at trigger time; complete the
+    // sequenced transit so each ship lands (parent AH-0MWW50H0B002U6XU).
+    for (const scene of [combatScene, formationScene]) {
+      (
+        scene as unknown as { _tickTeleportSequence(dt: number): void }
+      )._tickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
+    }
+
     // Both resolve the nearest safe ray candidate through the shared path.
     expect(combatScene.getPlayer()!.x).toBeCloseTo(380, 5);
     expect(formationScene.getPlayer()!.x).toBeCloseTo(380, 5);
@@ -1191,6 +1215,14 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
 
     expect(playScene.triggerTeleport()).toBe(true);
     expect(combatScene.triggerTeleport()).toBe(true);
+
+    // Complete the sequenced transit in both scenes so the comparison is of
+    // the resolved landing spots, not the shared start position.
+    for (const scene of [playScene, combatScene]) {
+      (
+        scene as unknown as { _tickTeleportSequence(dt: number): void }
+      )._tickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
+    }
 
     // Same inputs through the same shared algorithm → same landing spot.
     expect(combatScene.getPlayer()!.x).toBe(playScene.getPlayer()!.x);

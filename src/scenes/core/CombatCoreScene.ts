@@ -59,6 +59,9 @@ import {
   PLAYER_RESPAWN_INVULNERABLE,
   SHIP_COLOR,
   SHIP_SIZE,
+  TELEPORT_GROW_TIME_SCALE,
+  TELEPORT_TUNNEL_COLLAPSE_START_SECONDS,
+  TELEPORT_TUNNEL_TRANSIT_START_SECONDS,
 } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
@@ -179,6 +182,12 @@ import { GrazeTracker } from '../../core/graze';
 import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
+import {
+  createTeleportTunnel,
+  teleportTunnelPhaseAt,
+  type TeleportTunnel,
+  type TeleportTunnelPhase,
+} from '../../vfx/teleportTunnel';
 import {
   playMineralCollectChimeSound,
   playPowerUpBlockedSound,
@@ -446,6 +455,25 @@ export class CombatCoreScene<
    * orbit deterministically, independent of the weapon's fire cadence.
    */
   private _optionsOrbitPhase = 0;
+  /**
+   * Live teleport-tunnel sequence state (parent AH-0MWW50H0B002U6XU, slice
+   * AH-0MWWDJ6HO006UUVE). `null` when no warp is in flight.
+   *
+   * Owned by the shared core so `PlayScene` and every teleporting gym run the
+   * one grow → transit → collapse timeline, expose the same ¼-speed factor and
+   * grow-phase steering lock, and tear the tunnel down through the same path
+   * (gym↔game parity). The tunnel advances at **real** time, never at the
+   * world time scale, so grow/transit durations are wall-clock independent of
+   * the slow-motion beat they themselves produce.
+   */
+  private _teleportSequence: {
+    readonly tunnel: TeleportTunnel;
+    readonly startX: number;
+    readonly startY: number;
+    readonly endX: number;
+    readonly endY: number;
+    elapsedSeconds: number;
+  } | null = null;
   /**
    * Persistent shared Graphics that draws the orbiting Options pods. Created
    * lazily while the weapon is active and destroyed when it expires or the run
@@ -1077,6 +1105,149 @@ export class CombatCoreScene<
     this.phaseShiftJuice.update(this.getEffectsRegistry().isPhased, dt);
   }
 
+  // ── Teleport sequence (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE) ──
+
+  /**
+   * The world time-scale factor produced by an in-flight teleport
+   * ({@link TELEPORT_GROW_TIME_SCALE} × ¼ during the grow phase, `1` otherwise).
+   *
+   * Composed **multiplicatively** by each scene with the existing dt seams (the
+   * Chrono Field enemy-bullet scale), never replacing them, so the slow-motion
+   * beat stacks correctly and clears to exactly `1×` the moment the sequence
+   * ends or is torn down. The teleport sequence itself is advanced at real time
+   * by {@link CombatCoreScene._tickTeleportSequence}, so it is never slowed by
+   * its own factor.
+   */
+  teleportTimeScale(): number {
+    return this._teleportSequence !== null &&
+      teleportTunnelPhaseAt(this._teleportSequence.elapsedSeconds) === 'grow'
+      ? TELEPORT_GROW_TIME_SCALE
+      : 1;
+  }
+
+  /**
+   * Whether the ship is held by the teleport sequence this frame (grow and
+   * transit phases). While locked, {@link CombatCoreScene._tickPlayer} ignores
+   * player input and skips thrust physics, so the ship grows the tunnel in
+   * place and then rides it to the destination instead of drifting off course.
+   * Control returns on the collapse phase (the ship has already arrived).
+   */
+  isTeleportSteeringLocked(): boolean {
+    if (this._teleportSequence === null) return false;
+    const phase = teleportTunnelPhaseAt(this._teleportSequence.elapsedSeconds);
+    return phase === 'grow' || phase === 'transit';
+  }
+
+  /** Current teleport phase, or `'complete'` when no sequence is in flight. */
+  getTeleportPhase(): TeleportTunnelPhase {
+    return this._teleportSequence === null
+      ? 'complete'
+      : teleportTunnelPhaseAt(this._teleportSequence.elapsedSeconds);
+  }
+
+  /**
+   * Starts the shared sequenced warp from the ship's current position to
+   * `destination`.
+   *
+   * The caller ({@link CombatScene.triggerTeleport}) resolves the destination
+   * and spends the warp / grants the arrival Phase Shift **before** calling
+   * this, preserving today's semantics; this method only owns the tunnel and
+   * the deferred ship motion. The ship does **not** move until the transit
+   * phase begins. Any in-flight sequence is torn down first (idempotent restart).
+   *
+   * @param destination - Resolved warp destination (world px).
+   */
+  protected _startTeleportSequence(destination: { x: number; y: number }): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    // Replace any in-flight sequence (never leave two tunnels alive).
+    this._teardownTeleportSequence();
+    const tunnel = createTeleportTunnel(this, {
+      startX: player.x,
+      startY: player.y,
+      endX: destination.x,
+      endY: destination.y,
+    });
+    this._teleportSequence = {
+      tunnel,
+      startX: player.x,
+      startY: player.y,
+      endX: destination.x,
+      endY: destination.y,
+      elapsedSeconds: 0,
+    };
+  }
+
+  /**
+   * Advances the in-flight teleport sequence by `dtSeconds` of **real** time.
+   *
+   * Drives the tunnel visual, moves the ship along the tunnel during the
+   * transit phase (so it arrives exactly when transit ends), and tears the
+   * sequence down on completion. Non-positive / non-finite deltas are ignored,
+   * and a scene with no sequence is a no-op — safe to call every frame from
+   * every scene.
+   */
+  protected _tickTeleportSequence(dtSeconds: number): void {
+    const sequence = this._teleportSequence;
+    if (sequence === null) return;
+    if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) return;
+    sequence.elapsedSeconds += dtSeconds;
+    sequence.tunnel.update(dtSeconds);
+
+    const phase = teleportTunnelPhaseAt(sequence.elapsedSeconds);
+    if (phase !== 'grow') {
+      // The ship travels the tunnel at real time during transit; the progress
+      // clamps at 1 across collapse and completion, so it finishes exactly at
+      // the destination even on a single large tick that jumps to 'complete'.
+      const progress = Math.min(
+        1,
+        Math.max(
+          0,
+          (sequence.elapsedSeconds - TELEPORT_TUNNEL_TRANSIT_START_SECONDS) /
+            (TELEPORT_TUNNEL_COLLAPSE_START_SECONDS -
+              TELEPORT_TUNNEL_TRANSIT_START_SECONDS),
+        ),
+      );
+      this._setTeleportShipPosition(
+        sequence.startX + (sequence.endX - sequence.startX) * progress,
+        sequence.startY + (sequence.endY - sequence.startY) * progress,
+      );
+    }
+
+    if (phase === 'complete') {
+      this._teardownTeleportSequence();
+    }
+  }
+
+  /**
+   * Destroys the in-flight teleport tunnel and clears the sequence state so the
+   * world time scale returns to exactly `1×`. Idempotent: safe to call from
+   * completion, pause, transition, `resetRunState()` and scene shutdown alike.
+   */
+  protected _teardownTeleportSequence(): void {
+    const sequence = this._teleportSequence;
+    if (sequence === null) return;
+    this._teleportSequence = null;
+    sequence.tunnel.destroy();
+  }
+
+  /**
+   * Moves the ship to `(x, y)` during the transit and keeps the movement
+   * state's position in sync (physicsTick uses the internal state as its base,
+   * so a position write without this would be undone on the next tick).
+   */
+  private _setTeleportShipPosition(x: number, y: number): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    player.setPosition(x, y);
+    const state = player.getMovementState();
+    (
+      player as unknown as {
+        _movementState: typeof state;
+      }
+    )._movementState = { ...state, x, y };
+  }
+
   /**
    * Shared player-control step (AH-0MUII39KX007YUQ0, AC1). Every
    * scene advances the player identically, in the same order every frame:
@@ -1099,6 +1270,11 @@ export class CombatCoreScene<
    * no-op.
    */
   protected _tickPlayer(dt: number): void {
+    // Advance the in-flight teleport sequence at real time before anything
+    // else, so its grow/transit/collapse clock and the ship's tunnel transit
+    // are never slowed by the ¼-speed world factor the sequence itself
+    // produces (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE).
+    this._tickTeleportSequence(dt);
     // Advance the danger-multiplier decay clock before anything else so the
     // chain loses a tier exactly `GRAZE_DECAY_SECONDS` after the last graze —
     // in the game and every gym, since this is the one shared player step
@@ -1124,15 +1300,22 @@ export class CombatCoreScene<
     // (AH-0MV1BIVVK0043TEM).
     this._updateOptionsEscort(dt);
     // Advance timed-weapon countdowns before auto-fire so an expired
-    // weapon stops firing this frame.
-    player.tickWeaponTimers(dt * 1000);
+    // weapon stops firing this frame. The teleport slow-motion beat scales the
+    // effect/recharge clocks to ¼ during grow (producer Q1 = a), so the same
+    // shot-cadence slowdown the world sees applies to the player's weapons too.
+    player.tickWeaponTimers(dt * 1000 * this.teleportTimeScale());
     // Speed Boost live boost: a weapons-only fire-rate boost. Ship movement
     // is untouched, so the movement config is never rescaled (AC1).
     const registry = this.getEffectsRegistry();
     player.setFireRateMultiplier(registry.fireRateMultiplier());
-    const input = this._readPlayerInput();
-    if (input) player.setInput(input);
-    player.physicsTick(dt, this.scale.width, this.scale.height);
+    // During the teleport grow/transit phases the ship is held by the tunnel:
+    // ignore input and skip thrust physics so it grows the tunnel in place and
+    // then rides it (the transit position is written by _tickTeleportSequence).
+    if (!this.isTeleportSteeringLocked()) {
+      const input = this._readPlayerInput();
+      if (input) player.setInput(input);
+      player.physicsTick(dt, this.scale.width, this.scale.height);
+    }
     // Tractor-beam step (Galaga capturer, AH-0MV01EFII008298D): apply the
     // bounded pull and resolve the temporary capture before auto-fire, so a
     // capture on this frame suppresses fire on this frame. Runs after physics
@@ -2332,6 +2515,10 @@ export class CombatCoreScene<
    * restarted run never inherits a half-stuck or half-thrown drop.
    */
   protected resetRunState(): void {
+    // Tear down any in-flight teleport sequence so a restarted run begins at
+    // exactly 1× world speed with no leaked tunnel (parent
+    // AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE).
+    this._teardownTeleportSequence();
     // Re-anchor the shared beat clock at t=0 for the new run
     // (AH-0MUY08V6W001SJJN): the scene instance is reused across restarts,
     // so without this a restarted run inherits the previous run's beat
@@ -2414,6 +2601,10 @@ export class CombatCoreScene<
    * core, so the teardown terminal cannot drift.
    */
   protected teardownRunState(): void {
+    // Release any in-flight teleport tunnel so a scene shutdown mid-sequence
+    // leaks no container and leaves no lingering slow-motion factor (parent
+    // AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE).
+    this._teardownTeleportSequence();
     for (const drone of this.drones) drone.destroy();
     this.drones = [];
     stopMysteryUfoWarbleSound();

@@ -10,6 +10,8 @@ import {
   FORCE_FIELD_COLOR,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
+  TELEPORT_TUNNEL_DURATION_SECONDS,
+  TELEPORT_TUNNEL_GROW_PHASE_SECONDS,
 } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, advanceAndCull } from '../../entities/PlayerBullet';
@@ -317,6 +319,15 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   runUpdateAutoDefence(dt: number) {
     this._updateAutoDefence(dt);
   }
+  runTickTeleportSequence(dt: number) {
+    this._tickTeleportSequence(dt);
+  }
+  cancelTeleportSequence() {
+    this._teardownTeleportSequence();
+  }
+  runTeardownRunState() {
+    this.teardownRunState();
+  }
   runHitPlayer() {
     this._hitPlayer();
   }
@@ -603,6 +614,12 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(moved).toBe(true);
     expect(scene.effects.hasTeleport()).toBe(false);
+    // The position write is deferred: the ship grows the tunnel in place, then
+    // rides it during transit (parent AH-0MWW50H0B002U6XU, slice
+    // AH-0MWWDJ6HO006UUVE). Advance the whole sequence to land at the target.
+    expect(player.x).toBe(100);
+    expect(player.y).toBe(100);
+    scene.runTickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS);
     expect(player.x !== 100 || player.y !== 100).toBe(true);
   });
 
@@ -621,6 +638,92 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.effects.hasTeleport()).toBe(true);
   });
 
+  describe('sequenced teleport seam (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE)', () => {
+    it('AC — sequences grow → transit → collapse with the world factor ¼ only during grow', async () => {
+      const scene = await boot();
+      const player = scene.addPlayer({ x: 100, y: 100 });
+      scene.effects.applyCollect('teleport');
+      expect(scene.triggerTeleport()).toBe(true);
+
+      // Grow: ¼-speed factor, steering locked, ship held at the start.
+      expect(scene.getTeleportPhase()).toBe('grow');
+      expect(scene.teleportTimeScale()).toBeCloseTo(0.25, 10);
+      expect(scene.isTeleportSteeringLocked()).toBe(true);
+      expect(player.x).toBe(100);
+      expect(player.y).toBe(100);
+
+      // Advance most of the grow phase: still grow, still at the start.
+      scene.runTickTeleportSequence(TELEPORT_TUNNEL_GROW_PHASE_SECONDS * 0.5);
+      expect(scene.getTeleportPhase()).toBe('grow');
+      expect(scene.teleportTimeScale()).toBeCloseTo(0.25, 10);
+      expect(player.x).toBe(100);
+
+      // Cross into transit: factor returns to 1×, the ship begins to travel.
+      scene.runTickTeleportSequence(TELEPORT_TUNNEL_GROW_PHASE_SECONDS * 0.5 + 1e-6);
+      expect(scene.getTeleportPhase()).toBe('transit');
+      expect(scene.teleportTimeScale()).toBe(1);
+      expect(Math.hypot(player.x - 100, player.y - 100)).toBeGreaterThan(0);
+
+      // Complete: factor exactly 1×, steering unlocked, position at destination.
+      scene.runTickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS);
+      expect(scene.getTeleportPhase()).toBe('complete');
+      expect(scene.teleportTimeScale()).toBe(1);
+      expect(scene.isTeleportSteeringLocked()).toBe(false);
+      expect(Math.hypot(player.x - 100, player.y - 100)).toBeGreaterThan(0);
+    });
+
+    it('AC — does not move the ship until transit begins, then carries it along the tunnel at real time', async () => {
+      const scene = await boot();
+      const player = scene.addPlayer({ x: 100, y: 100 });
+      scene.effects.applyCollect('teleport');
+      scene.triggerTeleport();
+
+      // Frame-by-frame through grow: the ship never moves off the start.
+      const startX = player.x;
+      const startY = player.y;
+      for (let t = 0; t < TELEPORT_TUNNEL_GROW_PHASE_SECONDS - 0.02; t += 0.02) {
+        scene.runTickTeleportSequence(0.02);
+        expect(player.x).toBe(startX);
+        expect(player.y).toBe(startY);
+      }
+      // One tick into transit: the ship has started travelling.
+      scene.runTickTeleportSequence(0.05);
+      expect(scene.getTeleportPhase()).toBe('transit');
+      expect(Math.hypot(player.x - startX, player.y - startY)).toBeGreaterThan(0);
+    });
+
+    it('AC — teardown is idempotent and returns the world factor to exactly 1×', async () => {
+      const scene = await boot();
+      scene.addPlayer({ x: 100, y: 100 });
+      scene.effects.applyCollect('teleport');
+      scene.triggerTeleport();
+      expect(scene.teleportTimeScale()).toBeCloseTo(0.25, 10);
+
+      // Interrupt mid-grow: teardown clears the sequence and the factor.
+      scene.cancelTeleportSequence();
+      expect(scene.getTeleportPhase()).toBe('complete');
+      expect(scene.teleportTimeScale()).toBe(1);
+      expect(scene.isTeleportSteeringLocked()).toBe(false);
+      // Idempotent: a second teardown is a no-op.
+      expect(() => scene.cancelTeleportSequence()).not.toThrow();
+      expect(scene.teleportTimeScale()).toBe(1);
+    });
+
+    it('AC — a scene shutdown mid-sequence clears the factor and leaks nothing', async () => {
+      const scene = await boot();
+      scene.addPlayer({ x: 100, y: 100 });
+      scene.effects.applyCollect('teleport');
+      scene.triggerTeleport();
+      scene.runTickTeleportSequence(0.1);
+      expect(scene.getTeleportPhase()).toBe('grow');
+
+      // The shared teardown path (scene SHUTDOWN / resetRunState) clears it.
+      scene.runTeardownRunState();
+      expect(scene.getTeleportPhase()).toBe('complete');
+      expect(scene.teleportTimeScale()).toBe(1);
+    });
+  });
+
   it('AC1/AC3 — automatic defence warps on danger with no key press when Teleport is chosen', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
@@ -634,6 +737,8 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(scene.effects.hasTeleport()).toBe(false);
     expect(scene.effects.isPhased).toBe(true);
+    // The warp is sequenced: the ship lands only once the transit completes.
+    scene.runTickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS);
     expect(Math.hypot(player.x - 100, player.y - 100)).toBeGreaterThan(0);
   });
 

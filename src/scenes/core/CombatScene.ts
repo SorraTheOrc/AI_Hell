@@ -1575,15 +1575,11 @@ export abstract class CombatScene<
     const phaseActivated = registry.consumeTeleport();
     // Direct activation also plays the dedicated cue (Q6).
     if (phaseActivated) playPhaseShiftSound();
-    player.setPosition(dest.x, dest.y);
-    // Keep the movement state's position in sync with the new position
-    // (physicsTick uses the internal state as its base).
-    const state = player.getMovementState();
-    (
-      player as unknown as {
-        _movementState: { x: number; y: number };
-      }
-    )._movementState = { ...state, x: dest.x, y: dest.y };
+    // Sequence the warp as a deliberate grow → transit → collapse instead of an
+    // instant blink (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE).
+    // The ship is not moved here: `_startTeleportSequence` opens the tunnel and
+    // the shared player tick writes the position when the transit begins.
+    this._startTeleportSequence(dest);
     return true;
   }
 

@@ -20,7 +20,7 @@ import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
 import { POWER_UP_LIFECYCLE_TOTAL_LIFETIME } from '../../powerups/PowerUp';
-import { MINERAL_REDROP_SCATTER_RADIUS } from '../../core/constants';
+import { MINERAL_REDROP_SCATTER_RADIUS, TELEPORT_TUNNEL_DURATION_SECONDS } from '../../core/constants';
 import { RULES_SCHEMA_VERSION, RULES_STORAGE_KEY } from '../../core/rules';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
@@ -457,6 +457,11 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
     expect(registry.hasTeleport()).toBe(false);
     expect(registry.isPhased).toBe(true);
+    // Sequenced seam: complete the transit so the ship lands (parent
+    // AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE).
+    (
+      scene as unknown as { _tickTeleportSequence(dt: number): void }
+    )._tickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
   });
 

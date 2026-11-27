@@ -17,6 +17,7 @@ import {
   MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_SIZE,
   SHIP_COLOR,
+  TELEPORT_TUNNEL_DURATION_SECONDS,
 } from '../../../core/constants';
 import {
   PLAYER_BULLET_RADIUS,
@@ -2200,6 +2201,11 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
 
     expect(registry.hasTeleport()).toBe(false);
     expect(registry.isPhased).toBe(true);
+    // Sequenced seam: the ship lands when the transit completes, not on the
+    // trigger frame (parent AH-0MWW50H0B002U6XU, slice AH-0MWWDJ6HO006UUVE).
+    (
+      scene as unknown as { _tickTeleportSequence(dt: number): void }
+    )._tickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);
     expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);

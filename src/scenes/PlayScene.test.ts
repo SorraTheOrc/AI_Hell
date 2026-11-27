@@ -34,6 +34,7 @@ import {
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_MIN_SEPARATION,
+  TELEPORT_TUNNEL_DURATION_SECONDS,
 } from '../core/constants';
 import {
   WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
@@ -3394,6 +3395,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
       6,
     );
     expect(registry.isPhased).toBe(true); // Phase Shift granted on arrival
+    // Sequenced seam: the ship is held at the start while the tunnel grows,
+    // then lands when the transit completes (parent AH-0MWW50H0B002U6XU).
+    expect(player.x).toBeCloseTo(beforeX);
+    expect(player.y).toBeCloseTo(beforeY);
+    (
+      scene as unknown as { _tickTeleportSequence(dt: number): void }
+    )._tickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);
     expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);
@@ -3440,8 +3448,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.triggerTeleport()).toBe(true);
 
+    // The destination is resolved at trigger time; complete the sequenced
+    // transit so the ship lands there (parent AH-0MWW50H0B002U6XU).
+    const enemyX = enemy.x;
+    const enemyY = enemy.y;
+    (
+      scene as unknown as { _tickTeleportSequence(dt: number): void }
+    )._tickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
+
     // The landing spot must not overlap the enemy body.
-    const distFromEnemy = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+    const distFromEnemy = Math.hypot(player.x - enemyX, player.y - enemyY);
     expect(distFromEnemy).toBeGreaterThan(enemy.getHitRadius());
   });
 
@@ -4173,6 +4189,10 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     expect(registry.hasTeleport()).toBe(false);
     expect(registry.isTeleportRecharging()).toBe(true);
     expect(registry.isPhased).toBe(true);
+    // Complete the sequenced transit so the ship lands (parent AH-0MWW50H0B002U6XU).
+    (
+      scene as unknown as { _tickTeleportSequence(dt: number): void }
+    )._tickTeleportSequence(TELEPORT_TUNNEL_DURATION_SECONDS + 0.1);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
   });
 
