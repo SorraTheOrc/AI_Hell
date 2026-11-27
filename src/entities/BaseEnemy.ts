@@ -17,11 +17,9 @@
 
 import Phaser from 'phaser';
 
-import {
-  HIT_RADIUS_BUFFER_PX,
-  MINERAL_DROP_MULTIPLIER,
-} from '../core/constants';
+import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import type { EliteBehaviour } from '../core/eliteVocabulary';
+import { resolveMineralRedropCount } from '../core/mineralPayout';
 import { loadRules } from '../core/rules';
 import { playEnemyForceFieldBreakSound } from '../audio/effects';
 import {
@@ -867,10 +865,16 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    */
   mineralRedropCount(rng: () => number = Math.random): number {
     const rules = loadRules();
-    const bonus =
-      rules.mineralRedropBonusMin +
-      rng() * (rules.mineralRedropBonusMax - rules.mineralRedropBonusMin);
-    return MINERAL_DROP_MULTIPLIER * Math.round(this._mineralCount + bonus);
+    // The doubled-count formula lives in the Phaser-free
+    // `src/core/mineralPayout.ts` module so the headless arena can model the
+    // exact same rule (AH-0MWT5CQMH004ZXQK). The bonus bounds stay injectable
+    // so a live gym rules edit still applies.
+    return resolveMineralRedropCount(
+      this._mineralCount,
+      rng,
+      rules.mineralRedropBonusMin,
+      rules.mineralRedropBonusMax,
+    );
   }
 
   /**

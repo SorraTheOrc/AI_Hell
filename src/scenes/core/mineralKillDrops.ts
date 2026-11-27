@@ -37,6 +37,13 @@
  * suppresses the orange scatter when the deposit fires, so one wreck always
  * produces exactly one payout shape.
  *
+ * The **decision** itself (the doubled count, deposit threshold/value, asteroid
+ * yield and Salvage fold) lives in the Phaser-free `src/core/mineralPayout.ts`
+ * module, which this seam delegates to. Keeping the decision there means the
+ * headless arena can import the same rule without Phaser, and neither the game
+ * nor the arena can drift from the other. This module owns only the Phaser-side
+ * layout — turning the decision into `Mineral` display objects.
+ *
  * @module scenes/core/mineralKillDrops
  */
 
@@ -44,12 +51,15 @@ import Phaser from 'phaser';
 
 import {
   MINERAL_DEPOSIT_COLOR,
-  MINERAL_DEPOSIT_THRESHOLD,
   MINERAL_DEPOSIT_VALUE,
   MINERAL_DROP_MULTIPLIER,
   MINERAL_SALVAGE_COLOR,
   MINERAL_SIZE,
 } from '../../core/constants';
+import {
+  decideMineralPayout,
+  resolveAsteroidMineralYield,
+} from '../../core/mineralPayout';
 import { Mineral, scatterDoubledMineralDrops, scatterMineralDrops } from '../../entities/Mineral';
 
 export { scatterMineralDrops };
@@ -91,7 +101,8 @@ export function resolveMineralKillDrops(
   // pair about the death site (no RNG draws), preserving the kill-path RNG
   // stream for seeded captures/tests.
   if (typeof entity.getSizeTier === 'function') {
-    if (entity.getSizeTier() !== 'small') return [];
+    const count = resolveAsteroidMineralYield(entity.getSizeTier());
+    if (count <= 0) return [];
     const half = MINERAL_DROP_MULTIPLIER / 2;
     return [
       new Mineral(scene, {
@@ -102,7 +113,7 @@ export function resolveMineralKillDrops(
         x: entity.x + MINERAL_SIZE * half,
         y: entity.y,
       }),
-    ].slice(0, MINERAL_DROP_MULTIPLIER);
+    ].slice(0, count);
   }
 
   // Non-asteroid enemy: re-drop its collected minerals plus a random
@@ -227,15 +238,32 @@ function spawnKillPayout(
   salvageBonus: number,
   rng: () => number,
 ): Mineral[] {
-  if (redropCount + salvageBonus >= MINERAL_DEPOSIT_THRESHOLD) {
-    return [createMineralDeposit(scene, x, y)];
+  const decision = decideMineralPayout(redropCount, salvageBonus);
+  switch (decision.kind) {
+    case 'deposit':
+      return [createMineralDeposit(scene, x, y)];
+    case 'none':
+      return [];
+    case 'asteroid':
+      // Asteroids bypass this seam (handled by resolveMineralKillDrops); the
+      // decision never reaches here.
+      return [];
+    case 'scatter': {
+      const drops = scatterDoubledMineralDrops(
+        scene,
+        x,
+        y,
+        decision.goldCount,
+        rng,
+      );
+      if (decision.salvageCount > 0) {
+        drops.push(
+          ...scatterSalvageMineralDrops(scene, x, y, decision.salvageCount, rng),
+        );
+      }
+      return drops;
+    }
   }
-
-  const drops = scatterDoubledMineralDrops(scene, x, y, redropCount, rng);
-  if (salvageBonus > 0) {
-    drops.push(...scatterSalvageMineralDrops(scene, x, y, salvageBonus, rng));
-  }
-  return drops;
 }
 
 /**

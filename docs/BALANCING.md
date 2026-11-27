@@ -407,11 +407,13 @@ asteroid leaves **two** gold minerals instead of one; a destroyed non-asteroid
 enemy re-drops **`2 × round(absorbed + bonus)`** — the same
 `mineralRedropBonusMin`/`Max` roll (defaults 0.25/1.25), doubled **after**
 rounding. The multiplier lives once as **`MINERAL_DROP_MULTIPLIER = 2`** in
-`src/core/constants.ts` and is applied in the shared kill seams
-(`resolveMineralKillDrops` in `src/scenes/core/mineralKillDrops.ts` and
-`BaseEnemy.mineralRedropCount`), feeding both the shared payout seam and the
-legacy `BaseEnemy.spawnMineralDrops` parity path. `PlayScene` and every
-formation gym consume the same seams, so game↔gym parity holds automatically.
+`src/core/constants.ts`, and the whole kill-payout **decision** (doubled count,
+deposit threshold/value, small-asteroid yield and Salvage fold) lives in the
+Phaser-free **`src/core/mineralPayout.ts`** module — the single source of truth
+consumed by the scene seam (`resolveMineralKillDrops` in
+`src/scenes/core/mineralKillDrops.ts`), `BaseEnemy.mineralRedropCount` and the
+headless arena. `PlayScene` and every formation gym consume the same seams, so
+game↔gym↔arena parity holds automatically.
 
 - **Deposit threshold/value stay 10/10.** The **doubled** count is what is
   compared against `MINERAL_DEPOSIT_THRESHOLD`, so a wreck whose doubled payout
