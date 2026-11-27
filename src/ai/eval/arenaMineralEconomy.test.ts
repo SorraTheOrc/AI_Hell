@@ -14,9 +14,10 @@
  *   and its 150-tick top-up are gone).
  * - A shipped five-wave sortie's mineral supply is **kill-driven**: every
  *   non-asteroid kill pays `2 × round(absorbed + bonus[0.25–1.25])` (0 or 2
- *   with no absorption), each destroyed small-asteroid stand-in pays 2, and
- *   nothing else supplies minerals. The supply therefore tracks the sortie's
- *   enemy count instead of a harness constant.
+ *   before any absorption, more once a surviving hostile has swallowed a
+ *   mineral — AH-0MWT5CSF8003CFQF), each destroyed small-asteroid stand-in
+ *   pays 2, and nothing else supplies minerals. The supply therefore tracks
+ *   the sortie's enemy count instead of a harness constant.
  * - The seeded **skirmish** keeps its fixed field (its own guard lives in
  *   `arenaMineralKillDrops.test.ts`).
  *
@@ -37,7 +38,7 @@ import { ringEntryOwnership, ringTimingHexes, resolveDeploymentLoadout } from '.
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
 import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
 import { truncateCampaignForDeployment } from '../../scenes/hangarWar/hangarDeployment';
-import { MINERAL_DROP_MULTIPLIER } from '../../core/constants';
+import { MINERAL_DEPOSIT_VALUE, MINERAL_DROP_MULTIPLIER } from '../../core/constants';
 import {
   DEFAULT_MINERAL_REDROP_BONUS_MAX,
   DEFAULT_MINERAL_REDROP_BONUS_MIN,
@@ -260,9 +261,15 @@ describe('arena mineral economy (AH-0MWT5CPPL009QZWE)', () => {
       expect(ring.plannedEnemies).toBeGreaterThan(40);
       expect(enemyKilled).toBeGreaterThan(0);
       // …and the mineral supply is now a function of those kills, not a fixed
-      // field: with no absorption a non-asteroid wreck pays 0 or 2 (expected
-      // 1.5) and each asteroid stand-in pays the small rock's 2.
-      const perWreckCap = MINERAL_DROP_MULTIPLIER * (enemyKilled + asteroidDestroyed);
+      // field: a non-asteroid wreck pays `2 × round(absorbed + bonus)` (≥ 2 once
+      // a hostile has swallowed anything) and each asteroid stand-in pays the
+      // small rock's 2. Absorption (AH-0MWT5CSF8003CFQF) can raise `absorbed`
+      // on any surviving wrecks, but a payout at the shared deposit threshold
+      // collapses to **one** 10-value deposit, so no non-asteroid wreck can pay
+      // more than `MINERAL_DEPOSIT_VALUE`.
+      const perWreckCap =
+        MINERAL_DEPOSIT_VALUE * enemyKilled +
+        MINERAL_DROP_MULTIPLIER * asteroidDestroyed;
       expect(introduced).toBeGreaterThan(0);
       expect(introduced).toBeLessThanOrEqual(perWreckCap);
       // Above the skirmish's hard 18-point cap — the old ceiling no longer
@@ -270,11 +277,11 @@ describe('arena mineral economy (AH-0MWT5CPPL009QZWE)', () => {
       expect(introduced).toBeGreaterThan(SKIRMISH_MINERAL_CAP);
     }
     // The measured kill-driven supply is a deterministic figure per seed, so
-    // pin it: ring 1 seed 1 banks 88 minerals from its wrecks (the 48-wreck
-    // sortie's 0/2 non-asteroid payouts plus the asteroid stand-ins' pairs),
-    // ring 2 seed 2 banks 138 (64 wrecks plus the respawning shadow hazard).
-    expect(ring1.accounting.introduced).toBe(88);
-    expect(ring2.accounting.introduced).toBe(138);
+    // pin it: ring 1 seed 1 banks 121 minerals from its wrecks (the kill-drop
+    // rule plus the absorbed counts that surviving hostiles swallowed before
+    // they died), ring 2 seed 2 banks 193. Never a harness constant.
+    expect(ring1.accounting.introduced).toBe(121);
+    expect(ring2.accounting.introduced).toBe(193);
   }, ARENA_TIMEOUT_MS);
 
   it('records the kill-driven supply at each ring’s aggression-selected level', () => {

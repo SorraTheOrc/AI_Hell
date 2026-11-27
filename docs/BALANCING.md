@@ -387,23 +387,35 @@ wall clock): `src/ai/eval/arenaMineralEconomy.test.ts`. Reproduce it with
   records and the mineral model never perturbs the scenario/behaviour draws.
   **Measured:** a hostile-free real-supply run introduces **0** minerals (the
   old fixed 18-point reservoir and its 150-tick top-up are gone), while the
-  shipped five-wave sortie supplies minerals from its wrecks alone — **88**
-  minerals for ring 1's 48-wreck sortie (seed 1) and **138** for ring 2's
-  64-wreck sortie plus its respawning asteroid stand-ins (seed 2).
-- **Remaining fidelity boundaries.** Enemy **absorption** (the `collected`
-  count) is its own follow-up item (AH-0MWT5CSF8003CFQF); until it lands every
-  wreck's `collected` is 0, so a non-asteroid pays 0 or 2 (expected 1.5).
-  Asteroid **splitting** is not simulated — the shadow-hazard body stands in
-  for the whole chain, whose total mineral payout is the small rock's pair.
-  Salvage's timed bounty is not modelled, so its bonus is always 0.
+  shipped five-wave sortie supplies minerals from its wrecks (and from the
+  absorbed counts those wrecks re-drop) — **121** minerals for ring 1's
+  48-wreck sortie (seed 1) and **193** for ring 2's 64-wreck sortie plus its
+  respawning asteroid stand-ins (seed 2).
+- **Absorption (modelled, AH-0MWT5CSF8003CFQF).** A live non-asteroid hostile
+  that overlaps a mineral **swallows** it before any wreck pays out, and the
+  mineral's worth is tallied on that hostile's `collected` count — the game's
+  `collectMinerals` / `BaseEnemy.collectMineral` rule (a red deposit counts as
+  ten). The wreck's later payout therefore re-drops `2 × round(absorbed +
+  bonus)`: the absorbed minerals are *paid again*, not deleted. Asteroids and
+  lane-traffic hazards never absorb (inert / not a mineral carrier). The player
+  keeps first pick — the collection pass runs before absorption, exactly as
+  `collectMinerals` orders it. **Remaining boundaries:** hostiles are
+  **stationary** (unless the opt-in moving-hostile mode is on), so they absorb
+  only a mineral a wreck drops under them and never chase one; the arena has no
+  spawning-growth gate (its bodies spawn fully grown); the seeded **skirmish**
+  keeps its fixed field and does **not** absorb, because it has no kill drops to
+  re-pay the count (documented above). Asteroid **splitting** is not simulated —
+  the shadow-hazard body stands in for the whole chain, whose total mineral
+  payout is the small rock's pair. Salvage's timed bounty is not modelled, so
+  its bonus is always 0.
 - **The seeded skirmish is unchanged.** It keeps its fixed seeded field and its
   150-tick top-up — a hard `minerals × 3 = 18` per-run cap — asserted by its
   own tests.
 
-**Consequence.** With the shipped kill-drop economy in place, measured
-per-deployment minerals rose from 5.83 / 3.06 to **42.94 / 43.92** (rings 1/2,
-grind line) and a captured sortie banks **85.89 / 87.83** minerals at its
-mini-boss checkpoint — far above the parent item's 9.0 / 6.0 target. The
+**Consequence.** With the shipped kill-drop economy and absorption in place,
+measured per-deployment minerals rose from 5.83 / 3.06 to **61.28 / 65.56**
+(rings 1/2, grind line) and a captured sortie banks **122.56 / 131.11** minerals
+at its mini-boss checkpoint — far above the parent item's 9.0 / 6.0 target. The
 earlier "perfect-collection ceiling" of 7.67 / 5.53 was the fixed-field
 artefact the evidence slice predicted; the fidelity fix closes the gap (parent
 AH-0MWSGD3QF004RWAQ).
@@ -1376,13 +1388,14 @@ balance report.
 
   **Superseded measurement (AH-0MWT5CRJ600382MS).** The figures in this table
   are the historical matchup-rule evidence. Once the arena began modelling the
-  shipped game's kill-drop mineral economy, the same measurement re-read
-  **27.85 min** (24.94–32.03) for ring 1 grind and **59.10 min**
-  (52.13–66.06) for ring 2 grind. Both grind lines now sit
-  **within-tolerance** of their windows (ring 1 above its 24-minute tolerance
-  floor, ring 2 above its 48-minute floor); the windows, tolerances and per-hex
-  budget are untouched — see *Mineral supply: the modelled kill-drop economy*
-  above and `docs/dev/ring-timing-baseline.json`.
+  shipped game's kill-drop mineral economy and its hostile mineral **absorption**
+  (AH-0MWT5CRJ600382MS / AH-0MWT5CSF8003CFQF), the same measurement re-read
+  **27.80 min** (26.45–29.03) for ring 1 grind and **60.33 min** (52.92–69.72)
+  for ring 2 grind. Ring 1 sits **within-tolerance** of its window (above its
+  24-minute tolerance floor) and ring 2 now reads **in-window** (0.3 min above
+  its 60-minute floor); the windows, tolerances and per-hex budget are untouched
+  — see *Mineral supply: the modelled kill-drop economy* above and
+  `docs/dev/ring-timing-baseline.json`.
 
 **Simplified (not modelled; treat the report as a directional signal).**
 

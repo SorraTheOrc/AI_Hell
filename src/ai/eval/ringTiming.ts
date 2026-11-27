@@ -144,13 +144,15 @@
  * Re-rated against the derived windows (AH-0MWHU5AV800969NA), the shipped
  * one-level deployment measures ring 1 grind as **`within-tolerance`** (27.8
  * min against 30–90 — 2.2 min under the window floor, inside the 6-minute
- * tolerance whose floor is 24) and ring 2 grind as
- * **`within-tolerance`** (59.1 min against 60–180: 0.9 min under the window
- * floor, inside the ±12-minute tolerance whose floor is 48 — seeds 1–3 in
- * `docs/dev/ring-timing-baseline.json`). The pair moved with the game-faithful
- * kill-drop mineral economy (AH-0MWT5CRJ600382MS), which pays salvage for
- * every wreck; before it the arena's fixed field measured 22.6 / 51.7 min and
- * ring 1 read `missed`.
+ * tolerance whose floor is 24) and ring 2 grind as **`in-window`** (60.3 min
+ * against 60–180 — just above the window floor, where it sat
+ * `within-tolerance` at 59.1 min before hostile mineral absorption re-dropped
+ * the swallowed count; seeds 1–3 in `docs/dev/ring-timing-baseline.json`). The
+ * pair moved with the game-faithful kill-drop mineral economy
+ * (AH-0MWT5CRJ600382MS), which pays salvage for every wreck, and ring 2 moved
+ * again with mineral absorption (AH-0MWT5CSF8003CFQF); before the kill-drop
+ * model the arena's fixed field measured 22.6 / 51.7 min and ring 1 read
+ * `missed`.
  * The measured figures are recorded, never re-worded; the rulings are tracked
  * by two linked rebalancing items — ring 1 AH-0MWFDQ9EY004NO4X (ruled: honour
  * the wave `shootEnabled` gate, ramp each ring's aggression with its captures,
@@ -331,11 +333,11 @@ export function deriveRingTimingTarget(
  * Re-rated against these derived windows (AH-0MWHU5AV800969NA), the shipped
  * one-level sortie measures ring 1 grind at **27.8 minutes** (`within-tolerance`
  * of 30–90: 2.2 min under the window floor, inside the ±6-min tolerance whose
- * floor is 24) and ring 2 grind at **59.1 minutes** (`within-tolerance` of
- * 60–180: 0.9 min under the window floor, inside the ±12-min tolerance whose
- * floor is 48). The figures moved with the game-faithful kill-drop mineral
- * economy (AH-0MWT5CRJ600382MS) — before it the arena's fixed field measured
- * 22.6 / 51.7 min and ring 1 was `missed`. Earlier moves: 15.4 → 23.7 when the
+ * floor is 24) and ring 2 grind at **60.3 minutes** (`in-window` of 60–180:
+ * just above the window floor). The figures moved with the game-faithful
+ * kill-drop mineral economy (AH-0MWT5CRJ600382MS) and again with hostile
+ * mineral absorption (AH-0MWT5CSF8003CFQF) — before the kill-drop model the
+ * arena's fixed field measured 22.6 / 51.7 min and ring 1 was `missed`. Earlier moves: 15.4 → 23.7 when the
  * producer's ruling on **AH-0MWFDQ9EY004NO4X** landed (honour the wave
  * `shootEnabled` gate; ramp a ring's aggression with its captures), then 23.7 →
  * 22.6 when `hex-r1-1` dropped to aggression 1 (AH-0MWW28ET2002PNI8). The

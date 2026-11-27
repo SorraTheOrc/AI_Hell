@@ -619,11 +619,11 @@ describe('ring timing: budget verdicts', () => {
  * an accidental recalibration.
  *
  * Re-rated against the derived windows, the regenerated one-level sortie sits
- * within-tolerance on both rings (ring 1 27.8 min against 30–90; ring 2 59.1
- * min against 60–180): a window change is a producer ruling, not a re-word of
- * the measurement, so the per-hex pin stays authored and each ruling is
- * re-ruled by its linked rebalancing item (AH-0MWFDQ9EY004NO4X ring 1,
- * AH-0MWFDQCFV007BZE5 ring 2). The figures moved
+ * ring 1 grind 27.8 min against 30–90 (`within-tolerance`) and ring 2 grind
+ * 60.3 min against 60–180 (`in-window`): a window change is a producer ruling,
+ * not a re-word of the measurement, so the per-hex pin stays authored and each
+ * ruling is re-ruled by its linked rebalancing item (AH-0MWFDQ9EY004NO4X ring
+ * 1, AH-0MWFDQCFV007BZE5 ring 2). The figures moved
  * from a retry-dominated 15.4/57.0 min to 23.7/51.7 min when the per-level
  * arena began honouring the wave `shootEnabled` gate and the ring's
  * capture-progress aggression ramp landed (AH-0MWFDQ9EY004NO4X), ring 1
@@ -632,8 +632,9 @@ describe('ring timing: budget verdicts', () => {
  * and the whole pair moved to 27.8/59.1 min when the arena began modelling the
  * shipped game's kill-drop mineral economy (AH-0MWT5CRJ600382MS: every wreck
  * now pays salvage, so the bot banks far more minerals and clears more of the
- * sortie); `docs/EVALUATION.md` records the regenerated measurements as the
- * evidence.
+ * sortie), then ring 2 crossed into its window at 60.3 min once hostile
+ * **absorption** began re-dropping the swallowed count (AH-0MWT5CSF8003CFQF);
+ * `docs/EVALUATION.md` records the regenerated measurements as the evidence.
  */
 describe('ring timing: the design windows are pinned literally', () => {
   it('authors the 5–15 per-hex budget and derives each ring window from its hex count', () => {
@@ -791,7 +792,7 @@ describe('ring timing: real arena evidence', () => {
     // The real arena still measures the regenerated artifact's numbers: 27.8 min
     // mean on seeds 1–3, still below the derived 30-minute window floor but
     // inside its 24-minute tolerance floor.
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(27.8452, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(27.8022, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
       6,
@@ -802,13 +803,15 @@ describe('ring timing: real arena evidence', () => {
     expect(report.budget.measuredMinutes).toBeGreaterThan(5);
   }, REAL_ARENA_TIMEOUT_MS);
 
-  it('the 12-hex one-level ring 2 grind measures ~59.1 min and sits within-tolerance of the derived 60–180 window (AH-0MWFDQCFV007BZE5)', () => {
-    // The same one-level model, twelve hexes: measured ≈ 59.1 min mean (seeds
+  it('the 12-hex one-level ring 2 grind measures ~60.3 min and now sits in its derived 60–180 window (AH-0MWFDQCFV007BZE5)', () => {
+    // The same one-level model, twelve hexes: measured ≈ 60.3 min mean (seeds
     // 1–3), the six level-3 hexes captured and the firing tail lost. Against
-    // the derived 60–180-minute window (12 × 5–15 per hex) the total sits
-    // inside the ±12-minute tolerance (the 48-minute floor), so the verdict is
-    // `within-tolerance`. It is pinned against the committed artifact and
-    // tracked as the rebalancing item AH-0MWFDQCFV007BZE5.
+    // the derived 60–180-minute window (12 × 5–15 per hex) the total now sits
+    // **inside** the window itself, so the verdict is `in-window` (it was
+    // `within-tolerance` at 59.1 min before hostile mineral absorption began
+    // re-dropping swallowed minerals, AH-0MWT5CSF8003CFQF). It is pinned
+    // against the committed artifact and tracked as the rebalancing item
+    // AH-0MWFDQCFV007BZE5.
     const report = simulateRingTiming({
       ringIndex: 2,
       strategy: 'grind',
@@ -816,19 +819,21 @@ describe('ring timing: real arena evidence', () => {
     });
     const committed = committedGrindReport(2);
     expect(report.runs[0].deployments).toHaveLength(12);
-    expect(report.budget.verdict).toBe('within-tolerance');
+    expect(report.budget.verdict).toBe('in-window');
     expect(report.budget.verdict).toBe(committed.budget.verdict);
     expect(report.budget.withinTolerance).toBe(true);
-    expect(report.budget.withinWindow).toBe(false);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(59.1020, 4);
+    expect(report.budget.withinWindow).toBe(true);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(60.3336, 4);
     expect(report.summary.totalMinutes.mean).toBeCloseTo(
       committed.summary.totalMinutes.mean,
       6,
     );
-    expect(report.budget.measuredMinutes).toBeLessThan(
+    expect(report.budget.measuredMinutes).toBeGreaterThan(
       RING_TIMING_TARGETS[2].minMinutes,
     );
-    expect(report.budget.measuredMinutes).toBeGreaterThan(5);
+    expect(report.budget.measuredMinutes).toBeLessThan(
+      RING_TIMING_TARGETS[2].maxMinutes,
+    );
   }, REAL_ARENA_TIMEOUT_MS);
 
   it('the rush line is faster but riskier than the grind, and neither dominates', () => {
@@ -1098,7 +1103,7 @@ describe('ring timing: committed baseline evidence', () => {
    * moving the verdicts, and each ruling is tracked as its own rebalancing
    * item.
    */
-  it('ring 1 grind: 27.8 min (24.9–32.0) sits within-tolerance of the derived 30–90 min window', () => {
+  it('ring 1 grind: 27.8 min (26.5–29.0) sits within-tolerance of the derived 30–90 min window', () => {
     // Ruled by AH-0MWFDQ9EY004NO4X: the producer refused a window re-word,
     // refused the allowance changes, and asked for the ring's aggression to
     // ramp with in-ring captures plus the wave `shootEnabled` gate to be
@@ -1108,23 +1113,24 @@ describe('ring timing: committed baseline evidence', () => {
     // wreck: the ring now measures 27.8 min, above the 24-minute tolerance
     // floor, so the honest verdict is `within-tolerance` rather than `missed`.
     // The remaining gap to the window floor is the per-hex budget itself (a
-    // measured deployment clears in ~12.7 min against a 5–15-minute authored
-    // unit).
+    // measured deployment clears in ~13.6 min against a 5–15-minute authored
+    // unit). Hostile mineral absorption (AH-0MWT5CSF8003CFQF) re-dropped the
+    // swallowed count and narrowed the spread to 26.5–29.0 min.
     const report = committedGrindReport(1);
     expect(report.budget.verdict).toBe('within-tolerance');
     expect(report.budget.withinWindow).toBe(false);
     expect(report.budget.withinTolerance).toBe(true);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(27.8452, 4);
-    expect(report.summary.totalMinutes.min).toBeCloseTo(24.9369, 4);
-    expect(report.summary.totalMinutes.max).toBeCloseTo(32.0267, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(27.8022, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(26.4500, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(29.0283, 4);
     // The derived window (6 × 5–15) and its tolerance are computed, not pinned.
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[1]);
     expect(report.budget.toleranceMinutes).toBeCloseTo(6, 6);
-    // Δ to the window floor: 27.8452 − 30 = −2.1548 min, inside the 24-minute
+    // Δ to the window floor: 27.8022 − 30 = −2.1978 min, inside the 24-minute
     // tolerance floor.
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[1].minMinutes,
-    ).toBeCloseTo(-2.1548, 4);
+    ).toBeCloseTo(-2.1978, 4);
     // Re-judged through the shipped budget rule, the artifact's measurement is
     // still `within-tolerance`: the verdict is not merely a stored string.
     expect(
@@ -1152,31 +1158,34 @@ describe('ring timing: committed baseline evidence', () => {
     }
   });
 
-  it('ring 2 grind: 59.1 min (52.1–66.1) sits within-tolerance of the derived 60–180 min window', () => {
+  it('ring 2 grind: 60.3 min (52.9–69.7) is now in-window of the derived 60–180 min window', () => {
     // Tracked for its own producer ruling by AH-0MWFDQCFV007BZE5. Re-measured
     // with ring 1's ruling (the wave `shootEnabled` gate and the ring's
     // capture-progress ramp): 57.0 → 51.7 min; then the game-faithful kill-drop
     // mineral economy (AH-0MWT5CRJ600382MS) lifted it to 59.1 min — inside the
     // window's 48-minute tolerance floor, still short of the window itself.
+    // Hostile mineral absorption (AH-0MWT5CSF8003CFQF) then re-dropped the
+    // swallowed count and pushed the ring to 60.3 min, just inside the
+    // 60-minute window floor.
     const report = committedGrindReport(2);
-    expect(report.budget.verdict).toBe('within-tolerance');
-    expect(report.budget.withinWindow).toBe(false);
+    expect(report.budget.verdict).toBe('in-window');
+    expect(report.budget.withinWindow).toBe(true);
     expect(report.budget.withinTolerance).toBe(true);
-    expect(report.summary.totalMinutes.mean).toBeCloseTo(59.1020, 4);
-    expect(report.summary.totalMinutes.min).toBeCloseTo(52.1289, 4);
-    expect(report.summary.totalMinutes.max).toBeCloseTo(66.0622, 4);
+    expect(report.summary.totalMinutes.mean).toBeCloseTo(60.3336, 4);
+    expect(report.summary.totalMinutes.min).toBeCloseTo(52.9242, 4);
+    expect(report.summary.totalMinutes.max).toBeCloseTo(69.7222, 4);
     expect(report.budget.target).toEqual(RING_TIMING_TARGETS[2]);
     expect(report.budget.toleranceMinutes).toBeCloseTo(12, 6);
-    // Δ to the window floor: 59.1020 − 60 = −0.8980 min, inside the 48-minute
-    // tolerance floor (60 − 12), so the total is `within-tolerance` — computed
-    // from the producer's per-hex budget rather than authored.
+    // Δ to the window floor: 60.3336 − 60 = +0.3336 min — now above the floor,
+    // so the total is `in-window` (computed from the producer's per-hex budget
+    // rather than authored).
     expect(
       report.summary.totalMinutes.mean - RING_TIMING_TARGETS[2].minMinutes,
-    ).toBeCloseTo(-0.898, 4);
+    ).toBeCloseTo(0.3336, 4);
     expect(
       evaluateRingTimingBudget(2, 'grind', report.summary.totalMinutes.mean)
         .verdict,
-    ).toBe('within-tolerance');
+    ).toBe('in-window');
     for (const run of report.runs) {
       expect(
         run.deploymentMinutes +
@@ -1198,12 +1207,12 @@ describe('ring timing: committed baseline evidence', () => {
     // The docs' "Per-deployment (mean)" column and § Session shape split are
     // restated from the artifact's measured deployment length; pin those means
     // here so a re-measurement that moves them fails the docs guard instead of
-    // letting prose silently drift. Ring 2 grind 27.6094 and ring 1 grind
-    // 12.6736 are the values whose 2-dp forms the docs quote (27.61 / 12.67);
-    // the rush lines quote 0.21 / 0.40. (The pair moved with the game-faithful
-    // kill-drop mineral economy, AH-0MWT5CRJ600382MS.)
+    // letting prose silently drift. Ring 2 grind 28.6157 and ring 1 grind
+    // 13.5925 are the values whose 2-dp forms the docs quote (28.62 / 13.59);
+    // the rush lines quote 0.21 / 0.48. (The pair last moved with hostile
+    // mineral absorption, AH-0MWT5CSF8003CFQF.)
     expect(committedReport(1, 'grind').summary.deploymentMinutes.mean).toBeCloseTo(
-      12.6736,
+      13.5925,
       4,
     );
     expect(committedReport(1, 'rush').summary.deploymentMinutes.mean).toBeCloseTo(
@@ -1211,22 +1220,22 @@ describe('ring timing: committed baseline evidence', () => {
       4,
     );
     expect(committedReport(2, 'grind').summary.deploymentMinutes.mean).toBeCloseTo(
-      27.6094,
+      28.6157,
       4,
     );
     expect(committedReport(2, 'rush').summary.deploymentMinutes.mean).toBeCloseTo(
-      0.4005,
+      0.4823,
       4,
     );
     // Ring 2 grind's split, stated term by term, sums to the measured total:
-    // 27.6094 measured deployments + 24 modelled between-sortie visits +
-    // 7.4926 modelled retries + 0.0 re-capture = 59.1020 min. The retry term
+    // 28.6157 measured deployments + 24 modelled between-sortie visits +
+    // 7.7179 modelled retries + 0.0 re-capture = 60.3336 min. The retry term
     // is the lost half of the ring (six losses), not the whole set.
     const ring2 = committedReport(2, 'grind');
     const retryMean =
       ring2.runs.reduce((sum, run) => sum + run.retryMinutes, 0) /
       ring2.runs.length;
-    expect(retryMean).toBeCloseTo(7.4926, 4);
+    expect(retryMean).toBeCloseTo(7.7179, 4);
     expect(
       ring2.summary.deploymentMinutes.mean + retryMean + 24,
     ).toBeCloseTo(ring2.summary.totalMinutes.mean, 3);
@@ -1331,15 +1340,16 @@ describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
     expect(r1g.captureRate).toBeGreaterThan(0.22);
     expect(r2g.captureRate).toBeGreaterThan(0.11);
     // The game-faithful kill-drop mineral economy (AH-0MWT5CRJ600382MS) lifted
-    // per-deployment minerals far past the parent's 9.0 / 6.0 target: every
-    // wreck now pays salvage through the shared rule, so a captured sortie
-    // banks ~86–88 minerals at its mini-boss checkpoint (was 11.67 / 6.11 on
-    // the fixed 18-point field) and the grind line's mean is ~43–44 on both
-    // rings. The before-figures are 5.83 / 3.06 per deployment.
-    expect(r1g.mineralsPerDeployment).toBeCloseTo(42.9444, 4);
-    expect(r2g.mineralsPerDeployment).toBeCloseTo(43.9167, 4);
-    expect(r1g.mineralsPerCapturedDeployment).toBeCloseTo(85.8889, 4);
-    expect(r2g.mineralsPerCapturedDeployment).toBeCloseTo(87.8333, 4);
+    // per-deployment minerals past the parent's 9.0 / 6.0 target; hostile
+    // mineral absorption (AH-0MWT5CSF8003CFQF) then re-dropped the swallowed
+    // count, so a captured sortie banks ~123–131 minerals at its mini-boss
+    // checkpoint (was 11.67 / 6.11 on the fixed 18-point field) and the grind
+    // line's mean is ~61–66 on both rings. The before-figures are 5.83 / 3.06
+    // per deployment.
+    expect(r1g.mineralsPerDeployment).toBeCloseTo(61.2778, 4);
+    expect(r2g.mineralsPerDeployment).toBeCloseTo(65.5556, 4);
+    expect(r1g.mineralsPerCapturedDeployment).toBeCloseTo(122.5556, 4);
+    expect(r2g.mineralsPerCapturedDeployment).toBeCloseTo(131.1111, 4);
     // The rush line (one weapon hex per ring) banks nothing: its sorties are
     // the ring's hardest and the bot loses them — recorded, not assumed.
     expect(line(1, 'rush').income.captured).toBe(0);
@@ -1358,14 +1368,15 @@ describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
     // After pass-through collection and the ring's capture-progress aggression
     // ramp, then the ring-1 opening retune (AH-0MWFDQ9EY004NO4X re-baseline,
     // then AH-0MWW28ET2002PNI8's `hex-r1-1` 2 → 1): 38 / 21 / 16 / 28 / 14.
-    // The game-faithful kill-drop economy (AH-0MWT5CRJ600382MS) then lifts
-    // banked minerals ~7×, so every entry is affordable in a handful of
-    // deployments: 6 / 3 / 4 / 4 / 2 — still shorter than the campaign slice
-    // for every entry.
+    // The game-faithful kill-drop economy (AH-0MWT5CRJ600382MS) then lifted
+    // banked minerals ~7×, and hostile mineral absorption
+    // (AH-0MWT5CSF8003CFQF) lifted them further, so every entry is affordable
+    // in a handful of deployments: 6 / 2 / 4 / 3 / 2 — still shorter than the
+    // campaign slice for every entry.
     expect(pace.get('hull-2')).toBe(6);
-    expect(pace.get('wave_laser')).toBe(3);
+    expect(pace.get('wave_laser')).toBe(2);
     expect(pace.get('ricochet')).toBe(4);
-    expect(pace.get('cluster')).toBe(4);
+    expect(pace.get('cluster')).toBe(3);
     expect(pace.get('hardened_plating')).toBe(2);
   });
 });

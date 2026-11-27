@@ -1058,19 +1058,21 @@ replace storage behind the same injectable interface (§6.6).
   sortie** (a captured hex's grant owned from the next deployment, ring 1's
   grants entering ring 2; AH-0MW9QA2YC009PSF5), each ring's deployments ramp in
   aggression as the ring's hexes are captured and the no-fire levels 1–3 play
-  as authored. The ring-2 grind is **59.1 minutes** — 27.6 of measured
-  deployments, 24 between sorties, 7.5 of modelled retries (the six lost
+  as authored. The ring-2 grind is **60.3 minutes** — 28.6 of measured
+  deployments, 24 between sorties, 7.7 of modelled retries (the six lost
   attempts replaying their own measured length) and 0.0 of re-capture
-  (27.6 + 24 + 7.5 + 0.0 = 59.1) — so ring 2 reads **within-tolerance** of its
-  derived 60–180 window (±12 min, floor 48) with its rebalancing ruling live on
-  AH-0MWFDQCFV007BZE5; ring 1 measures **27.8 minutes** (12.67 of measured
-  deployments + 12 between sorties + 3.17 of modelled retries + 0.0 of
+  (28.6 + 24 + 7.7 + 0.0 = 60.3) — so ring 2 reads **in-window** of its
+  derived 60–180 window, 0.3 min above its floor, with its rebalancing ruling
+  live on AH-0MWFDQCFV007BZE5; ring 1 measures **27.8 minutes** (13.6 of
+  measured deployments + 12 between sorties + 2.2 of modelled retries + 0.0 of
   re-capture) and sits **within-tolerance** of the derived 30–90 window, 2.2
   minutes under its floor but above its 24-minute tolerance floor
   (AH-0MWFDQ9EY004NO4X). Both figures were lifted by the game-faithful
   kill-drop mineral economy in the harness (AH-0MWT5CRJ600382MS: the arena now
-  pays salvage for every wreck instead of a fixed 18-point field), which
-  previously measured 22.6 / 51.7 minutes.
+  pays salvage for every wreck instead of a fixed 18-point field) and again by
+  hostile mineral **absorption** (AH-0MWT5CSF8003CFQF: a wreck re-drops the
+  minerals its killer swallowed); the older fixed-field measurement was
+  22.6 / 51.7 minutes.
   Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
   longer: the campaign is deliberately **extendable rather than finite**, and the
   growth comes from ring size rather than from repeating one fixed tune.

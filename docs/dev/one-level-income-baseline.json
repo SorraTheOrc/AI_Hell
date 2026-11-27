@@ -11,11 +11,11 @@
       "deployments": 18,
       "captured": 9,
       "captureRate": 0.5,
-      "mineralsPerDeployment": 42.94444444444444,
+      "mineralsPerDeployment": 61.27777777777778,
       "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 85.88888888888889,
+      "mineralsPerCapturedDeployment": 122.55555555555556,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 92.94444444444444
+      "mineralEquivalentPerDeployment": 111.27777777777777
     },
     "unlockPace": [
       {
@@ -27,7 +27,7 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 6,
+        "mineralBoundDeployments": 4,
         "coreBoundDeployments": 6,
         "deploymentsToAfford": 6
       },
@@ -40,7 +40,7 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 8,
+        "mineralBoundDeployments": 6,
         "coreBoundDeployments": 8,
         "deploymentsToAfford": 8
       },
@@ -66,7 +66,7 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 3,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 4,
         "deploymentsToAfford": 4
       },
@@ -79,9 +79,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 4,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 4
+        "deploymentsToAfford": 3
       },
       {
         "id": "magnet",
@@ -92,9 +92,9 @@
           "cores": 2
         },
         "minRing": 2,
-        "mineralBoundDeployments": 5,
+        "mineralBoundDeployments": 4,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 5
+        "deploymentsToAfford": 4
       },
       {
         "id": "wave_laser",
@@ -105,9 +105,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 3,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 3
+        "deploymentsToAfford": 2
       },
       {
         "id": "ricochet",
@@ -118,7 +118,7 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 3,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 4,
         "deploymentsToAfford": 4
       },
@@ -131,9 +131,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 4,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 4
+        "deploymentsToAfford": 3
       }
     ]
   },
@@ -287,11 +287,11 @@
       "deployments": 36,
       "captured": 18,
       "captureRate": 0.5,
-      "mineralsPerDeployment": 43.916666666666664,
+      "mineralsPerDeployment": 65.55555555555556,
       "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 87.83333333333333,
+      "mineralsPerCapturedDeployment": 131.11111111111111,
       "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 93.91666666666666
+      "mineralEquivalentPerDeployment": 115.55555555555556
     },
     "unlockPace": [
       {
@@ -303,7 +303,7 @@
           "cores": 3
         },
         "minRing": 1,
-        "mineralBoundDeployments": 6,
+        "mineralBoundDeployments": 4,
         "coreBoundDeployments": 6,
         "deploymentsToAfford": 6
       },
@@ -316,7 +316,7 @@
           "cores": 4
         },
         "minRing": 2,
-        "mineralBoundDeployments": 8,
+        "mineralBoundDeployments": 5,
         "coreBoundDeployments": 8,
         "deploymentsToAfford": 8
       },
@@ -342,7 +342,7 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 3,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 4,
         "deploymentsToAfford": 4
       },
@@ -355,9 +355,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 3,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 3
+        "deploymentsToAfford": 2
       },
       {
         "id": "magnet",
@@ -368,9 +368,9 @@
           "cores": 2
         },
         "minRing": 2,
-        "mineralBoundDeployments": 5,
+        "mineralBoundDeployments": 4,
         "coreBoundDeployments": 4,
-        "deploymentsToAfford": 5
+        "deploymentsToAfford": 4
       },
       {
         "id": "wave_laser",
@@ -381,9 +381,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 3,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 3
+        "deploymentsToAfford": 2
       },
       {
         "id": "ricochet",
@@ -394,7 +394,7 @@
           "cores": 2
         },
         "minRing": 1,
-        "mineralBoundDeployments": 3,
+        "mineralBoundDeployments": 2,
         "coreBoundDeployments": 4,
         "deploymentsToAfford": 4
       },
@@ -407,9 +407,9 @@
           "cores": 1
         },
         "minRing": 1,
-        "mineralBoundDeployments": 4,
+        "mineralBoundDeployments": 3,
         "coreBoundDeployments": 2,
-        "deploymentsToAfford": 4
+        "deploymentsToAfford": 3
       }
     ]
   },

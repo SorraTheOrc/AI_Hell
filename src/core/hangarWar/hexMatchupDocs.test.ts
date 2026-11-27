@@ -92,8 +92,8 @@ describe('hex matchup intel documentation (AH-0MWL898RM009X9B8)', () => {
     // pinned so a stale doc quote of either state fails here.
     expect(balancing).toContain('22.57 min');
     expect(balancing).toContain('51.68 min');
-    expect(balancing).toContain('27.85 min');
-    expect(balancing).toContain('59.10 min');
+    expect(balancing).toContain('27.80 min');
+    expect(balancing).toContain('60.33 min');
     // The rebalance items that own the remaining window gap are named.
     expect(balancing).toContain('AH-0MWFDQ9EY004NO4X');
     expect(balancing).toContain('AH-0MWFDQCFV007BZE5');

@@ -63,13 +63,27 @@
  * Drop positions and the payout bonus come from a **dedicated stream seeded
  * from the run seed**, so the same policy + config + seed ⇒ byte-identical
  * records and the mineral model never perturbs the scenario/behaviour draws.
- * The seeded **skirmish** is unchanged: it keeps its fixed seeded field and
- * its top-up. **Fidelity boundaries:** enemy mineral absorption (the
- * `collected` count) is its own follow-up item — until it lands every wreck's
- * `collected` is 0, so a non-asteroid pays 0 or 2; asteroid splitting is not
+ *
+ * **Absorption (AH-0MWT5CSF8003CFQF).** Before a wreck pays out, a live
+ * non-asteroid hostile that overlaps a mineral on the field swallows it, and
+ * the mineral's **worth** is tallied on that hostile's `mineralCollected`
+ * counter — exactly the game's `collectMinerals` / `BaseEnemy.collectMineral`
+ * rule. Absorption is a pure overlap pass (no RNG draw), so the wreck's
+ * `collected` count — and therefore its `2 × round(collected + bonus)`
+ * re-drop — reflects what the enemy actually swallowed. Asteroids and
+ * lane-traffic hazards never absorb. The player keeps first pick: the
+ * collection pass runs before absorption, exactly as `collectMinerals`
+ * orders it.
+ *
+ * **Fidelity boundaries:** the seeded **skirmish** is unchanged — it keeps its
+ * fixed seeded field and its top-up, and (because it has no kill drops to
+ * re-pay the count) does not model absorption; asteroid splitting is not
  * simulated, so the shadow-hazard body stands in for the whole chain (whose
- * total mineral payout is the small rock's pair); and Salvage's timed bounty
- * is not modelled, so its bonus is always 0.
+ * total mineral payout is the small rock's pair); Salvage's timed bounty is
+ * not modelled, so its bonus is always 0; and hostiles are **stationary**
+ * (unless the opt-in moving-hostile mode is on), so they can only absorb a
+ * mineral that a wreck drops under them — they never chase one, and the
+ * arena's spawning-growth gate (`isSpawning`) has no analogue.
  *
  * ## Player weapon fire (AH-0MW5DV9I6001D4HN, AH-0MW5DVAME0062GQO)
  *
@@ -350,7 +364,11 @@ import {
   selectAoETargets,
   selectRandomPoint,
 } from '../../utils/aoe';
-import { PLAYER_BULLET_RADIUS, PLAYER_BULLET_SPEED } from '../../core/constants';
+import {
+  MINERAL_SIZE,
+  PLAYER_BULLET_RADIUS,
+  PLAYER_BULLET_SPEED,
+} from '../../core/constants';
 import { AsteroidsModel } from '../../utils/movementModel';
 import { wrapAxis, wrappedAxisDelta } from '../../utils/wrapGeometry';
 import { scaleShipConfigForHull } from '../../core/hangarWar/hullSpeed';
@@ -459,8 +477,32 @@ interface Vec {
  * pickup, exactly as the game's `Mineral.value` and the ship's hold treat it
  * (AH-0MWT5CRJ600382MS).
  */
-interface ArenaMineral extends Vec {
+export interface ArenaMineral extends Vec {
   value: number;
+}
+
+/**
+ * Minimal structural contract a hostile must satisfy to absorb a mineral —
+ * the arena's counterpart of the game's {@link MineralAbsorbingEnemy} in
+ * `src/scenes/core/mineralLayer.ts`. Structurally satisfied by the arena's
+ * internal `Hostile`.
+ */
+export interface ArenaMineralAbsorber {
+  /** False once the body is destroyed (a wreck absorbs nothing). */
+  readonly alive: boolean;
+  /** Asteroids are inert to minerals (GDD §4.5). */
+  readonly isAsteroid: boolean;
+  /** Archetype key; identifies lane traffic, which is not a carrier. */
+  readonly archetype: string;
+  readonly x: number;
+  readonly y: number;
+  /** Circle radius used for mineral overlap (the hostile's hull circle). */
+  getHitRadius(): number;
+  /**
+   * Minerals this hostile has absorbed; the wreck's kill payout reads it.
+   * Mutable so the absorption pass can tally a swallowed mineral's worth.
+   */
+  mineralCollected: number;
 }
 
 interface Hostile {
@@ -505,10 +547,10 @@ interface Hostile {
   shotProbability: number;
   /**
    * Minerals this hostile has absorbed (the game's `BaseEnemy.collectMineral`
-   * count). The arena's absorption pass lands in the sibling item; the field
-   * exists here because the kill payout reads it: a wreck re-drops
-   * `2 × round(collected + bonus)` through the shared rule. Asteroids and
-   * lane-traffic hazards never absorb, so their count stays `0`.
+   * count), tallied by {@link absorbOverlappingMinerals} (AH-0MWT5CSF8003CFQF).
+   * The kill payout reads it: a wreck re-drops `2 × round(collected + bonus)`
+   * through the shared rule, so absorbed minerals are paid again at the wreck.
+   * Asteroids and lane-traffic hazards never absorb, so their count stays `0`.
    */
   mineralCollected: number;
   /**
@@ -1684,6 +1726,81 @@ export function resolveArenaWreckMinerals(
     rng,
   );
   return layOutMineralPayout(wreck.x, wreck.y, decision, rng);
+}
+
+/** One mineral a hostile swallowed in an absorption pass. */
+export interface AbsorbedMineral<THostile extends ArenaMineralAbsorber> {
+  readonly mineral: ArenaMineral;
+  readonly hostile: THostile;
+  /** The hostile's running absorbed count *after* this mineral was credited. */
+  readonly total: number;
+}
+
+/**
+ * Runs one mineral **absorption** pass over the field: every live
+ * non-asteroid, mineral-carrying hostile swallows the first mineral it
+ * overlaps, crediting the mineral's **worth** (1 for an ordinary dot,
+ * `MINERAL_DEPOSIT_VALUE` for a red deposit) to its `mineralCollected`
+ * counter.
+ *
+ * Mirrors the enemy half of `collectMinerals` in
+ * `src/scenes/core/mineralLayer.ts`: circle-vs-circle overlap
+ * (`Math.hypot <= MINERAL_SIZE + getHitRadius()`), the first overlapping
+ * hostile in `hostiles` order takes the mineral, and the survivors are
+ * returned as a **new** array (the input is never mutated).
+ *
+ * **Inert bodies are excluded** — asteroids (minerals are inert to rocks,
+ * GDD §4.5) and lane-traffic hazards (a non-blocking hazard, not a mineral
+ * carrier, whose `mineralRedropCount` is 0) never absorb. Hostiles are also
+ * skipped once destroyed.
+ *
+ * **Player priority is the caller's order, not this function's:** the arena
+ * runs its player-collection pass first and passes only the surviving
+ * minerals here, exactly as `collectMinerals` checks the player before the
+ * enemies. **Purity:** no `rng` is taken, so absorption consumes no draws and
+ * determinism is preserved.
+ *
+ * @param minerals — the minerals surviving the player-collection pass
+ * @param hostiles — the live bodies on the field (asteroids/lane traffic are
+ *   filtered out here)
+ * @returns the surviving minerals and the absorbed mineral/hostile pairs, in
+ *   field order
+ */
+export function absorbOverlappingMinerals<
+  THostile extends ArenaMineralAbsorber,
+>(
+  minerals: readonly ArenaMineral[],
+  hostiles: readonly THostile[],
+): { kept: ArenaMineral[]; absorbed: AbsorbedMineral<THostile>[] } {
+  const kept: ArenaMineral[] = [];
+  const absorbed: AbsorbedMineral<THostile>[] = [];
+
+  for (const mineral of minerals) {
+    let swallowed = false;
+    for (const hostile of hostiles) {
+      if (!hostile.alive) continue;
+      // Minerals are inert to rocks, and lane traffic is not a carrier.
+      if (hostile.isAsteroid || isNonBlockingHazard(hostile.archetype)) continue;
+      if (distance(mineral, hostile) > MINERAL_SIZE + hostile.getHitRadius()) {
+        continue;
+      }
+      // The absorbed mineral is worth its `value` (10 for a red deposit), so
+      // a swallowed deposit counts as ten minerals in the enemy's re-drop.
+      hostile.mineralCollected += mineral.value;
+      absorbed.push({
+        mineral,
+        hostile,
+        // Captured here, not read later: the event's `total` is the running
+        // count after *this* absorption, exactly like `mineral_collected`.
+        total: hostile.mineralCollected,
+      });
+      swallowed = true;
+      break;
+    }
+    if (!swallowed) kept.push(mineral);
+  }
+
+  return { kept, absorbed };
 }
 
 /**
@@ -2953,6 +3070,31 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       if (world.hold.isFull) resolveHoldFull(tick);
       return false;
     });
+    // Enemy absorption mirrors the game's `collectMinerals`: the player picks
+    // up first (the filter above), then the **first** live non-asteroid
+    // hostile overlapping a surviving mineral swallows it, crediting the
+    // mineral's worth to its `mineralCollected` counter so the wreck's later
+    // `2 × round(collected + bonus)` re-drop pays it again
+    // (AH-0MWT5CSF8003CFQF). Gated to real-supply mode: the seeded skirmish's
+    // fixed field has no kill drops to re-pay the count, so absorbing there
+    // would only delete minerals and change its pinned supply (a documented
+    // fidelity boundary). Pure — no RNG draw, so determinism is preserved.
+    if (realSupplyMode) {
+      const pass = absorbOverlappingMinerals(world.minerals, world.hostiles);
+      world.minerals = pass.kept;
+      for (const { mineral, total } of pass.absorbed) {
+        pushEvent(tick, 'mineral_absorbed', {
+          x: mineral.x,
+          y: mineral.y,
+          // The hostile's running count after this absorption, mirroring
+          // `mineral_collected`'s `total`.
+          total,
+          // Omitted for an ordinary dot, exactly like `mineral_collected`, so
+          // the common payload shape carries no new field.
+          ...(mineral.value !== 1 ? { value: mineral.value } : {}),
+        });
+      }
+    }
     world.drops = world.drops.filter((drop, index) => {
       if (distance(drop, playerPoint) > COLLECT_RADIUS) return true;
       pushEvent(tick, 'pickup', {

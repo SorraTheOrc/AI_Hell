@@ -453,7 +453,9 @@ are exposed and the ring is not secured.
 > re-ruled by the linked rebalancing items AH-0MWFDQ9EY004NO4X (ring 1) and
 > AH-0MWFDQCFV007BZE5 (ring 2). The arena also models the shipped game's
 > kill-drop mineral economy (AH-0MWT5CRJ600382MS), which pays salvage for every
-> wreck and lifted both grind lines without touching a window or the budget.
+> wreck, plus hostile mineral absorption (AH-0MWT5CSF8003CFQF), which re-drops
+> the swallowed count — both lifted the grind lines without touching a window or
+> the budget.
 
 Committed evidence:
 [`docs/dev/ring-timing-baseline.json`](./dev/ring-timing-baseline.json)
@@ -461,19 +463,19 @@ Committed evidence:
 
 | Ring | Line | Per-deployment (mean) | Total (mean, min–max) | Losses | Expected losses | Budget |
 |---|---|---|---|---|---|---|
-| 1 (6 hexes) | grind | 12.67 min | **27.8 min** (24.9–32.0) | 3.3 | 3.3 | 30–90 min · **within-tolerance** (AH-0MWFDQ9EY004NO4X) |
+| 1 (6 hexes) | grind | 13.59 min | **27.8 min** (26.5–29.0) | 3.0 | 3.0 | 30–90 min · **within-tolerance** (AH-0MWFDQ9EY004NO4X) |
 | 1 (6 hexes) | rush | 0.21 min | **10.2 min** (9.4–10.9) | 1.0 | 4.5 | not applicable (ring not secured) |
-| 2 (12 hexes) | grind | 27.61 min | **59.1 min** (52.1–66.1) | 6.0 | 6.0 | 60–180 min · **within-tolerance** (AH-0MWFDQCFV007BZE5) |
-| 2 (12 hexes) | rush | 0.40 min | **21.3 min** (19.1–22.7) | 1.0 | 8.7 | not applicable (ring not secured) |
+| 2 (12 hexes) | grind | 28.62 min | **60.3 min** (52.9–69.7) | 6.0 | 6.0 | 60–180 min · **in-window** (AH-0MWFDQCFV007BZE5) |
+| 2 (12 hexes) | rush | 0.48 min | **22.1 min** (19.1–24.4) | 1.0 | 8.7 | not applicable (ring not secured) |
 
 The **Per-deployment (mean)** column is the artifact's
 `summary.deploymentMinutes.mean` for that ring and line — the measured arena
 time of a single one-level deployment, which is what the retry term replays and
 what the grind totals are built from. It is deliberately **not** the ring total
-(that is the next column): ring 2 grind is 27.61 min of measured deployments
-plus 24 min of modelled between-sortie visits plus 7.49 min of modelled retries
+(that is the next column): ring 2 grind is 28.62 min of measured deployments
+plus 24 min of modelled between-sortie visits plus 7.72 min of modelled retries
 (six losses replaying their own measured length) plus 0.0 min of re-capture,
-which sums to the 59.1 min total.
+which sums to the 60.3 min total.
 
 Reading the baseline:
 
@@ -484,16 +486,16 @@ captured and the firing tail is lost. Since the arena began modelling the
 shipped game's kill-drop mineral economy (AH-0MWT5CRJ600382MS), every wreck pays
 salvage, so the firing tail shortens: ring 1 grind measures **27.8 min** and
 sits **within-tolerance** of the derived 30–90 window (2.2 min under the window
-floor, above the 24-minute tolerance floor), while ring 2 grind **59.1 min**
-sits **within-tolerance** of the derived 60–180 window (0.9 min under the window
-floor, above the ±12-minute tolerance floor of 48 min).
+floor, above the 24-minute tolerance floor), while ring 2 grind **60.3 min**
+sits **in-window** of the derived 60–180 window (0.3 min above the window
+floor).
 The budget assertion states a **10 %
 tolerance** of each window's width (±6 min for ring 1, ±12 min for ring 2).
 Each verdict is re-computed by the harness and re-ruled by its own linked
 rebalancing item — **AH-0MWFDQ9EY004NO4X** (ring 1) and
 **AH-0MWFDQCFV007BZE5** (ring 2) — never re-worded.
 - **The playstyle trade is real.** The rush line is **faster** (10.2 vs 27.8 min
-for ring 1; 21.3 vs 59.1 min for ring 2) but **riskier** — it leaves five (ring
+for ring 1; 22.1 vs 60.3 min for ring 2) but **riskier** — it leaves five (ring
 1) / eleven (ring 2) hexes exposed (≈3.5 / 7.7 expected retakes), forfeits the
 salvage of its failed attempts and does not secure the ring, while the grind
 secures it. Neither line dominates.
