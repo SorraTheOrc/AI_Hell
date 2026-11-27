@@ -776,22 +776,28 @@ describe('The ring is specified as a playable mode in the GDD (AH-0MVUXCC5J0028O
 
   it('records the re-baselined one-level income, requoted from the artifact (AH-0MWCOWTOR00994NA)', () => {
     const spec = gddRingSpec();
-    const income = JSON.parse(
-      fs.readFileSync(
-        path.resolve(process.cwd(), 'docs/dev/one-level-income-baseline.json'),
-        'utf8',
-      ),
-    ) as Array<{
-      ringIndex: number;
-      strategy: string;
-      income: {
-        mineralsPerDeployment: number;
-        coresPerDeployment: number;
-        mineralsPerCapturedDeployment: number;
-        captureRate: number;
-      };
-      unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
-    }>;
+    // The artifact carries the measured lines plus the divergence probes
+    // (AH-0MWT5CTCO009MJ24); the docs requote the lines.
+    const income = (
+      JSON.parse(
+        fs.readFileSync(
+          path.resolve(process.cwd(), 'docs/dev/one-level-income-baseline.json'),
+          'utf8',
+        ),
+      ) as {
+        lines: Array<{
+          ringIndex: number;
+          strategy: string;
+          income: {
+            mineralsPerDeployment: number;
+            coresPerDeployment: number;
+            mineralsPerCapturedDeployment: number;
+            captureRate: number;
+          };
+          unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
+        }>;
+      }
+    ).lines;
     const r1g = income.find((entry) => entry.ringIndex === 1 && entry.strategy === 'grind')!;
     const r2g = income.find((entry) => entry.ringIndex === 2 && entry.strategy === 'grind')!;
     // After income per deployment and the captured-deployment checkpoint hold.

@@ -1,554 +1,584 @@
-[
-  {
-    "ringIndex": 1,
-    "strategy": "grind",
-    "seeds": [
-      1,
-      2,
-      3
-    ],
-    "income": {
-      "deployments": 18,
-      "captured": 9,
-      "captureRate": 0.5,
-      "mineralsPerDeployment": 61.27777777777778,
-      "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 122.55555555555556,
-      "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 111.27777777777777
+{
+  "version": 1,
+  "command": "npm run ring-timing -- --one-level --income-out docs/dev/one-level-income-baseline.json",
+  "lines": [
+    {
+      "ringIndex": 1,
+      "strategy": "grind",
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "income": {
+        "deployments": 18,
+        "captured": 9,
+        "captureRate": 0.5,
+        "mineralsPerDeployment": 61.27777777777778,
+        "coresPerDeployment": 0.5,
+        "mineralsPerCapturedDeployment": 122.55555555555556,
+        "coresPerCapturedDeployment": 1,
+        "mineralEquivalentPerDeployment": 111.27777777777777
+      },
+      "unlockPace": [
+        {
+          "id": "hull-2",
+          "name": "Bulwark Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 220,
+            "cores": 3
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 4,
+          "coreBoundDeployments": 6,
+          "deploymentsToAfford": 6
+        },
+        {
+          "id": "hull-3",
+          "name": "Juggernaut Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 320,
+            "cores": 4
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": 6,
+          "coreBoundDeployments": 8,
+          "deploymentsToAfford": 8
+        },
+        {
+          "id": "hardened_plating",
+          "name": "Hardened Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 80,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 2
+        },
+        {
+          "id": "anti_maw_plating",
+          "name": "Anti-Maw Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 110,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 4,
+          "deploymentsToAfford": 4
+        },
+        {
+          "id": "bomb",
+          "name": "Bomb Rack",
+          "kind": "power-up",
+          "price": {
+            "minerals": 130,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 3,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 3
+        },
+        {
+          "id": "magnet",
+          "name": "Salvage Magnet",
+          "kind": "power-up",
+          "price": {
+            "minerals": 200,
+            "cores": 2
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": 4,
+          "coreBoundDeployments": 4,
+          "deploymentsToAfford": 4
+        },
+        {
+          "id": "wave_laser",
+          "name": "Wave Laser",
+          "kind": "weapon",
+          "price": {
+            "minerals": 120,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 2
+        },
+        {
+          "id": "ricochet",
+          "name": "Ricochet",
+          "kind": "weapon",
+          "price": {
+            "minerals": 90,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 4,
+          "deploymentsToAfford": 4
+        },
+        {
+          "id": "cluster",
+          "name": "Cluster Missile",
+          "kind": "weapon",
+          "price": {
+            "minerals": 160,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 3,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 3
+        }
+      ]
     },
-    "unlockPace": [
-      {
-        "id": "hull-2",
-        "name": "Bulwark Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 220,
-          "cores": 3
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 4,
-        "coreBoundDeployments": 6,
-        "deploymentsToAfford": 6
+    {
+      "ringIndex": 1,
+      "strategy": "rush",
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "income": {
+        "deployments": 3,
+        "captured": 0,
+        "captureRate": 0,
+        "mineralsPerDeployment": 0,
+        "coresPerDeployment": 0,
+        "mineralsPerCapturedDeployment": 0,
+        "coresPerCapturedDeployment": 1,
+        "mineralEquivalentPerDeployment": 0
       },
-      {
-        "id": "hull-3",
-        "name": "Juggernaut Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 320,
-          "cores": 4
+      "unlockPace": [
+        {
+          "id": "hull-2",
+          "name": "Bulwark Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 220,
+            "cores": 3
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 2,
-        "mineralBoundDeployments": 6,
-        "coreBoundDeployments": 8,
-        "deploymentsToAfford": 8
-      },
-      {
-        "id": "hardened_plating",
-        "name": "Hardened Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 80,
-          "cores": 1
+        {
+          "id": "hull-3",
+          "name": "Juggernaut Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 320,
+            "cores": 4
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 2
-      },
-      {
-        "id": "anti_maw_plating",
-        "name": "Anti-Maw Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 110,
-          "cores": 2
+        {
+          "id": "hardened_plating",
+          "name": "Hardened Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 80,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 4
-      },
-      {
-        "id": "bomb",
-        "name": "Bomb Rack",
-        "kind": "power-up",
-        "price": {
-          "minerals": 130,
-          "cores": 1
+        {
+          "id": "anti_maw_plating",
+          "name": "Anti-Maw Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 110,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 3,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 3
-      },
-      {
-        "id": "magnet",
-        "name": "Salvage Magnet",
-        "kind": "power-up",
-        "price": {
-          "minerals": 200,
-          "cores": 2
+        {
+          "id": "bomb",
+          "name": "Bomb Rack",
+          "kind": "power-up",
+          "price": {
+            "minerals": 130,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 2,
-        "mineralBoundDeployments": 4,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 4
-      },
-      {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
+        {
+          "id": "magnet",
+          "name": "Salvage Magnet",
+          "kind": "power-up",
+          "price": {
+            "minerals": 200,
+            "cores": 2
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 2
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
+        {
+          "id": "wave_laser",
+          "name": "Wave Laser",
+          "kind": "weapon",
+          "price": {
+            "minerals": 120,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 4
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
+        {
+          "id": "ricochet",
+          "name": "Ricochet",
+          "kind": "weapon",
+          "price": {
+            "minerals": 90,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 3,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 3
-      }
-    ]
-  },
-  {
-    "ringIndex": 1,
-    "strategy": "rush",
-    "seeds": [
-      1,
-      2,
-      3
-    ],
-    "income": {
-      "deployments": 3,
-      "captured": 0,
-      "captureRate": 0,
-      "mineralsPerDeployment": 0,
-      "coresPerDeployment": 0,
-      "mineralsPerCapturedDeployment": 0,
-      "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 0
+        {
+          "id": "cluster",
+          "name": "Cluster Missile",
+          "kind": "weapon",
+          "price": {
+            "minerals": 160,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
+        }
+      ]
     },
-    "unlockPace": [
-      {
-        "id": "hull-2",
-        "name": "Bulwark Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 220,
-          "cores": 3
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
+    {
+      "ringIndex": 2,
+      "strategy": "grind",
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "income": {
+        "deployments": 36,
+        "captured": 18,
+        "captureRate": 0.5,
+        "mineralsPerDeployment": 65.55555555555556,
+        "coresPerDeployment": 0.5,
+        "mineralsPerCapturedDeployment": 131.11111111111111,
+        "coresPerCapturedDeployment": 1,
+        "mineralEquivalentPerDeployment": 115.55555555555556
       },
-      {
-        "id": "hull-3",
-        "name": "Juggernaut Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 320,
-          "cores": 4
+      "unlockPace": [
+        {
+          "id": "hull-2",
+          "name": "Bulwark Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 220,
+            "cores": 3
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 4,
+          "coreBoundDeployments": 6,
+          "deploymentsToAfford": 6
         },
-        "minRing": 2,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "hardened_plating",
-        "name": "Hardened Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 80,
-          "cores": 1
+        {
+          "id": "hull-3",
+          "name": "Juggernaut Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 320,
+            "cores": 4
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": 5,
+          "coreBoundDeployments": 8,
+          "deploymentsToAfford": 8
         },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "anti_maw_plating",
-        "name": "Anti-Maw Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 110,
-          "cores": 2
+        {
+          "id": "hardened_plating",
+          "name": "Hardened Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 80,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 2
         },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "bomb",
-        "name": "Bomb Rack",
-        "kind": "power-up",
-        "price": {
-          "minerals": 130,
-          "cores": 1
+        {
+          "id": "anti_maw_plating",
+          "name": "Anti-Maw Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 110,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 4,
+          "deploymentsToAfford": 4
         },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "magnet",
-        "name": "Salvage Magnet",
-        "kind": "power-up",
-        "price": {
-          "minerals": 200,
-          "cores": 2
+        {
+          "id": "bomb",
+          "name": "Bomb Rack",
+          "kind": "power-up",
+          "price": {
+            "minerals": 130,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 2
         },
-        "minRing": 2,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
+        {
+          "id": "magnet",
+          "name": "Salvage Magnet",
+          "kind": "power-up",
+          "price": {
+            "minerals": 200,
+            "cores": 2
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": 4,
+          "coreBoundDeployments": 4,
+          "deploymentsToAfford": 4
         },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
+        {
+          "id": "wave_laser",
+          "name": "Wave Laser",
+          "kind": "weapon",
+          "price": {
+            "minerals": 120,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 2
         },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
+        {
+          "id": "ricochet",
+          "name": "Ricochet",
+          "kind": "weapon",
+          "price": {
+            "minerals": 90,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 2,
+          "coreBoundDeployments": 4,
+          "deploymentsToAfford": 4
         },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      }
-    ]
-  },
-  {
-    "ringIndex": 2,
-    "strategy": "grind",
-    "seeds": [
-      1,
-      2,
-      3
-    ],
-    "income": {
-      "deployments": 36,
-      "captured": 18,
-      "captureRate": 0.5,
-      "mineralsPerDeployment": 65.55555555555556,
-      "coresPerDeployment": 0.5,
-      "mineralsPerCapturedDeployment": 131.11111111111111,
-      "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 115.55555555555556
+        {
+          "id": "cluster",
+          "name": "Cluster Missile",
+          "kind": "weapon",
+          "price": {
+            "minerals": 160,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": 3,
+          "coreBoundDeployments": 2,
+          "deploymentsToAfford": 3
+        }
+      ]
     },
-    "unlockPace": [
-      {
-        "id": "hull-2",
-        "name": "Bulwark Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 220,
-          "cores": 3
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": 4,
-        "coreBoundDeployments": 6,
-        "deploymentsToAfford": 6
+    {
+      "ringIndex": 2,
+      "strategy": "rush",
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "income": {
+        "deployments": 3,
+        "captured": 0,
+        "captureRate": 0,
+        "mineralsPerDeployment": 0,
+        "coresPerDeployment": 0,
+        "mineralsPerCapturedDeployment": 0,
+        "coresPerCapturedDeployment": 1,
+        "mineralEquivalentPerDeployment": 0
       },
-      {
-        "id": "hull-3",
-        "name": "Juggernaut Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 320,
-          "cores": 4
+      "unlockPace": [
+        {
+          "id": "hull-2",
+          "name": "Bulwark Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 220,
+            "cores": 3
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 2,
-        "mineralBoundDeployments": 5,
-        "coreBoundDeployments": 8,
-        "deploymentsToAfford": 8
-      },
-      {
-        "id": "hardened_plating",
-        "name": "Hardened Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 80,
-          "cores": 1
+        {
+          "id": "hull-3",
+          "name": "Juggernaut Hull",
+          "kind": "hull",
+          "price": {
+            "minerals": 320,
+            "cores": 4
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 2
-      },
-      {
-        "id": "anti_maw_plating",
-        "name": "Anti-Maw Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 110,
-          "cores": 2
+        {
+          "id": "hardened_plating",
+          "name": "Hardened Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 80,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 4
-      },
-      {
-        "id": "bomb",
-        "name": "Bomb Rack",
-        "kind": "power-up",
-        "price": {
-          "minerals": 130,
-          "cores": 1
+        {
+          "id": "anti_maw_plating",
+          "name": "Anti-Maw Plating",
+          "kind": "modifier",
+          "price": {
+            "minerals": 110,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 2
-      },
-      {
-        "id": "magnet",
-        "name": "Salvage Magnet",
-        "kind": "power-up",
-        "price": {
-          "minerals": 200,
-          "cores": 2
+        {
+          "id": "bomb",
+          "name": "Bomb Rack",
+          "kind": "power-up",
+          "price": {
+            "minerals": 130,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 2,
-        "mineralBoundDeployments": 4,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 4
-      },
-      {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
+        {
+          "id": "magnet",
+          "name": "Salvage Magnet",
+          "kind": "power-up",
+          "price": {
+            "minerals": 200,
+            "cores": 2
+          },
+          "minRing": 2,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 2
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
+        {
+          "id": "wave_laser",
+          "name": "Wave Laser",
+          "kind": "weapon",
+          "price": {
+            "minerals": 120,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 2,
-        "coreBoundDeployments": 4,
-        "deploymentsToAfford": 4
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
+        {
+          "id": "ricochet",
+          "name": "Ricochet",
+          "kind": "weapon",
+          "price": {
+            "minerals": 90,
+            "cores": 2
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
         },
-        "minRing": 1,
-        "mineralBoundDeployments": 3,
-        "coreBoundDeployments": 2,
-        "deploymentsToAfford": 3
-      }
-    ]
-  },
-  {
-    "ringIndex": 2,
-    "strategy": "rush",
-    "seeds": [
-      1,
-      2,
-      3
-    ],
-    "income": {
-      "deployments": 3,
-      "captured": 0,
-      "captureRate": 0,
-      "mineralsPerDeployment": 0,
-      "coresPerDeployment": 0,
-      "mineralsPerCapturedDeployment": 0,
-      "coresPerCapturedDeployment": 1,
-      "mineralEquivalentPerDeployment": 0
+        {
+          "id": "cluster",
+          "name": "Cluster Missile",
+          "kind": "weapon",
+          "price": {
+            "minerals": 160,
+            "cores": 1
+          },
+          "minRing": 1,
+          "mineralBoundDeployments": null,
+          "coreBoundDeployments": null,
+          "deploymentsToAfford": null
+        }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "ringIndex": 1,
+      "strategy": "grind",
+      "seed": 1,
+      "hexId": "hex-r1-1",
+      "aggression": 1,
+      "level": 2,
+      "seconds": 56.733333333333334,
+      "captured": true,
+      "minerals": 90,
+      "hits": 0
     },
-    "unlockPace": [
-      {
-        "id": "hull-2",
-        "name": "Bulwark Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 220,
-          "cores": 3
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "hull-3",
-        "name": "Juggernaut Hull",
-        "kind": "hull",
-        "price": {
-          "minerals": 320,
-          "cores": 4
-        },
-        "minRing": 2,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "hardened_plating",
-        "name": "Hardened Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 80,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "anti_maw_plating",
-        "name": "Anti-Maw Plating",
-        "kind": "modifier",
-        "price": {
-          "minerals": 110,
-          "cores": 2
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "bomb",
-        "name": "Bomb Rack",
-        "kind": "power-up",
-        "price": {
-          "minerals": 130,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "magnet",
-        "name": "Salvage Magnet",
-        "kind": "power-up",
-        "price": {
-          "minerals": 200,
-          "cores": 2
-        },
-        "minRing": 2,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "wave_laser",
-        "name": "Wave Laser",
-        "kind": "weapon",
-        "price": {
-          "minerals": 120,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "ricochet",
-        "name": "Ricochet",
-        "kind": "weapon",
-        "price": {
-          "minerals": 90,
-          "cores": 2
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      },
-      {
-        "id": "cluster",
-        "name": "Cluster Missile",
-        "kind": "weapon",
-        "price": {
-          "minerals": 160,
-          "cores": 1
-        },
-        "minRing": 1,
-        "mineralBoundDeployments": null,
-        "coreBoundDeployments": null,
-        "deploymentsToAfford": null
-      }
-    ]
-  }
-]
+    {
+      "ringIndex": 2,
+      "strategy": "grind",
+      "seed": 1,
+      "hexId": "hex-r2-1",
+      "aggression": 2,
+      "level": 3,
+      "seconds": 77.23333333333333,
+      "captured": true,
+      "minerals": 149,
+      "hits": 0
+    }
+  ]
+}

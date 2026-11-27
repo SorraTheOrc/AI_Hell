@@ -17,7 +17,9 @@
  * npm run ring-timing -- --json --out docs/dev/ring-timing-baseline.json
  *
  * # measure the shipped five-wave sortie's per-deployment income + unlock pace
- * # (AH-0MWCOWTOR00994NA) and write the reproducible income artifact
+ * # (AH-0MWCOWTOR00994NA) and write the reproducible income artifact — the
+ * # measured lines plus the divergence probes the guard re-measures
+ * # (AH-0MWT5CTCO009MJ24)
  * npm run ring-timing -- --one-level --income-out docs/dev/one-level-income-baseline.json
  *
  * # one ring, one line
@@ -144,7 +146,7 @@ function printHelp() {
       '  --json                Print the JSON report instead of text.',
       '  --out <file>          Write the JSON report to <file>.',
       '  --one-level           Measure the income view of the five-wave sortie (full-campaign mode, honouring the wave shootEnabled gate).',
-      '  --income-out <file>   Write the per-deployment income + unlock-pace JSON (requires --one-level).',
+      '  --income-out <file>   Write the income artifact (per-deployment income + unlock pace, plus the divergence probes the guard re-measures); requires --one-level.',
       '  --aggression-ramp <n> Aggression a ring gains across all its captures (default the authored ramp).',
       '  -h, --help            Show this help.',
       '',
@@ -222,16 +224,10 @@ async function main(argv = process.argv.slice(2)) {
       if (!options.json) console.log(`\nWrote ${options.out}`);
     }
     if (options.incomeOut) {
-      const income = reports.map((report) => ({
-        ringIndex: report.ringIndex,
-        strategy: report.strategy,
-        seeds: report.seeds,
-        income: core.derivePerDeploymentIncome(report),
-        unlockPace: core.deriveUnlockPace(core.derivePerDeploymentIncome(report)),
-      }));
+      const artifact = core.buildOneLevelIncomeArtifact(reports);
       writeFileSync(
         resolvePath(REPO_ROOT, options.incomeOut),
-        `${JSON.stringify(income, null, 2)}\n`,
+        `${JSON.stringify(artifact, null, 2)}\n`,
       );
       if (!options.json) console.log(`\nWrote ${options.incomeOut}`);
     }

@@ -61,6 +61,14 @@ import {
   RING_TIMING_TOLERANCE_PERCENT,
   createArenaDeploymentRunner,
   createOneLevelArenaDeploymentRunner,
+  buildOneLevelIncomeArtifact,
+  buildOneLevelIncomeLine,
+  incomeDivergenceProbeRequest,
+  measureIncomeDivergenceProbes,
+  ONE_LEVEL_INCOME_ARTIFACT_COMMAND,
+  ONE_LEVEL_INCOME_ARTIFACT_VERSION,
+  INCOME_DIVERGENCE_PROBE_RINGS,
+  INCOME_DIVERGENCE_PROBE_SEED,
   derivePerDeploymentIncome,
   deriveRingTimingTarget,
   deriveUnlockPace,
@@ -75,6 +83,7 @@ import {
   simulateRingTiming,
   withCapturedGrant,
   type PerDeploymentIncome,
+  type OneLevelIncomeArtifact,
   type RingDeploymentLoadout,
   type RingDeploymentRequest,
   type RingDeploymentRunner,
@@ -1284,30 +1293,104 @@ describe('ring timing: committed baseline evidence', () => {
  * The numbers are quoted in GDD §8.2 and pinned here so a change to the
  * harness model (e.g. the ring-timing chain's runner re-pointing) forces a
  * reviewed re-measurement instead of moving the docs silently.
+ *
+ * Since AH-0MWT5CTCO009MJ24 the artifact also carries **divergence probes** —
+ * one sortie per ring, measured by the shipped bot — so the guard can compare
+ * the committed file with a fresh measurement without running the whole
+ * measurement again (two sorties, ~2 s).
  */
 describe('one-level income baseline evidence (AH-0MWCOWTOR00994NA)', () => {
   const incomePath = path.resolve(
     process.cwd(),
     'docs/dev/one-level-income-baseline.json',
   );
-  const income = fs.existsSync(incomePath)
-    ? (JSON.parse(fs.readFileSync(incomePath, 'utf8')) as Array<{
-        ringIndex: number;
-        strategy: string;
-        income: PerDeploymentIncome;
-        unlockPace: Array<{ id: string; deploymentsToAfford: number }>;
-      }>)
-    : [];
+  const artifact = fs.existsSync(incomePath)
+    ? (JSON.parse(fs.readFileSync(incomePath, 'utf8')) as OneLevelIncomeArtifact)
+    : null;
+  const income = artifact?.lines ?? [];
   const line = (ringIndex: number, strategy: string) =>
     income.find(
       (entry) =>
         entry.ringIndex === ringIndex && entry.strategy === strategy,
     )!;
 
-  it('records one measurement per ring and line', () => {
+  it('stamps the artifact with its schema version and regenerating command', () => {
+    // A hand-edited or stale-schema file fails here rather than being read as
+    // the current shape.
+    expect(artifact).not.toBeNull();
+    expect(artifact!.version).toBe(ONE_LEVEL_INCOME_ARTIFACT_VERSION);
+    expect(artifact!.command).toBe(ONE_LEVEL_INCOME_ARTIFACT_COMMAND);
+  });
+
+  it('records one measurement per ring and line, on the committed evidence seeds', () => {
     expect(
       income.map((entry) => `${entry.ringIndex}-${entry.strategy}`),
     ).toEqual(['1-grind', '1-rush', '2-grind', '2-rush']);
+    for (const entry of income) expect(entry.seeds).toEqual([1, 2, 3]);
+  });
+
+  it('re-measures one sortie per ring and matches the recorded probes (divergence guard)', () => {
+    // The deterministic artifact-divergence guard (AH-0MWT5CTCO009MJ24): the
+    // committed probe values must equal a fresh measurement of the shipped
+    // bot, on the committed seed, at the ring-data-derived request. Bounded by
+    // the producer's constraint to one sortie per ring, so it costs ~2 s
+    // instead of re-running the whole 60-sortie measurement.
+    const probes = artifact!.probes;
+    expect(probes.map((probe) => probe.ringIndex)).toEqual([
+      ...INCOME_DIVERGENCE_PROBE_RINGS,
+    ]);
+    for (const probe of probes) {
+      expect(probe.seed).toBe(INCOME_DIVERGENCE_PROBE_SEED);
+      expect(
+        line(probe.ringIndex, probe.strategy).seeds,
+      ).toContain(probe.seed);
+      // The probe's request is re-derived from the authored ring data, so an
+      // invented hex/aggression/level fails here even before the run.
+      const request = incomeDivergenceProbeRequest(probe.ringIndex);
+      expect({
+        hexId: request.hexId,
+        aggression: request.aggression,
+        level: request.level,
+      }).toEqual({
+        hexId: probe.hexId,
+        aggression: probe.aggression,
+        level: probe.level,
+      });
+    }
+    // The measured sortie itself: a stale artifact (a changed arena, bot,
+    // mineral payout or loadout resolution) fails this deep comparison.
+    const fresh = measureIncomeDivergenceProbes();
+    expect(fresh).toEqual(probes);
+    // Sanity: the probes are real captured sorties that banked salvage, so the
+    // comparison is not trivially satisfied by zeroed runs.
+    expect(probes.every((probe) => probe.captured)).toBe(true);
+    expect(probes.every((probe) => probe.minerals > 0)).toBe(true);
+  }, REAL_ARENA_TIMEOUT_MS);
+
+  it('derives every unlock-pace row from the recorded income', () => {
+    for (const entry of income) {
+      // The artifact is JSON, so a line that banks nothing records `null`
+      // where the derivation returns `Infinity` — compare through the same
+      // serialisation the CLI writes.
+      expect(entry.unlockPace).toEqual(
+        JSON.parse(JSON.stringify(deriveUnlockPace(entry.income))),
+      );
+    }
+  });
+
+  it('builds the artifact the CLI writes from the measured reports', () => {
+    const report = simulateRingTiming({
+      ringIndex: 1,
+      strategy: 'grind',
+      seeds: [1],
+      hexes: modelRing(),
+      runDeployment: fakeRunner(3),
+    });
+    const built = buildOneLevelIncomeArtifact([report], []);
+    expect(built.version).toBe(ONE_LEVEL_INCOME_ARTIFACT_VERSION);
+    expect(built.command).toBe(ONE_LEVEL_INCOME_ARTIFACT_COMMAND);
+    expect(built.lines).toEqual([buildOneLevelIncomeLine(report)]);
+    expect(built.probes).toEqual([]);
   });
 
   it('is internally consistent (capture rate, cores and the checkpoint hold)', () => {

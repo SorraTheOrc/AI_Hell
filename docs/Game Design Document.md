@@ -4233,7 +4233,40 @@ overlaps and the wreck re-drops that count), so a captured sortie banks **122.6
 11.7 / 6.1 on the old fixed field. The audit follow-up's pass-through collection
 (AH-0MWJ1680Z001QYV2) and the ring's capture-progress aggression ramp
 (AH-0MWFDQ9EY004NO4X) still shape how much of that field the bot sweeps up, but
-the supply is no longer a harness artefact. The unlock pace therefore
+the supply is no longer a harness artefact.
+
+**The wider-seed confirmation and the ruling (AH-0MWT5CTCO009MJ24).** The same
+command over **twelve** seeds — four times the committed evidence set
+(`npm run ring-timing -- --one-level --seeds 12 --json`) — measures ring-1
+grind at **62.1** and ring-2 grind at **72.5** minerals per deployment, against
+61.3 / 65.6 on seeds 1–3: the wider set confirms the result and is the reason
+the figures are read as a range rather than a point (per-seed ring-1 range
+51.0–72.3, ring-2 55.7–99.0 minerals per deployment). Capture rate is the
+stable half of the comparison — ring 1 is **50.0 %** on every one of the twelve
+seeds, ring 2 **51.4 %** aggregate (six or seven of twelve per seed, 50.0–58.3 %)
+— so neither the income nor the capture conclusion is read out of three seeds'
+variance. Twelve seeds bound that spread while staying a roughly three-minute
+run; the committed artifact deliberately stays on seeds 1–3 so the evidence set
+is quick to re-measure and the divergence guard is deterministic.
+
+**The ruling.** The 9.0 / 6.0 target is **met and exceeded** — per-deployment
+minerals are roughly 7–11× it — and the parent's residual-gap question is
+answered on the **supply** side: the gap closed when the arena modelled the
+game's kill-drop economy and hostile absorption, not through collection routing
+or capture rate. The measured **ceiling** is therefore not a collection or
+capture shortfall: the bot captures half its deployments on both rings, and
+the minerals it banks per captured sortie (122.6 / 131.1 on seeds 1–3, 124.2 /
+141.0 on the wider set) are what the field supplies. No economy-side change
+(spawn/drop rate or capture rate) is made here — nothing in the measurement
+indicates a collection-side shortfall to correct. The remaining question, how
+much of the available field the bot's routing actually sweeps up, is owned by
+the route-through collection re-tune (**AH-0MWLLPA1Q0006U2P**) and its review
+(**AH-0MWLCGXGW004KA3J**), which will re-pin this artifact when it lands
+(**AH-0MWLLPAQL003IEXE**). What the ruling *does* record is the consequence for
+the unlock tree: the pace is now very short (2–8 deployments), so any retune of
+prices is a balance decision of its own, never a correction of this measurement.
+
+The unlock pace therefore
 **shortens** sharply for every rings-1–2 entry:
 
 | Entry (price) | Before (ring-1 grind) | After (ring-1 grind) | After (ring-2 grind) |
@@ -4289,11 +4322,20 @@ arena runs — the same evidence standard as the timing baseline (a human
 playtest remains desirable but is not a gate). A sortie the bot neither wipes
 nor dies within the 300 s deployment window is recorded as a loss (the
 pre-change harness's tick-cap safety bound, read strictly for the one-level
-case); the seeded bot shows real variance (ring-2 grind captured 6 of 12 on every
-seed in the current measurement, while earlier models differed by seed — the
+case); the seeded bot shows real variance (ring-2 grind captured six or seven
+of 12 per seed across the wider set, while earlier models differed more — the
 aggregate stands). Deterministic:
 the same command re-measures the same artifact, and the numbers are never
-hand-edited.
+hand-edited. **The artifact cannot drift silently.** Since AH-0MWT5CTCO009MJ24
+the committed artifact also carries two **divergence probes** — one sortie per
+ring (seed 1, the ring opener), recorded by the shipped bot in the same file,
+beside a schema version and the regenerating command — and a deterministic
+guard in `src/ai/eval/ringTiming.test.ts` re-derives each probe's request from
+the authored ring data, re-measures it and fails when the artifact and the
+shipped bot diverge. A changed arena, bot, mineral payout or loadout resolution
+therefore cannot leave a stale committed measurement; the probe set is
+deliberately one sortie per ring (bounded runtime), with the aggregate figures
+pinned separately.
 
 #### Supported playstyles
 

@@ -354,7 +354,22 @@ npm run ring-timing -- --json --out docs/dev/ring-timing-baseline.json
 
 # one ring, one line, one seed
 npm run ring-timing -- --ring 2 --strategy grind --seed 7
+
+# the one-level income view: per-deployment income, unlock pace and the
+# divergence probes the guard re-measures (artifact below)
+npm run ring-timing -- --one-level --income-out docs/dev/one-level-income-baseline.json
 ```
+
+The same driver also measures the shipped five-wave sortie's **per-deployment
+income** (`AH-0MWCOWTOR00994NA`, ruled by **AH-0MWT5CTCO009MJ24**). The
+committed artifact
+[`docs/dev/one-level-income-baseline.json`](./dev/one-level-income-baseline.json)
+carries the measured income and unlock pace for both rings and lines (seeds
+1–3) plus two **divergence probes** — one sortie per ring on seed 1, the ring
+opener — that `ringTiming.test.ts` re-derives from the authored ring data and
+re-measures, so a changed arena, bot or mineral model cannot leave a stale
+committed measurement. GDD §8.2 *Measured per-deployment income* quotes the
+figures and records the ruling.
 
 ### What is measured
 

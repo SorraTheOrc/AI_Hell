@@ -1607,3 +1607,210 @@ export function formatIncomeReport(report: RingTimingReport): string {
   }
   return lines.join('\n');
 }
+
+/**
+ * The version stamped on the committed one-level income artifact
+ * (AH-0MWT5CTCO009MJ24). Bump it whenever the artifact's schema changes, so a
+ * guard reading an older file fails on the version instead of misreading the
+ * shape.
+ */
+export const ONE_LEVEL_INCOME_ARTIFACT_VERSION = 1;
+
+/** The command that regenerates the committed income artifact. */
+export const ONE_LEVEL_INCOME_ARTIFACT_COMMAND =
+  'npm run ring-timing -- --one-level --income-out docs/dev/one-level-income-baseline.json';
+
+/** One measured ring+line of the committed income artifact. */
+export interface OneLevelIncomeLine {
+  /** The measured ring. */
+  readonly ringIndex: number;
+  /** The measured playstyle line. */
+  readonly strategy: RingTimingStrategy;
+  /** The seeds the line was measured on (the committed evidence set). */
+  readonly seeds: readonly number[];
+  /** The derived per-deployment income. */
+  readonly income: PerDeploymentIncome;
+  /** The derived unlock pace, straight from {@link deriveUnlockPace}. */
+  readonly unlockPace: readonly UnlockPaceEntry[];
+}
+
+/**
+ * One recorded **divergence probe**: a single sortie per ring, measured by the
+ * shipped bot when the artifact was generated.
+ *
+ * The guard re-measures the same request (re-derived from the authored ring
+ * data, so a ring-data change is caught too) and compares the result. It is
+ * deliberately **one sortie per ring** — the guard exists to catch a stale
+ * artifact left behind by a changed arena/bot/mineral model without making the
+ * suite slow (AH-0MWT5CTCO009MJ24). The aggregate figures are pinned
+ * separately, so a hand-edited artifact fails there instead.
+ */
+export interface IncomeDivergenceProbe {
+  /** The ring the probed sortie belongs to. */
+  readonly ringIndex: number;
+  /** The line whose plan the probed sortie is the first deployment of. */
+  readonly strategy: RingTimingStrategy;
+  /** The committed evidence seed the probe runs on. */
+  readonly seed: number;
+  /** The probed hex's authored id. */
+  readonly hexId: string;
+  /** The aggression the deployment faced (the ring opener: the authored base). */
+  readonly aggression: number;
+  /** The campaign level that aggression selected. */
+  readonly level: number;
+  /** Measured arena duration, seconds. */
+  readonly seconds: number;
+  /** Whether the sortie's five-wave composition cleared. */
+  readonly captured: boolean;
+  /** Minerals the run collected (banked when captured). */
+  readonly minerals: number;
+  /** Times the player was hit during the run. */
+  readonly hits: number;
+}
+
+/** The committed one-level income artifact (`docs/dev/one-level-income-baseline.json`). */
+export interface OneLevelIncomeArtifact {
+  /** Schema version — see {@link ONE_LEVEL_INCOME_ARTIFACT_VERSION}. */
+  readonly version: number;
+  /** The command that regenerated the artifact (never hand-edited). */
+  readonly command: string;
+  /** One measured line per ring and playstyle. */
+  readonly lines: readonly OneLevelIncomeLine[];
+  /** One recorded sortie per probed ring — the divergence guard's evidence. */
+  readonly probes: readonly IncomeDivergenceProbe[];
+}
+
+/**
+ * The seed the divergence probes are measured on: the first committed evidence
+ * seed, so the guard reads only the seed set the artifact was measured on.
+ */
+export const INCOME_DIVERGENCE_PROBE_SEED = 1;
+
+/**
+ * The rings probed by the divergence guard (one sortie each). Ring 1 exercises
+ * the bare starter loadout and ring 2 the full ring-1 grant set, so a change
+ * to the loadout resolution or the mineral model shows up in one of them.
+ */
+export const INCOME_DIVERGENCE_PROBE_RINGS: readonly number[] = Object.freeze([
+  1, 2,
+]);
+
+/**
+ * The ring-opener sortie a divergence probe re-measures: the **first**
+ * deployment of the ring's grind plan (weakest aggression first, so the ring's
+ * entry loadout and zero held hexes). Re-derived from the authored data every
+ * time — never persisted as a request — so a ring-data change moves the probe
+ * too.
+ *
+ * @param ringIndex — the probed ring.
+ * @param options — balance/ticks/dt overrides (defaults the measurement's own).
+ * @returns the request the shipped one-level runner plays.
+ */
+export function incomeDivergenceProbeRequest(
+  ringIndex: number,
+  options?: {
+    readonly seed?: number;
+    readonly balance?: ArenaBalanceConfig;
+    readonly ticks?: number;
+    readonly dt?: number;
+  },
+): RingDeploymentRequest {
+  const hexes = ringTimingHexes(ringIndex);
+  const [opener] = planRingDeployments(hexes, 'grind').played;
+  if (opener === undefined) {
+    throw new Error(
+      `ring ${ringIndex} has no authored hexes, so it has no divergence probe`,
+    );
+  }
+  const aggression = deploymentAggressionFor(
+    opener.baseAggression,
+    0,
+    hexes.length,
+    HEX_AGGRESSION_RAMP_PER_RING,
+  );
+  return {
+    seed: options?.seed ?? INCOME_DIVERGENCE_PROBE_SEED,
+    hexId: opener.id,
+    aggression,
+    level: hexDifficultyProfile(aggression).level,
+    ticks: options?.ticks ?? RING_DEPLOYMENT_TICKS,
+    dt: options?.dt ?? DEFAULT_RING_TIMING_DT,
+    balance: options?.balance ?? loadBalanceConfig(),
+    loadout: resolveDeploymentLoadout(ringEntryOwnership(ringIndex)),
+  };
+}
+
+/**
+ * Measures the divergence probes (one shipped-bot sortie per probed ring).
+ *
+ * @param options — runner + measurement overrides (defaults the shipped
+ *   one-level arena runner and the artifact's own measurement settings).
+ * @returns one measured probe per ring, in {@link INCOME_DIVERGENCE_PROBE_RINGS} order.
+ */
+export function measureIncomeDivergenceProbes(options?: {
+  readonly runDeployment?: RingDeploymentRunner;
+  readonly seed?: number;
+  readonly balance?: ArenaBalanceConfig;
+  readonly ticks?: number;
+  readonly dt?: number;
+}): IncomeDivergenceProbe[] {
+  const runner = options?.runDeployment ?? createOneLevelArenaDeploymentRunner();
+  const probes: IncomeDivergenceProbe[] = [];
+  for (const ringIndex of INCOME_DIVERGENCE_PROBE_RINGS) {
+    const request = incomeDivergenceProbeRequest(ringIndex, options);
+    const result = runner(request);
+    probes.push({
+      ringIndex,
+      strategy: 'grind',
+      seed: request.seed,
+      hexId: request.hexId,
+      aggression: request.aggression,
+      level: request.level,
+      seconds: result.seconds,
+      captured: result.captured,
+      minerals: result.minerals,
+      hits: result.hits,
+    });
+  }
+  return probes;
+}
+
+/**
+ * Builds one committed line of the income artifact from a measured report.
+ *
+ * @param report — a report measured with the shipped one-level runner.
+ * @returns the line the CLI writes into `docs/dev/one-level-income-baseline.json`.
+ */
+export function buildOneLevelIncomeLine(
+  report: RingTimingReport,
+): OneLevelIncomeLine {
+  const income = derivePerDeploymentIncome(report);
+  return {
+    ringIndex: report.ringIndex,
+    strategy: report.strategy,
+    seeds: [...report.seeds],
+    income,
+    unlockPace: deriveUnlockPace(income),
+  };
+}
+
+/**
+ * Builds the committed one-level income artifact: the measured lines plus the
+ * divergence probes, stamped with the command that regenerates it
+ * (AH-0MWT5CTCO009MJ24).
+ *
+ * @param reports — the measured reports (typically seeds 1–3, both rings and lines).
+ * @param probes — the measured probes (default: a fresh measurement).
+ * @returns the artifact object the CLI serialises.
+ */
+export function buildOneLevelIncomeArtifact(
+  reports: readonly RingTimingReport[],
+  probes: readonly IncomeDivergenceProbe[] = measureIncomeDivergenceProbes(),
+): OneLevelIncomeArtifact {
+  return {
+    version: ONE_LEVEL_INCOME_ARTIFACT_VERSION,
+    command: ONE_LEVEL_INCOME_ARTIFACT_COMMAND,
+    lines: reports.map((report) => buildOneLevelIncomeLine(report)),
+    probes: [...probes],
+  };
+}
