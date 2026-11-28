@@ -15,6 +15,12 @@
  *   - explicit reset seam returns to base
  *   - two sequential streaks after a reset are independent
  *
+ * It also pins the pure fill → step mapping (`mineralChimeStepForFill`):
+ *   - first mineral → step 0 and full hold → top step, at every capacity
+ *   - interior fills spread monotonically over the interior steps
+ *   - degenerate inputs clamp to a safe, in-range step (never `NaN`)
+ *   - a red deposit climbs several steps in one pickup
+ *
  * Expected playback rates are computed as `2 ** (semitones / 12)` from the
  * exported `MINERAL_CHIME_SEMITONES` ladder, so the ladder (not a copy of
  * its numbers) is the contract.
@@ -22,12 +28,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { MINERAL_DEPOSIT_VALUE } from '../core/constants';
 import {
   createMineralChime,
   MINERAL_CHIME_RESET_GAP_MS,
   MINERAL_CHIME_SEMITONES,
   mineralChimeRate,
   mineralChimeStep,
+  mineralChimeStepForFill,
   noteMineralCollected,
   resetMineralChimeStreak,
 } from './mineralChime';
@@ -105,6 +113,122 @@ describe('mineralChimeRate', () => {
 
   it('floors a fractional step', () => {
     expect(mineralChimeRate(1.9)).toBe(rateFor(MINERAL_CHIME_SEMITONES[1]));
+  });
+});
+
+// ── Fill → step mapping (pure) ────────────────────────────────────────
+
+/**
+ * `mineralChimeStepForFill` maps the post-credit hold state to a ladder step
+ * with fixed endpoints. Expected interior steps are computed from the exported
+ * ladder length, so the ladder (not a copied number) is the contract.
+ */
+describe('mineralChimeStepForFill', () => {
+  const LAST = MINERAL_CHIME_SEMITONES.length - 1;
+
+  /** The documented interior spread, computed from the exported ladder. */
+  const interiorStep = (store: number, capacity: number): number =>
+    Math.min(
+      Math.max(Math.round(((store - 1) / (capacity - 1)) * LAST), 0),
+      LAST,
+    );
+
+  it('sounds the fixed base note for a first mineral (store <= 1)', () => {
+    for (const capacity of [5, 10, 20, 40]) {
+      expect(mineralChimeStepForFill(0, capacity)).toBe(0);
+      expect(mineralChimeStepForFill(1, capacity)).toBe(0);
+      expect(mineralChimeStepForFill(-5, capacity)).toBe(0);
+    }
+  });
+
+  it('sounds the fixed top note on a full hold (store >= capacity)', () => {
+    for (const capacity of [5, 10, 20, 40]) {
+      expect(mineralChimeStepForFill(capacity, capacity)).toBe(LAST);
+      expect(mineralChimeStepForFill(capacity + 1, capacity)).toBe(LAST);
+      expect(mineralChimeStepForFill(capacity * 3, capacity)).toBe(LAST);
+    }
+  });
+
+  it('keeps both endpoints as capacity grows (5, 10, 20, 40)', () => {
+    for (const capacity of [5, 10, 20, 40]) {
+      expect(mineralChimeStepForFill(1, capacity)).toBe(0);
+      expect(mineralChimeStepForFill(capacity, capacity)).toBe(LAST);
+    }
+  });
+
+  it('spreads interior fills over the interior steps', () => {
+    for (const capacity of [5, 10, 20, 40]) {
+      for (let store = 2; store < capacity; store++) {
+        expect(mineralChimeStepForFill(store, capacity)).toBe(
+          interiorStep(store, capacity),
+        );
+      }
+    }
+  });
+
+  it('never falls as store grows within one capacity', () => {
+    for (const capacity of [5, 10, 20, 40]) {
+      let previous = -Infinity;
+      for (let store = 0; store <= capacity * 2; store++) {
+        const step = mineralChimeStepForFill(store, capacity);
+        expect(step).toBeGreaterThanOrEqual(previous);
+        previous = step;
+      }
+    }
+  });
+
+  it('clamps degenerate inputs to a safe step instead of NaN', () => {
+    // A first / negative / unresolvable store is the base note.
+    expect(mineralChimeStepForFill(-5, 10)).toBe(0);
+    expect(mineralChimeStepForFill(Number.NaN, 10)).toBe(0);
+    expect(mineralChimeStepForFill(Number.NEGATIVE_INFINITY, 10)).toBe(0);
+    // A full / positive-infinite store is the top note.
+    expect(mineralChimeStepForFill(Number.POSITIVE_INFINITY, 10)).toBe(LAST);
+    // A degenerate capacity still yields a safe, in-range step.
+    expect(mineralChimeStepForFill(5, Number.NaN)).toBe(0);
+    expect(mineralChimeStepForFill(5, 0)).toBe(LAST);
+    expect(mineralChimeStepForFill(2, 1)).toBe(LAST);
+
+    const degenerateCases: ReadonlyArray<readonly [number, number]> = [
+      [Number.NaN, 10],
+      [Number.POSITIVE_INFINITY, 10],
+      [Number.NEGATIVE_INFINITY, 10],
+      [5, Number.NaN],
+      [-5, 10],
+      [5, 0],
+      [2, 1],
+    ];
+    for (const [store, capacity] of degenerateCases) {
+      const step = mineralChimeStepForFill(store, capacity);
+      expect(Number.isFinite(step)).toBe(true);
+      expect(step).toBeGreaterThanOrEqual(0);
+      expect(step).toBeLessThanOrEqual(LAST);
+    }
+  });
+
+  it('jumps the equivalent number of steps on a red deposit in one pickup', () => {
+    const capacity = 20;
+    const before = mineralChimeStepForFill(1, capacity);
+    const after = mineralChimeStepForFill(
+      1 + MINERAL_DEPOSIT_VALUE,
+      capacity,
+    );
+
+    // One pickup of a red deposit is worth MINERAL_DEPOSIT_VALUE minerals, so
+    // it climbs several steps at once (not one) and never exceeds the top.
+    expect(after - before).toBeGreaterThan(1);
+    expect(after).toBe(interiorStep(1 + MINERAL_DEPOSIT_VALUE, capacity));
+    expect(after).toBeLessThanOrEqual(LAST);
+  });
+
+  it('is pure — repeated calls agree and leave the streak untouched', () => {
+    resetMineralChimeStreak();
+    noteMineralCollected(0);
+    noteMineralCollected(100);
+    const streakBefore = mineralChimeStep();
+
+    expect(mineralChimeStepForFill(7, 10)).toBe(mineralChimeStepForFill(7, 10));
+    expect(mineralChimeStep()).toBe(streakBefore);
   });
 });
 

@@ -40,6 +40,18 @@
  * (AH-0MWNMRD6I002CCVT) — a steady A5 triangle with a quiet A6 shimmer and
  * no falling sweep or noise tick.
  *
+ * ## Fill → step mapping
+ *
+ * {@link mineralChimeStepForFill} is the pure, Phaser-free rule the game and
+ * every gym share when the hull-fill chime is enabled: the post-credit hold
+ * state picks a ladder step with **fixed endpoints**.  The first mineral
+ * (`store <= 1`) always sounds the base note and a full hold
+ * (`store >= capacity`) always sounds the top note, so both stay learnable at
+ * every capacity.  Interior fills spread linearly over the interior steps and
+ * never fall as the hold grows; quantising onto the existing ladder keeps the
+ * one-octave ceiling.  Degenerate inputs (`NaN`/non-finite, `capacity <= 1`,
+ * negative store) clamp to a safe step instead of producing `NaN`.
+ *
  * ## Rules
  *
  * 1. **Base step** — the first pickup (or the first pickup after a reset/gap)
@@ -54,6 +66,13 @@
  *    {@link resetMineralChimeStreak} return the streak to base.
  * 6. **Sequential independence** — isolated factory instances share no state
  *    with each other or with the shared singleton.
+ * 7. **Fill endpoints** — {@link mineralChimeStepForFill} returns step 0 for
+ *    the first mineral (`store <= 1`) and the last degree for a full hold
+ *    (`store >= capacity`), at every capacity.
+ * 8. **Fill interior** — interior fills quantise monotonically onto the
+ *    interior ladder steps and never fall as the store grows.
+ * 9. **Degenerate fill** — a non-finite or degenerate hold clamps to an
+ *    in-range step, never `NaN`.
  *
  * Playback rates come from {@link mineralChimeRate}, the single place a ladder
  * step becomes `2 ** (semitones / 12)`.
@@ -99,6 +118,67 @@ export function mineralChimeRate(step: number): number {
     ? Math.min(Math.max(Math.floor(step), 0), MINERAL_CHIME_SEMITONES.length - 1)
     : 0;
   return 2 ** (MINERAL_CHIME_SEMITONES[index] / 12);
+}
+
+// ── Fill → step mapping ───────────────────────────────────────────────
+
+/**
+ * Ladder step for the post-credit hull-fill hold state.
+ *
+ * The **first mineral** (`store <= 1`) is the fixed base note (step 0) and a
+ * **full hold** (`store >= capacity`) is the fixed top note (the last degree
+ * of {@link MINERAL_CHIME_SEMITONES}), so both endpoints stay learnable as the
+ * hull capacity grows.  Interior fills quantise linearly onto the interior
+ * steps — `round((store - 1) / (capacity - 1) * last)` clamped into
+ * `[0, last]` — and the mapping never falls as `store` grows within one
+ * capacity.
+ *
+ * Degenerate inputs clamp to a safe step rather than `NaN`: a non-finite or
+ * negative store is the base note (positive infinity is a full hold and is
+ * the top note), and a degenerate capacity (`NaN`, or `capacity <= 1` with a
+ * store above it) is the top note.  The function reads the **credited**
+ * store, so a red deposit (`MINERAL_DEPOSIT_VALUE`) climbs the equivalent
+ * number of steps in one pickup.
+ *
+ * No Phaser, no clock, no side effects — the game and every gym consume this
+ * one rule.
+ *
+ * @param store - Mineral store after this pickup has been credited.
+ * @param capacity - Current hull mineral capacity.
+ */
+export function mineralChimeStepForFill(
+  store: number,
+  capacity: number,
+): number {
+  const last = MINERAL_CHIME_SEMITONES.length - 1;
+
+  // A non-finite store is degenerate: positive infinity is a full hold, every
+  // other non-finite value (`NaN`, negative infinity) is no fill at all.
+  if (!Number.isFinite(store)) {
+    return store === Number.POSITIVE_INFINITY ? last : 0;
+  }
+
+  // The first mineral (and any negative store) is the fixed base note.
+  if (store <= 1) {
+    return 0;
+  }
+
+  // A full hold — including a degenerate `capacity <= 1` — is the fixed top
+  // note.
+  if (store >= capacity) {
+    return last;
+  }
+
+  // A non-finite `capacity` cannot form a finite ratio; a huge capacity is
+  // effectively an (almost) empty hold, so clamp to the base note.
+  if (!Number.isFinite(capacity)) {
+    return 0;
+  }
+
+  // Interior fills spread linearly over the interior steps and quantise onto
+  // the ladder; the clamp keeps a rounding overshoot inside the endpoints.
+  const step = Math.round(((store - 1) / (capacity - 1)) * last);
+  return Math.min(Math.max(step, 0), last);
 }
 
 // ── Types ─────────────────────────────────────────────────────────────
