@@ -10,16 +10,19 @@
  *
  * - AC5 — the guard **fails on the pre-derivation tree**, naming all five
  *   weapon grants (`rapid`, `arc`, `broadside`, `dual`, `nova`), and passes on
- *   the shipped tree. The allowlist is exactly the three ring-2 modifier
- *   grants; `core-bank` is not on it because no authored hex grants that id.
+ *   the shipped tree. The allowlist is now **empty** (AH-0MWWARIW6003F7OV
+ *   modelled the three ring-2 modifier grants as hull-training entries);
+ *   `core-bank` was never on it because no authored hex grants that id.
  * - AC6 — the five grants ship grant-only: zero price, the `GRANT_ONLY_MIN_RING`
  *   gate and no economy row, so no purchase path appears; the four authored
  *   prices are byte-identical to before and player strength / the ring
- *   aggression budget are unchanged (`STARTING_WEAPON_STRENGTH_WEIGHT = 0`).
+ *   aggression budget are unchanged by the weapon grants
+ *   (`STARTING_WEAPON_STRENGTH_WEIGHT = 0`).
  * - AC7/AC8 — no committed documentation describes a swallowed weapon grant as
  *   intended behaviour any more: the "effect-free `core-bank`" statement, the
  *   un-itemised-`rapid` examples and the capture cycle's "has not itemised yet"
- *   note are corrected, and the three allowlisted modifier ids are documented.
+ *   note are corrected, and the three ring-2 grant ids are documented as
+ *   modelled hull training rather than "strength entries".
  */
 
 import { describe, expect, it } from 'vitest';
@@ -58,8 +61,8 @@ const HEX_GRANTED_WEAPON_IDS = [
   'nova',
 ] as const;
 
-/** The three ring-2 modifier grants that intentionally carry no run stat. */
-const EFFECT_FREE_MODIFIER_GRANTS = [
+/** The three ring-2 modifier grants that now carry modelled hull training. */
+const HULL_TRAINING_MODIFIER_GRANTS = [
   'armour-plating',
   'firepower-up',
   'systems-upgrade',
@@ -134,7 +137,7 @@ describe('hex-grant referential-integrity guard (AC5)', () => {
     }
 
     // Every authored grant is covered by the guard: the ring data grants no id
-    // outside the catalogue and the three documented effect-free modifiers.
+    // outside the catalogue (the documented allowlist is now empty).
     const authoredGrants = new Set<string>(
       HEX_RING_DEFINITIONS.map((definition) => String(definition.grants)),
     );
@@ -150,22 +153,27 @@ describe('hex-grant referential-integrity guard (AC5)', () => {
     }
   });
 
-  it('allowlists exactly the three ring-2 modifiers and never `core-bank`', () => {
-    expect([...HEX_GRANT_EFFECT_FREE_ALLOWLIST].sort()).toEqual([
-      ...EFFECT_FREE_MODIFIER_GRANTS,
-    ]);
+  it('empties the allowlist and models the three ring-2 grants instead', () => {
+    // The former effect-free allowlist is empty (AH-0MWWARIW6003F7OV), so a
+    // future uncatalogued grant fails closed rather than joining a dumping
+    // ground.
+    expect(HEX_GRANT_EFFECT_FREE_ALLOWLIST).toEqual([]);
     expect(HEX_GRANT_EFFECT_FREE_ALLOWLIST).not.toContain('core-bank');
     for (const id of HEX_GRANTED_WEAPON_IDS) {
       expect(HEX_GRANT_EFFECT_FREE_ALLOWLIST).not.toContain(id);
     }
 
-    // The three allowlisted ids are genuinely authored by ring-2 hexes, so the
-    // allowlist cannot grow into a dumping ground for un-itemised grants.
+    // The three ids are genuinely authored by ring-2 hexes, and each is now a
+    // named, grant-only hull-training catalogue modifier.
     const authored: string[] = HEX_RING_DEFINITIONS.map((definition) =>
       String(definition.grants),
     );
-    for (const id of EFFECT_FREE_MODIFIER_GRANTS) {
+    for (const id of HULL_TRAINING_MODIFIER_GRANTS) {
       expect(authored, `an authored hex grants ${id}`).toContain(id);
+      const entry = HANGAR_CATALOGUE.find((candidate) => candidate.id === id);
+      expect(entry, `catalogue entry for ${id}`).toBeDefined();
+      expect(entry!.kind).toBe('modifier');
+      expect(isPurchasableEntry(entry!), `${id} is not for sale`).toBe(false);
     }
     expect(authored).not.toContain('core-bank');
   });
@@ -261,10 +269,11 @@ describe('no documentation describes a swallowed weapon grant as intended (AC7/A
   it('the Game Design Document calls `rapid` a weapon, not a strength entry', () => {
     const text = read(GDD_PATH);
     expect(text).not.toMatch(/the `rapid` strength entry/);
-    // The three effect-free modifiers are documented by id.
-    for (const id of EFFECT_FREE_MODIFIER_GRANTS) {
+    // The three ring-2 grants are documented by id as modelled hull training.
+    for (const id of HULL_TRAINING_MODIFIER_GRANTS) {
       expect(text, `the GDD names ${id}`).toContain(id);
     }
+    expect(text).not.toMatch(/`armour-plating` \/ `firepower-up` \/ `systems-upgrade` strength entries/);
   });
 
   it('no committed design doc claims a granted weapon is effect-free', () => {

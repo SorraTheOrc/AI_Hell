@@ -289,9 +289,10 @@ function resolveHullDefinition(
  * `extra-lives` modifier, capped at the run's maximum lives.
  *
  * A modifier's other effects are deliberately **not** consumed here: a
- * `defence` modifier raises the fleet's player strength (the hangar economy's
- * `resolvePlayerStrength`) and a `defence-skill` modifier trains the bot the
- * capture cycle leaves in the hex — neither changes the run the player flies.
+ * `defence` modifier and owned `hull-upgrade` training both raise the fleet's
+ * player strength (the hangar economy's `resolvePlayerStrength`) and a
+ * `defence-skill` modifier trains the bot the capture cycle leaves in the hex —
+ * none changes the run the player flies.
  */
 function resolveStartingLives(
   hull: HullDefinition | null,

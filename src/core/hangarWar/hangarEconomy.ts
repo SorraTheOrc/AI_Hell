@@ -1480,6 +1480,13 @@ export const STARTING_WEAPON_STRENGTH_WEIGHT = 0;
  * fleet actually owns and the catalogue knows contribute, so a corrupt save
  * can never inflate the frontier.
  *
+ * **Owned hull training** (`hull-upgrade` modifiers, AH-0MWWARIW6003F7OV) is
+ * folded into the hull's authored `upgrades` **before** the one rating call:
+ * the effect is permanent and read from **ownership** (`ownedModifiers`), not
+ * from the equipped loadout, so a save that already holds a granted id gains
+ * the training on load with no migration and it still contributes while
+ * unequipped.
+ *
  * @param hangar — the persistent hangar (read only).
  * @param catalogue — the unlock tree (injectable for tests); defaults to the
  *   shipped catalogue.
@@ -1491,9 +1498,14 @@ export function resolvePlayerStrength(
   catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
 ): number {
   const hull = findHangarEntry(resolveActiveHull(hangar, catalogue), catalogue);
+  const training = ownedHullUpgradeLevels(hangar, catalogue);
   const hullRating =
     hull !== null && hull.kind === 'hull'
-      ? defenderRatingFromUpgrades(hull.baseDefence, hull.upgrades)
+      ? defenderRatingFromUpgrades(hull.baseDefence, {
+          armour: hull.upgrades.armour + training.armour,
+          firepower: hull.upgrades.firepower + training.firepower,
+          systems: hull.upgrades.systems + training.systems,
+        })
       : 0;
 
   const loadout = resolveActiveLoadout(hangar, catalogue);
@@ -1512,6 +1524,37 @@ export function resolvePlayerStrength(
     MINIMUM_PLAYER_STRENGTH,
     hullRating + modifierRating + weaponRating,
   );
+}
+
+/**
+ * The permanent hull training the fleet **owns**, summed per stat bucket.
+ *
+ * Reads `hangar.ownedModifiers` rather than the equipped loadout: hull training
+ * is permanent and un-equipped (AH-0MWWARIW6003F7OV), so the effect applies even
+ * with an empty `activeLoadout.modifiers` and an existing save needs no
+ * auto-equip write. Only catalogue-known `hull-upgrade` modifiers contribute;
+ * an unknown or malformed id adds nothing.
+ *
+ * @param hangar — the persistent hangar (read only).
+ * @param catalogue — the unlock tree (injectable for tests).
+ * @returns the additional levels per {@link HullUpgrades} bucket.
+ */
+function ownedHullUpgradeLevels(
+  hangar: HangarState,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): HullUpgrades {
+  const totals = { armour: 0, firepower: 0, systems: 0 };
+  for (const id of hangar.ownedModifiers) {
+    const entry = findHangarEntry(id, catalogue);
+    if (
+      entry !== null &&
+      entry.kind === 'modifier' &&
+      entry.effect.kind === 'hull-upgrade'
+    ) {
+      totals[entry.effect.bucket] += toCount(entry.effect.level);
+    }
+  }
+  return totals;
 }
 
 /**

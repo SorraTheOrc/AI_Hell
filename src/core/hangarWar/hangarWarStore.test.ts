@@ -47,7 +47,12 @@ import {
   parseHangarWarPayload,
   saveHangarWarPayload,
 } from './hangarWarStore';
-import { MAX_PERMANENT_LEVEL, hangarPermanentLevels } from './hangarEconomy';
+import {
+  DEFENDER_UPGRADE_WEIGHTS,
+  MAX_PERMANENT_LEVEL,
+  hangarPermanentLevels,
+  resolvePlayerStrength,
+} from './hangarEconomy';
 import { createInMemoryHangarWarStorage } from './storage';
 import type { HangarWarPayload, HangarWarStorage } from './types';
 
@@ -219,6 +224,63 @@ describe('hangar-war store round-trip', () => {
     saveHangarWarPayload(defaults, storage);
 
     expect(loadHangarWarPayload(storage)).toEqual(defaults);
+  });
+
+  it('grants ring-2 hull training to a save that already holds the ids (no migration)', () => {
+    // AC6 (AH-0MWWARIW6003F7OV): a save written before the fix already carries
+    // the three ids in `ownedModifiers`. On load the modelled effect is present
+    // through the shipped pure rule, with no migration and no new field, and
+    // the payload is written back byte-identical.
+    const hullTrainingIds = [
+      'armour-plating',
+      'systems-upgrade',
+      'firepower-up',
+    ];
+    const withTraining: HangarWarPayload = {
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      hangar: {
+        ...VALID_HANGAR_WAR_PAYLOAD.hangar,
+        ownedModifiers: hullTrainingIds,
+      },
+    };
+    const withoutTraining: HangarWarPayload = {
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      hangar: {
+        ...VALID_HANGAR_WAR_PAYLOAD.hangar,
+        ownedModifiers: [],
+      },
+    };
+
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(withTraining, storage);
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded).toEqual(withTraining);
+    // Measurable on load: exactly the three bucket weights, read from the
+    // shared weight table rather than restated.
+    const totalWeight =
+      DEFENDER_UPGRADE_WEIGHTS.armour +
+      DEFENDER_UPGRADE_WEIGHTS.firepower +
+      DEFENDER_UPGRADE_WEIGHTS.systems;
+    expect(resolvePlayerStrength(loaded!.hangar)).toBe(
+      resolvePlayerStrength(withoutTraining.hangar) + totalWeight,
+    );
+
+    // Written back byte-identical: no migration, no schema change, no field.
+    const firstRaw = storage.getItem(HANGAR_WAR_STORAGE_KEY);
+    saveHangarWarPayload(loaded!, storage);
+    expect(storage.getItem(HANGAR_WAR_STORAGE_KEY)).toBe(firstRaw);
+  });
+
+  it('leaves a save holding no hull-training ids unchanged', () => {
+    const storage = createInMemoryHangarWarStorage();
+    saveHangarWarPayload(VALID_HANGAR_WAR_PAYLOAD, storage);
+    const loaded = loadHangarWarPayload(storage);
+
+    expect(loaded).toEqual(VALID_HANGAR_WAR_PAYLOAD);
+    expect(resolvePlayerStrength(loaded!.hangar)).toBe(
+      resolvePlayerStrength(VALID_HANGAR_WAR_PAYLOAD.hangar),
+    );
   });
 });
 

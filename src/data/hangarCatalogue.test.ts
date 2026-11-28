@@ -43,10 +43,12 @@ import * as hangarCatalogueModule from './hangarCatalogue';
 import {
   GRANT_ONLY_MIN_RING,
   HANGAR_CATALOGUE,
+  HEX_GRANT_EFFECT_FREE_ALLOWLIST,
   STARTER_HULL_ID,
   isPurchasableEntry,
   type HangarEntry,
   type HullDefinition,
+  type ModifierDefinition,
   type StartingWeaponDefinition,
 } from './hangarCatalogue';
 
@@ -846,10 +848,11 @@ describe('hangar catalogue — fail-closed build guards', () => {
       'guard (e) must name a drifting grant',
     ).toBeGreaterThan(0);
 
-    // The documented effect-free allowlist is the only exception (the three
-    // ring-2 modifier grants owned by AH-0MWWARIW6003F7OV). `extra-life`
-    // resolves through its alias, so it passes too.
-    const allowlisted = validateHangarCatalogue({
+    // The former effect-free allowlist is now empty (AH-0MWWARIW6003F7OV):
+    // the three ring-2 grants resolve to authored hull-upgrade modifier
+    // entries, and `extra-life` resolves through its alias, so none raises.
+    expect(HEX_GRANT_EFFECT_FREE_ALLOWLIST).toEqual([]);
+    const formerlyAllowlisted = validateHangarCatalogue({
       hexGrants: [
         'extra-life',
         'armour-plating',
@@ -858,9 +861,75 @@ describe('hangar catalogue — fail-closed build guards', () => {
       ],
     });
     expect(
-      allowlisted.diagnostics.filter((entry) => entry.severity === 'error'),
-      'effect-free allowlist grants must not raise errors',
+      formerlyAllowlisted.diagnostics.filter((entry) => entry.severity === 'error'),
+      'formerly allowlisted grants must now resolve as catalogue entries',
     ).toEqual([]);
+  });
+});
+
+/**
+ * Ring-2 hull-training modifier grants (AH-0MWWARIW6003F7OV).
+ *
+ * The three ids `armour-plating`, `systems-upgrade` and `firepower-up` used to
+ * fall through `resolveHexGrant`'s `kind: 'modifier'` default and land in
+ * `ownedModifiers` with no catalogue entry. They are now named, grant-only
+ * modifiers whose single `hull-upgrade` effect adds one level to a
+ * `HullUpgrades` bucket, read from ownership and folded through the one rating
+ * formula.
+ */
+describe('hangar catalogue — ring-2 hull-training modifier grants', () => {
+  const HULL_UPGRADE_GRANTS = [
+    { id: 'armour-plating', bucket: 'armour' },
+    { id: 'systems-upgrade', bucket: 'systems' },
+    { id: 'firepower-up', bucket: 'firepower' },
+  ] as const;
+
+  function modifierById(id: string): ModifierDefinition {
+    const entry = findHangarEntry(id, HANGAR_CATALOGUE);
+    expect(entry, `catalogue entry ${id}`).not.toBeNull();
+    expect(entry!.kind).toBe('modifier');
+    return entry as ModifierDefinition;
+  }
+
+  it('itemises each ring-2 grant as a named hull-upgrade modifier', () => {
+    for (const { id, bucket } of HULL_UPGRADE_GRANTS) {
+      const entry = modifierById(id);
+      expect(entry.name.trim().length).toBeGreaterThan(0);
+      expect(entry.description.trim().length).toBeGreaterThan(20);
+      expect(entry.effect).toEqual({ kind: 'hull-upgrade', bucket, level: 1 });
+    }
+  });
+
+  it('ships each as grant-only — no price and no purchase path', () => {
+    for (const { id } of HULL_UPGRADE_GRANTS) {
+      const entry = modifierById(id);
+      expect(entry.price).toEqual({ minerals: 0, cores: 0 });
+      expect(entry.minRing).toBe(GRANT_ONLY_MIN_RING);
+      expect(isPurchasableEntry(entry)).toBe(false);
+    }
+  });
+
+  it('resolves each through the catalogue, never the unknown fallback', () => {
+    for (const { id } of HULL_UPGRADE_GRANTS) {
+      expect(resolveHexGrant(id)).toEqual({
+        grantId: id,
+        entryId: id,
+        kind: 'modifier',
+        weaponId: null,
+      });
+    }
+  });
+
+  it('empties the effect-free allowlist so the guard still fails closed', () => {
+    expect(HEX_GRANT_EFFECT_FREE_ALLOWLIST).toEqual([]);
+
+    // A genuinely uncatalogued grant still fails closed, naming the offender.
+    const drifted = validateHangarCatalogue({ hexGrants: ['ghost_grant'] });
+    expect(drifted.ok).toBe(false);
+    expect(
+      errorsMentioning(drifted, 'ghost_grant').length,
+      'guard (e) must name a drifting grant',
+    ).toBeGreaterThan(0);
   });
 });
 

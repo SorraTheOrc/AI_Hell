@@ -172,7 +172,25 @@ export type ModifierEffect =
    * {@link HullDefinition.skill}: a hull-granted skill and a modifier-granted
    * skill may coexist on one defender, and their bonuses add.
    */
-  | { readonly kind: 'defence-skill'; readonly skill: DefenceSkill };
+  | { readonly kind: 'defence-skill'; readonly skill: DefenceSkill }
+  /**
+   * Permanent **hull training** added to one of a hull's stat buckets
+   * (AH-0MWWARIW6003F7OV). The bucket names an authored {@link HullUpgrades}
+   * key, never a fresh stat list, and the effect is folded through the one
+   * rating formula (`defenderRatingFromUpgrades`) rather than a second path.
+   *
+   * The training is read from **ownership** (`hangar.ownedModifiers`), not from
+   * `activeLoadout.modifiers`: it is permanent and un-equipped, so an existing
+   * save that already holds a granted id gains the effect on load without a
+   * migration or an auto-equip write.
+   */
+  | {
+      readonly kind: 'hull-upgrade';
+      /** Which {@link HullUpgrades} bucket the training raises. */
+      readonly bucket: keyof HullUpgrades;
+      /** Levels of training added to that bucket. */
+      readonly level: number;
+    };
 
 /** A permanent modifier bought in the hangar and applied to every deployment. */
 export interface ModifierDefinition extends HangarEntryBase {
@@ -289,6 +307,15 @@ export function isBotPurchaseCandidate(entry: HangarEntry): boolean {
  * **defending-bot skill** modifier — the second skill source beside the Bulwark
  * hull's own skill). The two are different rewarded choices rather than
  * duplicates: one keeps the pilot alive, the other keeps a hex.
+ *
+ * The three ring-2 **hull-training** modifiers (`armour-plating`,
+ * `systems-upgrade`, `firepower-up`, AH-0MWWARIW6003F7OV) are **grant-only**,
+ * exactly like the derived grant-only weapon entries: zero price and the
+ * {@link GRANT_ONLY_MIN_RING} gate, so there is no purchase path. Each grants
+ * one level of training to a `HullUpgrades` bucket, folded into the single
+ * `defenderRatingFromUpgrades` rating from **ownership** (not the equipped
+ * loadout), so a save that already holds the id gains the effect on load with
+ * no migration.
  *
  * The tree carries **level-bearing power-ups** (parent AH-0MWKT12BT001106T):
  * buying one is what creates its first permanent level row, so a fresh save
@@ -410,6 +437,47 @@ export const AUTHORED_ENTRIES: readonly HangarEntry[] = [
     },
   },
   {
+    // Ring-2 hull training (AH-0MWWARIW6003F7OV): the `hex-r2-8` grant. One
+    // level of permanent armour training, read from ownership so an existing
+    // save that already holds this id gains the effect on load. Grant-only:
+    // the ring hex is its only source, never a purchase.
+    id: 'armour-plating',
+    kind: 'modifier',
+    name: 'Armour Plating',
+    description:
+      'A layer of welded plate over every hull: permanent armour training that hardens every deployment.',
+    price: { minerals: 0, cores: 0 },
+    minRing: GRANT_ONLY_MIN_RING,
+    starter: false,
+    effect: { kind: 'hull-upgrade', bucket: 'armour', level: 1 },
+  },
+  {
+    // Ring-2 hull training (AH-0MWWARIW6003F7OV): the `hex-r2-9` grant. One
+    // level of permanent systems training, read from ownership. Grant-only.
+    id: 'systems-upgrade',
+    kind: 'modifier',
+    name: 'Systems Upgrade',
+    description:
+      'Rewired shields, repair drones and targeting: permanent systems training that steadies every deployment.',
+    price: { minerals: 0, cores: 0 },
+    minRing: GRANT_ONLY_MIN_RING,
+    starter: false,
+    effect: { kind: 'hull-upgrade', bucket: 'systems', level: 1 },
+  },
+  {
+    // Ring-2 hull training (AH-0MWWARIW6003F7OV): the `hex-r2-10` grant. One
+    // level of permanent firepower training, read from ownership. Grant-only.
+    id: 'firepower-up',
+    kind: 'modifier',
+    name: 'Firepower Upgrade',
+    description:
+      'Heavier mounts and hotter loads: permanent firepower training that makes every deployment hit harder.',
+    price: { minerals: 0, cores: 0 },
+    minRing: GRANT_ONLY_MIN_RING,
+    starter: false,
+    effect: { kind: 'hull-upgrade', bucket: 'firepower', level: 1 },
+  },
+  {
     // The first level-bearing power-up sold in the tree (parent
     // AH-0MWKT12BT001106T, producer Q1 = (b), Q3 = (1)). Buying it records
     // ownership in `hangar.unlockedPowerUps` and seeds its `powerUpLevels`
@@ -466,17 +534,16 @@ export const HANGAR_EXCLUDED_WEAPON_IDS: readonly WeaponId[] = ['cannon'];
  * catalogue and this allowlist fails the build rather than leaving the player
  * owning an invisible weapon.
  *
- * The three entries belong to AH-0MWWARIW6003F7OV ("Ring-2 modifier grants
- * have no hangar catalogue entry"), which owns either a catalogue entry or a
- * `GRANT_ALIASES` re-point for them; removing an id here is that item's
- * follow-up. The authored `extra-life` grant needs no entry: it resolves through
- * its alias to `hardened_plating`, so it is checked like any other grant.
+ * **Empty by design.** The three ring-2 modifier grants (`armour-plating`,
+ * `systems-upgrade`, `firepower-up`) that once sat here are now modelled as
+ * grant-only `hull-upgrade` catalogue entries (AH-0MWWARIW6003F7OV), so the
+ * guard fails closed on the next uncatalogued grant instead of tolerating a
+ * growing exception list. The list stays as the documented seam for a future
+ * genuinely effect-free grant, but has no entries today.
  */
-export const HEX_GRANT_EFFECT_FREE_ALLOWLIST: readonly string[] = Object.freeze([
-  'armour-plating',
-  'systems-upgrade',
-  'firepower-up',
-]);
+export const HEX_GRANT_EFFECT_FREE_ALLOWLIST: readonly string[] = Object.freeze(
+  [],
+);
 
 /** One authored weapon economy row — a price and ring gate, never derived. */
 export interface WeaponUnlockEconomyRow {
@@ -781,7 +848,8 @@ export function validateHangarCatalogue(
   }
 
   // (e) Every authored hex grant resolves to a catalogue entry (or is on the
-  // documented effect-free allowlist). The authored id may be an alias
+  // documented effect-free allowlist, which is empty today so an uncatalogued
+  // grant fails closed). The authored id may be an alias
   // (`waveLaser` → `wave_laser`) or a catalogue id; either way the player must
   // end up owning an entry the hangar can show, equip and deploy.
   const hexGrants =

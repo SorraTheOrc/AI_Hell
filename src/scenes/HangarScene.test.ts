@@ -35,7 +35,10 @@ import { createRingState } from '../core/hangarWar/hexRing';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
 import type { HangarEntry } from '../data/hangarCatalogue';
 import { HANGAR_CATALOGUE, isPurchasableEntry } from '../data/hangarCatalogue';
-import { MAX_PERMANENT_LEVEL } from '../core/hangarWar/hangarEconomy';
+import {
+  MAX_PERMANENT_LEVEL,
+  resolveActiveLoadout,
+} from '../core/hangarWar/hangarEconomy';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
 import { PlayScene } from './PlayScene';
@@ -498,6 +501,60 @@ describe('hex-granted weapons appear in the hangar (AH-0MWWI3O2S0015GHM)', () =>
         (candidate) => candidate.id === 'rapid',
       )!.equipped,
     ).toBe(true);
+  });
+});
+
+// ── Ring-2 hull-training modifiers are visible and modelled ──────
+// (AH-0MWWARIW6003F7OV, AC2/AC3)
+//
+// A captured ring-2 hex records its grant in `ownedModifiers`. The three ids
+// are now catalogue modifiers, so the unlock tree shows a named, owned row and
+// the loadout filter keeps them; the effect feeds the shipped rating from
+// ownership without a migration.
+
+describe('ring-2 hull-training modifiers appear in the hangar (AH-0MWWARIW6003F7OV)', () => {
+  const HULL_TRAINING_IDS = [
+    'armour-plating',
+    'systems-upgrade',
+    'firepower-up',
+  ];
+
+  /** A payload whose fleet already holds every hull-training id. */
+  function payloadHoldingHullTraining(): HangarWarPayload {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.ownedModifiers = [
+      ...payload.hangar.ownedModifiers,
+      ...HULL_TRAINING_IDS,
+    ];
+    return payload;
+  }
+
+  it('renders a named owned unlock row for every hull-training modifier', () => {
+    const rows = buildHangarUnlockRows(payloadHoldingHullTraining());
+    for (const id of HULL_TRAINING_IDS) {
+      const row = rows.find((candidate) => candidate.id === id);
+      expect(row, `unlock row for ${id}`).toBeDefined();
+      expect(row!.kind).toBe('modifier');
+      expect(row!.name.trim().length).toBeGreaterThan(0);
+      expect(row!.label).toContain(row!.name);
+      expect(row!.state).toBe('owned');
+    }
+  });
+
+  it('resolves the ids as catalogue entries the loadout path keeps', () => {
+    for (const id of HULL_TRAINING_IDS) {
+      const entry = HANGAR_CATALOGUE.find((candidate) => candidate.id === id);
+      expect(entry, `catalogue entry for ${id}`).toBeDefined();
+      expect(entry!.kind).toBe('modifier');
+    }
+    // The loadout filter keeps a catalogue-known modifier the fleet owns, so a
+    // save that names one in its equipped set survives resolution.
+    const payload = payloadHoldingHullTraining();
+    const loadout = resolveActiveLoadout({
+      ...payload.hangar,
+      activeLoadout: { startingWeapons: [], modifiers: [...HULL_TRAINING_IDS] },
+    });
+    expect(loadout.modifiers).toEqual([...HULL_TRAINING_IDS]);
   });
 });
 

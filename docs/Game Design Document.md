@@ -3560,7 +3560,9 @@ slice deferred:
   mission — the grant-only `hull-4`; ring 2 grants further
   hulls (`hull-2`, `hull-3`), weapons
   (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
-  `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.
+  `armour-plating` / `firepower-up` / `systems-upgrade` **hull-training**
+  modifiers (each a grant-only `hull-upgrade` entry that raises one of the
+  hull's armour/firepower/systems buckets in the fleet's player strength).
 
 #### Owned hexes provide minerals (per-tick income)
 

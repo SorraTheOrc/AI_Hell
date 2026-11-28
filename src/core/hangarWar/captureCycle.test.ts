@@ -116,26 +116,13 @@ describe('resolveHexGrant', () => {
   });
 
   // Red-first (AH-0MWWI3JYN001SPVA, parent AC7): this replaces the old spec
-  // that *protected* the catalogue-unknown fallback. Wrapped in Vitest
-  // `it.fails(...)` (the repo's red-before/green-after convention) so `dev`
-  // stays green while the body is a genuine red witness — `rapid` has no
-  // catalogue entry today. The derivation item flips it to a plain `it(...)`.
+  // that *protected* the catalogue-unknown fallback. Every authored grant now
+  // resolves to a real catalogue entry (AH-0MWWARIW6003F7OV modelled the last
+  // three ring-2 modifier grants as hull-training moder entries).
   it('resolves every authored hex grant through the catalogue, never the unknown fallback', () => {
-    // The documented effect-free allowlist (AC5(e), owned by
-    // AH-0MWWARIW6003F7OV): three ring-2 modifier grants that intentionally
-    // have no catalogue entry yet. Everything else the authored rings grant
-    // must resolve to a real entry, so a captured weapon can be displayed,
-    // equipped and deployed (AH-0MWWARFUK009KQM7).
-    const effectFreeAllowlist = new Set([
-      'armour-plating',
-      'systems-upgrade',
-      'firepower-up',
-    ]);
-
     for (const definition of HEX_RING_DEFINITIONS) {
       const authored = definition.grants;
       if (typeof authored !== 'string' || authored.trim() === '') continue;
-      if (effectFreeAllowlist.has(authored)) continue;
 
       const grant = resolveHexGrant(authored);
       expect(grant, `authored grant ${authored} (${definition.id})`).not.toBeNull();

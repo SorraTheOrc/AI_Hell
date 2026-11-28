@@ -418,11 +418,16 @@ item list:
   `src/data/weapons.csv` row bar the documented `cannon` exclusion, and its
   build-time guards fail closed on an authored weapon grant with no entry, so a
   granted weapon is owned **and** deployable — ring 2's `arc`, `broadside`,
-  `dual`, `nova` and `rapid` grants included. A grant that intentionally carries
-  no run stat is on the short effect-free allowlist (`armour-plating`,
-  `systems-upgrade`, `firepower-up`); the `resolveHexGrant`
-  "catalogue does not itemise" fallback remains only as defence-in-depth for a
-  hypothetical future uncatalogued grant (a `hull-9`) — it is no longer a path a
+  `dual`, `nova` and `rapid` grants included. Ring 2's three
+  `armour-plating`, `systems-upgrade` and `firepower-up` grants are named,
+  grant-only catalogue modifiers whose single `hull-upgrade` effect adds a level
+  to a hull stat bucket, read from ownership and folded into the one
+  player-strength rating (so capturing one raises the fleet's rating by that
+  bucket's weight — 3 for armour, 2 for firepower, 2 for systems, +7 for all
+  three, which ring 2's aggression-band capacity absorbs without retuning); the
+  effect-free allowlist is now empty. The
+  `resolveHexGrant` "catalogue does not itemise" fallback remains only as
+  defence-in-depth for a hypothetical future uncatalogued grant (a `hull-9`) — it is no longer a path a
   weapon grant can take.
 
 The loadout changes the run's **starting** state only: the aggression model, the

@@ -123,9 +123,15 @@ describe('hangar catalogue — the unlock tree is data of record', () => {
         (item) => item.kind === 'weapon' && isPurchasableEntry(item),
       ),
     ).toHaveLength(3);
-    // Two modifiers since AH-0MVWZYJ740037EZ1: the extra-life kit and the
-    // defending-bot skill modifier (a different rewarded choice, not a copy).
-    expect(buyable.filter((item) => item.kind === 'modifier')).toHaveLength(2);
+    // Two **purchasable** modifiers since AH-0MVWZYJ740037EZ1: the extra-life
+    // kit and the defending-bot skill modifier (a different rewarded choice,
+    // not a copy). The three ring-2 hull-training modifiers are grant-only
+    // (AH-0MWWARIW6003F7OV), so they never inflate the for-sale tree.
+    expect(
+      buyable.filter(
+        (item) => item.kind === 'modifier' && isPurchasableEntry(item),
+      ),
+    ).toHaveLength(2);
   });
 
   it('authors the defending-bot skill sources as pure data (AH-0MVWZYJ740037EZ1)', () => {
@@ -680,6 +686,52 @@ describe('resolvePlayerStrength — the player-strength vocabulary', () => {
       activeLoadout: { startingWeapons: [], modifiers: [] },
     });
     expect(resolvePlayerStrength(withSpare)).toBe(resolvePlayerStrength(plain));
+  });
+
+  it('folds owned hull training into the rating, even when unequipped', () => {
+    // AC3 (AH-0MWWARIW6003F7OV): capturing a ring-2 hex must move the rating by
+    // exactly the bucket weight — read from DEFENDER_UPGRADE_WEIGHTS, never
+    // restated as magic numbers. The effect is ownership-read, so it applies
+    // with an empty equipped set no auto-equip write needs to produce.
+    const plain = hangarWith();
+    const gains: ReadonlyArray<{ id: string; bucket: keyof HullUpgrades }> = [
+      { id: 'armour-plating', bucket: 'armour' },
+      { id: 'firepower-up', bucket: 'firepower' },
+      { id: 'systems-upgrade', bucket: 'systems' },
+    ];
+    for (const { id, bucket } of gains) {
+      const trained = hangarWith({
+        ownedModifiers: [id],
+        activeLoadout: { startingWeapons: [], modifiers: [] },
+      });
+      expect(
+        resolvePlayerStrength(trained) - resolvePlayerStrength(plain),
+        `${id} adds the ${bucket} bucket weight`,
+      ).toBe(DEFENDER_UPGRADE_WEIGHTS[bucket]);
+    }
+
+    const all = hangarWith({
+      ownedModifiers: gains.map((gain) => gain.id),
+      activeLoadout: { startingWeapons: [], modifiers: [] },
+    });
+    const totalWeight =
+      DEFENDER_UPGRADE_WEIGHTS.armour +
+      DEFENDER_UPGRADE_WEIGHTS.firepower +
+      DEFENDER_UPGRADE_WEIGHTS.systems;
+    expect(resolvePlayerStrength(all)).toBe(
+      resolvePlayerStrength(plain) + totalWeight,
+    );
+  });
+
+  it('never double-counts hull training when it is also equipped', () => {
+    // The effect is read from ownership only, so equipping the (cosmetic)
+    // selector toggle cannot stack it a second time.
+    const owned = hangarWith({ ownedModifiers: ['armour-plating'] });
+    const equipped = hangarWith({
+      ownedModifiers: ['armour-plating'],
+      activeLoadout: { startingWeapons: [], modifiers: ['armour-plating'] },
+    });
+    expect(resolvePlayerStrength(equipped)).toBe(resolvePlayerStrength(owned));
   });
 
   it('treats unknown ids as contributing nothing', () => {
