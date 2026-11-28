@@ -20,6 +20,11 @@
  *    it. The decision to ship the feature ON is recorded on
  *    AH-0MVZ0VGGQ0032KDP.
  *
+ * The same store also carries the **hull-fill mineral chime** flag
+ * (`hullFillMineralChime`, AH-0MWW36R7W006DGUZ): the fill-based collection
+ * chime ships **ON** and a persisted `false` restores the previous streak
+ * ladder, with the same resolver / dev-only-writer split as `hangarWar`.
+ *
  * Persistence follows the `settingsStore` pattern: a typed record under one
  * `localStorage` key, merge-over-defaults on load, corrupt-JSON fallback and an
  * SSR-safe storage guard. Writes never throw (a full quota or disabled storage
@@ -32,6 +37,8 @@
 export interface FeatureFlagsRecord {
   /** Whether the Hangar War entry surfaces are enabled (dev builds only). */
   hangarWar: boolean;
+  /** Whether the hull-fill mineral chime is enabled (dev builds only). */
+  hullFillMineralChime: boolean;
 }
 
 /** The environment slice the dev gate reads (a subset of `import.meta.env`). */
@@ -54,6 +61,7 @@ export const FEATURE_FLAGS_STORAGE_KEY = 'ai_hell_feature_flags';
  */
 export const DEFAULT_FEATURE_FLAGS: Readonly<FeatureFlagsRecord> = {
   hangarWar: true,
+  hullFillMineralChime: true,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -110,6 +118,10 @@ export function loadFeatureFlags(): FeatureFlagsRecord {
         typeof parsed.hangarWar === 'boolean'
           ? parsed.hangarWar
           : DEFAULT_FEATURE_FLAGS.hangarWar,
+      hullFillMineralChime:
+        typeof parsed.hullFillMineralChime === 'boolean'
+          ? parsed.hullFillMineralChime
+          : DEFAULT_FEATURE_FLAGS.hullFillMineralChime,
     };
   } catch {
     return { ...DEFAULT_FEATURE_FLAGS };
@@ -137,8 +149,9 @@ export function saveFeatureFlags(flags: FeatureFlagsRecord): void {
 }
 
 /**
- * Resets every feature flag to its built-in default (`hangarWar` ON) and
- * persists it. No-op when storage is unavailable.
+ * Resets every feature flag to its built-in defaults (`hangarWar` ON and
+ * `hullFillMineralChime` ON) and persists them. No-op when storage is
+ * unavailable.
  */
 export function resetFeatureFlags(): void {
   saveFeatureFlags({ ...DEFAULT_FEATURE_FLAGS });
@@ -159,6 +172,23 @@ export function resolveHangarWarEnabled(
   flags: FeatureFlagsRecord = loadFeatureFlags(),
 ): boolean {
   return flags.hangarWar === true;
+}
+
+/**
+ * The effective Hull Fill Mineral Chime flag: the persisted value, which
+ * defaults to ON.
+ *
+ * This is the **single** resolver for the flag and it is build-agnostic on
+ * purpose: the shipped (production) build runs the fill-based chime, and the
+ * persisted `false` restores today's streak behaviour. Enabling or disabling
+ * it from a UI is still dev-only — see {@link setHullFillMineralChimeEnabled}.
+ *
+ * @param flags - The flag record, defaulting to the persisted one.
+ */
+export function resolveHullFillMineralChimeEnabled(
+  flags: FeatureFlagsRecord = loadFeatureFlags(),
+): boolean {
+  return flags.hullFillMineralChime === true;
 }
 
 /**
@@ -190,4 +220,43 @@ export function setHangarWarEnabled(
  */
 export function toggleHangarWarEnabled(env: FeatureFlagEnv = import.meta.env): boolean {
   return setHangarWarEnabled(!loadFeatureFlags().hangarWar, env);
+}
+
+/**
+ * Enables or disables the hull-fill mineral chime. **Dev builds only**: in
+ * a production build nothing is stored, so the shipped default (ON) is what
+ * players get and no production UI can flip the kill switch.
+ *
+ * @param enabled - The requested value.
+ * @param env - The build environment, defaulting to `import.meta.env`.
+ * @returns The resulting effective value (the unchanged shipped default when
+ *   the write is refused outside a dev build).
+ */
+export function setHullFillMineralChimeEnabled(
+  enabled: boolean,
+  env: FeatureFlagEnv = import.meta.env,
+): boolean {
+  if (!isDevBuild(env)) return resolveHullFillMineralChimeEnabled();
+  const next: FeatureFlagsRecord = {
+    ...loadFeatureFlags(),
+    hullFillMineralChime: enabled,
+  };
+  saveFeatureFlags(next);
+  return resolveHullFillMineralChimeEnabled(next);
+}
+
+/**
+ * Flips the hull-fill mineral chime flag. **Dev builds only** (see
+ * {@link setHullFillMineralChimeEnabled}).
+ *
+ * @param env - The build environment, defaulting to `import.meta.env`.
+ * @returns The resulting effective value.
+ */
+export function toggleHullFillMineralChimeEnabled(
+  env: FeatureFlagEnv = import.meta.env,
+): boolean {
+  return setHullFillMineralChimeEnabled(
+    !loadFeatureFlags().hullFillMineralChime,
+    env,
+  );
 }

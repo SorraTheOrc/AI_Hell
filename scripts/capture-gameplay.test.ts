@@ -1059,8 +1059,12 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     ).toBe(true);
     // The persisted value is honoured in every build: there is no dev gate on
     // the effective value any more.
-    expect(resolveHangarWarEnabled({ hangarWar: true })).toBe(true);
-    expect(resolveHangarWarEnabled({ hangarWar: false })).toBe(false);
+    expect(
+      resolveHangarWarEnabled({ hangarWar: true, hullFillMineralChime: true }),
+    ).toBe(true);
+    expect(
+      resolveHangarWarEnabled({ hangarWar: false, hullFillMineralChime: true }),
+    ).toBe(false);
 
     // The init script writes the plan into the page's localStorage.
     const store = new Map<string, string>();

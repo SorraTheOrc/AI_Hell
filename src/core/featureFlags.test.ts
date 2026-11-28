@@ -19,9 +19,12 @@ import {
   loadFeatureFlags,
   resetFeatureFlags,
   resolveHangarWarEnabled,
+  resolveHullFillMineralChimeEnabled,
   saveFeatureFlags,
   setHangarWarEnabled,
+  setHullFillMineralChimeEnabled,
   toggleHangarWarEnabled,
+  toggleHullFillMineralChimeEnabled,
 } from './featureFlags';
 
 /** A Vite dev build (the environment the tests themselves run in). */
@@ -59,13 +62,13 @@ describe('featureFlags — defaults (AH-0MVZ4S9ZU004GXUM AC1)', () => {
 
   it('loads the defaults when nothing has been stored', () => {
     mockLocalStorage({});
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('loads the defaults when storage is unavailable (SSR-safe)', () => {
     vi.stubGlobal('window', undefined);
     try {
-      expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+      expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
     } finally {
       vi.unstubAllGlobals();
     }
@@ -73,27 +76,51 @@ describe('featureFlags — defaults (AH-0MVZ4S9ZU004GXUM AC1)', () => {
 
   it('treats corrupt JSON as the defaults', () => {
     storeRaw('{not valid json');
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('treats a non-object record as the defaults', () => {
     storeRaw('"hangarWar"');
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('treats a non-boolean stored value as the default', () => {
     storeRaw(JSON.stringify({ hangarWar: 'yes' }));
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('reads a stored boolean true', () => {
     storeRaw(JSON.stringify({ hangarWar: true }));
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('reads a stored boolean false (the kill switch)', () => {
     storeRaw(JSON.stringify({ hangarWar: false }));
-    expect(loadFeatureFlags()).toEqual({ hangarWar: false });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: false, hullFillMineralChime: true });
+  });
+
+  it('defaults hullFillMineralChime to ON', () => {
+    expect(DEFAULT_FEATURE_FLAGS.hullFillMineralChime).toBe(true);
+  });
+
+  it('loads hullFillMineralChime from a persisted OFF round-trip', () => {
+    storeRaw(JSON.stringify({ hullFillMineralChime: false }));
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(false);
+  });
+
+  it('falls back to ON when the stored record is absent', () => {
+    mockLocalStorage({});
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(true);
+  });
+
+  it('falls back to ON when the stored JSON is corrupt', () => {
+    storeRaw('{not valid json');
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(true);
+  });
+
+  it('falls back to ON when the stored value is a non-boolean', () => {
+    storeRaw(JSON.stringify({ hullFillMineralChime: 'yes' }));
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(true);
   });
 });
 
@@ -101,14 +128,14 @@ describe('featureFlags — persistence (AC1)', () => {
   it('persists the record under the feature-flag storage key', () => {
     const map: Record<string, string> = {};
     mockLocalStorage(map);
-    saveFeatureFlags({ hangarWar: true });
-    expect(JSON.parse(map[FEATURE_FLAGS_STORAGE_KEY])).toEqual({ hangarWar: true });
+    saveFeatureFlags({ hangarWar: true, hullFillMineralChime: true });
+    expect(JSON.parse(map[FEATURE_FLAGS_STORAGE_KEY])).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('round-trips through loadFeatureFlags', () => {
     mockLocalStorage({});
-    saveFeatureFlags({ hangarWar: true });
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    saveFeatureFlags({ hangarWar: true, hullFillMineralChime: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('never throws when storage rejects the write (quota / privacy mode)', () => {
@@ -118,14 +145,14 @@ describe('featureFlags — persistence (AC1)', () => {
     });
     // @ts-expect-error — minimal override of the storage surface
     window.localStorage = { getItem: vi.fn(() => null), setItem };
-    expect(() => saveFeatureFlags({ hangarWar: true })).not.toThrow();
+    expect(() => saveFeatureFlags({ hangarWar: true, hullFillMineralChime: true })).not.toThrow();
   });
 
   it('resetFeatureFlags restores the default ON', () => {
     mockLocalStorage({});
-    saveFeatureFlags({ hangarWar: false });
+    saveFeatureFlags({ hangarWar: false, hullFillMineralChime: true });
     resetFeatureFlags();
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 });
 
@@ -153,7 +180,9 @@ describe('isDevBuild — build-environment truth table (AC4)', () => {
 
 describe('resolveHangarWarEnabled — effective value (AH-0MVZ4S9ZU004GXUM AC1)', () => {
   it('is ON when the stored flag is ON, in every build', () => {
-    expect(resolveHangarWarEnabled({ hangarWar: true })).toBe(true);
+    expect(
+      resolveHangarWarEnabled({ hangarWar: true, hullFillMineralChime: true }),
+    ).toBe(true);
   });
 
   it('is ON by default (the flag was never stored)', () => {
@@ -174,25 +203,94 @@ describe('setHangarWarEnabled / toggleHangarWarEnabled — dev-only writer (AC4)
 
   it('persists the value in a dev build and returns the effective value', () => {
     expect(setHangarWarEnabled(false, DEV_BUILD)).toBe(false);
-    expect(loadFeatureFlags()).toEqual({ hangarWar: false });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: false, hullFillMineralChime: true });
     expect(setHangarWarEnabled(true, DEV_BUILD)).toBe(true);
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('is a no-op in a production build — nothing is stored, the default stands', () => {
     expect(setHangarWarEnabled(false, PROD_BUILD)).toBe(true);
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('toggles the flag in a dev build', () => {
     expect(toggleHangarWarEnabled(DEV_BUILD)).toBe(false);
-    expect(loadFeatureFlags()).toEqual({ hangarWar: false });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: false, hullFillMineralChime: true });
     expect(toggleHangarWarEnabled(DEV_BUILD)).toBe(true);
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
   });
 
   it('does not toggle in a production build — the shipped default stands', () => {
     expect(toggleHangarWarEnabled(PROD_BUILD)).toBe(true);
-    expect(loadFeatureFlags()).toEqual({ hangarWar: true });
+    expect(loadFeatureFlags()).toEqual({ hangarWar: true, hullFillMineralChime: true });
+  });
+});
+
+describe('hullFillMineralChime — default ON (AH-0MWW36R7W006DGUZ)', () => {
+  it('is ON when nothing has been stored', () => {
+    mockLocalStorage({});
+    expect(resolveHullFillMineralChimeEnabled()).toBe(true);
+  });
+
+  it('is ON by default (absent storage, SSR-safe)', () => {
+    vi.stubGlobal('window', undefined);
+    try {
+      expect(resolveHullFillMineralChimeEnabled()).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('honours a persisted OFF value', () => {
+    storeRaw(JSON.stringify({ hullFillMineralChime: false }));
+    expect(resolveHullFillMineralChimeEnabled()).toBe(false);
+  });
+
+  it('falls back to ON when the stored value is corrupt JSON', () => {
+    storeRaw('{not valid json');
+    expect(resolveHullFillMineralChimeEnabled()).toBe(true);
+  });
+
+  it('falls back to ON when the stored value is non-boolean', () => {
+    storeRaw(JSON.stringify({ hullFillMineralChime: 'yes' }));
+    expect(resolveHullFillMineralChimeEnabled()).toBe(true);
+  });
+});
+
+describe('setHullFillMineralChimeEnabled / toggleHullFillMineralChimeEnabled — dev-only writer', () => {
+  beforeEach(() => {
+    mockLocalStorage({});
+  });
+
+  it('persists the value in a dev build and returns the effective value', () => {
+    expect(setHullFillMineralChimeEnabled(false, DEV_BUILD)).toBe(false);
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(false);
+    expect(setHullFillMineralChimeEnabled(true, DEV_BUILD)).toBe(true);
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(true);
+  });
+
+  it('is a no-op in a production build — nothing is stored, the default stands', () => {
+    expect(setHullFillMineralChimeEnabled(false, PROD_BUILD)).toBe(true);
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(true);
+  });
+
+  it('toggles the flag in a dev build', () => {
+    expect(toggleHullFillMineralChimeEnabled(DEV_BUILD)).toBe(false);
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(false);
+    expect(toggleHullFillMineralChimeEnabled(DEV_BUILD)).toBe(true);
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(true);
+  });
+
+  it('does not toggle in a production build — the shipped default stands', () => {
+    expect(toggleHullFillMineralChimeEnabled(PROD_BUILD)).toBe(true);
+    expect(loadFeatureFlags().hullFillMineralChime).toBe(true);
+  });
+
+  it('hangarWar is unaffected by hullFillMineralChime operations', () => {
+    storeRaw(JSON.stringify({ hangarWar: false }));
+    setHullFillMineralChimeEnabled(true, DEV_BUILD);
+    const flags = loadFeatureFlags();
+    expect(flags.hangarWar).toBe(false);
+    expect(flags.hullFillMineralChime).toBe(true);
   });
 });
