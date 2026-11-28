@@ -178,11 +178,15 @@ describe('power-up selection field and persistence (A1, AC4)', () => {
     expect(filtered.activeLoadout.powerUps).toEqual(['bomb']);
   });
 
-  it('keeps the consumption reset well-formed (power-ups are not spent)', () => {
+  it.fails('keeps the consumption reset well-formed and retains the bought levels', () => {
     const payload = fleet();
+    payload.hangar.weaponLevels = [
+      { id: 'wave_laser', level: 2 },
+      { id: 'ricochet', level: 3 },
+    ];
     const consumed = consumeDeployedShip(payload.hangar, {
       hullId: 'hull-1',
-      startingWeapons: ['spread'],
+      startingWeapons: ['wave_laser'],
       modifiers: [],
       powerUps: ['bomb', 'magnet'],
     });
@@ -190,8 +194,16 @@ describe('power-up selection field and persistence (A1, AC4)', () => {
     // (so the next sortie installs every owned kind — the unchanged rule).
     expect(consumed.activeLoadout).toEqual({ startingWeapons: [], modifiers: [] });
     expect(consumed.activeLoadout.powerUps).toBeUndefined();
-    // Nothing was spent: both owned power-ups and their levels survive.
+    // No power-up is spent: both owned power-ups and their levels survive.
     expect(consumed.unlockedPowerUps).toEqual(['bomb', 'magnet']);
+    // A consumption spends ownership only: the flown weapon leaves the owned
+    // set but keeps its bought level, so a re-buy comes back levelled
+    // (AH-0MWWGH13W007U49Q).
+    expect(consumed.unlockedWeapons).not.toContain('wave_laser');
+    expect(consumed.weaponLevels).toEqual([
+      { id: 'wave_laser', level: 2 },
+      { id: 'ricochet', level: 3 },
+    ]);
     expect(consumed.powerUpLevels).toEqual([
       { id: 'bomb', level: 2 },
       { id: 'magnet', level: 1 },

@@ -17,6 +17,12 @@
  * (`resolveActiveHull` / `resolveActiveLoadout`), which is exactly what a
  * deployment launches with — so a caller that passes no explicit ship still gets
  * the flown ship consumed.
+ *
+ * **TEST-FIRST (AH-0MWWGH13W007U49Q).** A battle spends ownership only: the
+ * pinned permanent level rows survive a consumption on both the win and the loss
+ * path. Those cases are authored red under Vitest's `it.fails` until the pruning
+ * is withdrawn from `consumeDeployedShip` (AH-0MWWGH3FV004AF1O); a leftover
+ * `it.fails` fails the suite, so the flip back to a plain `it` is deliberate.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -133,7 +139,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       expect(hangar.unlockedWeapons).toContain('rapid');
     });
 
-    it('deletes only the consumed ids’ permanent level rows', () => {
+    it.fails('retains every permanent level row (the win spends ownership only)', () => {
       const payload = stockedWar();
 
       const result = resolveHexCapture(payload, {
@@ -144,15 +150,17 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       });
 
       const hangar = result.payload.hangar;
-      // The flown weapon's row is gone …
-      expect(rowIds(hangar.weaponLevels)).not.toContain('wave_laser');
-      // … while the starter weapon's and every un-flown weapon's row survive …
-      expect(rowIds(hangar.weaponLevels)).toContain('spread');
-      expect(rowIds(hangar.weaponLevels)).toContain('ricochet');
-      // … and no un-flown power-up row is collateral damage.
-      expect(rowIds(hangar.powerUpLevels)).toEqual(
-        expect.arrayContaining(['shield', 'magnet']),
-      );
+      // The flown weapon's bought level is kept with its row order ...
+      expect(hangar.weaponLevels).toEqual([
+        { id: 'wave_laser', level: 3 },
+        { id: 'spread', level: 2 },
+        { id: 'ricochet', level: 2 },
+      ]);
+      // ... and no un-flown power-up row is collateral damage.
+      expect(hangar.powerUpLevels).toEqual([
+        { id: 'shield', level: 2 },
+        { id: 'magnet', level: 3 },
+      ]);
     });
 
     it('resets the active ship to the starter hull with an empty loadout', () => {
@@ -245,6 +253,26 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       expect(rowIds(hangar.powerUpLevels)).toEqual(
         expect.arrayContaining(['shield', 'magnet']),
       );
+    });
+
+    it.fails('retains every permanent level row (the loss spends ownership only)', () => {
+      const payload = stockedWar();
+
+      const outcome = resolveDeploymentDefeat(payload, {
+        salvage: zeroSalvage(),
+        banked: createBankedSalvage(900, 12),
+      });
+
+      const hangar = outcome.payload.hangar;
+      expect(hangar.weaponLevels).toEqual([
+        { id: 'wave_laser', level: 3 },
+        { id: 'spread', level: 2 },
+        { id: 'ricochet', level: 2 },
+      ]);
+      expect(hangar.powerUpLevels).toEqual([
+        { id: 'shield', level: 2 },
+        { id: 'magnet', level: 3 },
+      ]);
     });
 
     it('never changes the banked balances through consumption', () => {

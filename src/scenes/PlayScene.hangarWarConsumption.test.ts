@@ -123,7 +123,7 @@ describe('PlayScene — a hex deployment spends its ship (AH-0MWL5PAP2001XYYF)',
     return bootPlay({ demo, hangarWar: deployment });
   }
 
-  it('persists the consumed ship on a winning deployment', async () => {
+  it.fails('persists the consumed ship and the retained levels on a winning deployment', async () => {
     const scene = await bootDeployed();
 
     winMiniBoss(scene);
@@ -139,10 +139,16 @@ describe('PlayScene — a hex deployment spends its ship (AH-0MWL5PAP2001XYYF)',
     });
     // The capture also banks the salvage and grants the hex's entry.
     expect(stored.hangar.unlockedWeapons).toContain('rapid');
-    expect(stored.hangar.weaponLevels).toEqual([{ id: 'ricochet', level: 2 }]);
+    // A consumption spends ownership only: the flown weapon's bought level is
+    // kept, so a re-buy comes back levelled (AH-0MWWGH13W007U49Q).
+    expect(stored.hangar.weaponLevels).toEqual([
+      { id: 'wave_laser', level: 3 },
+      { id: 'ricochet', level: 2 },
+    ]);
+    expect(stored.hangar.powerUpLevels).toEqual([{ id: 'shield', level: 2 }]);
   });
 
-  it('persists the consumed ship on a lost deployment', async () => {
+  it.fails('persists the consumed ship and the retained levels on a lost deployment', async () => {
     const scene = await bootDeployed();
 
     killPlayer(scene);
@@ -162,7 +168,12 @@ describe('PlayScene — a hex deployment spends its ship (AH-0MWL5PAP2001XYYF)',
     expect(stored.hangar.ownedModifiers).toContain('anti_maw_plating');
     expect(stored.hangar.bankedMinerals).toBe(500);
     expect(stored.hangar.bankedCores).toBe(5);
-    expect(stored.hangar.weaponLevels).toEqual([{ id: 'ricochet', level: 2 }]);
+    // Losing the battle costs the hardware, never the bought level.
+    expect(stored.hangar.weaponLevels).toEqual([
+      { id: 'wave_laser', level: 3 },
+      { id: 'ricochet', level: 2 },
+    ]);
+    expect(stored.hangar.powerUpLevels).toEqual([{ id: 'shield', level: 2 }]);
   });
 
   it('never overwrites the stored war in demo mode (win path)', async () => {

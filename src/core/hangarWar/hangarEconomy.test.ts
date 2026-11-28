@@ -1883,9 +1883,17 @@ describe('hangar permanent-level state (AH-0MWI5AG1X0007XZH)', () => {
  * Spending the flown ship on battle completion (parent AH-0MWL5PAP2001XYYF).
  *
  * The reducer is the **one** rule that turns "a battle happened" into what the
- * fleet keeps: only the deployed hull/starting weapons/modifiers and their
- * bought permanent levels are spent; un-flown items and the free starter kit
- * survive; the hangar resets to the starter kit with an empty loadout.
+ * fleet keeps: the deployed hull/starting weapons/modifiers are spent (their
+ * ownership leaves the owned sets), every bought permanent level row survives,
+ * un-flown items and the free starter kit survive, and the hangar resets to the
+ * starter kit with an empty loadout.
+ *
+ * **TEST-FIRST (AH-0MWWGH13W007U49Q).** The retention cases below are authored
+ * red under Vitest's `it.fails` (the repo's red-before/green-after convention):
+ * `consumeDeployedShip` still prunes the consumed ids' permanent level rows, so
+ * every retention case fails until the pruning is withdrawn
+ * (AH-0MWWGH3FV004AF1O). A leftover `it.fails` fails the suite, so the flip back
+ * to a plain `it` is deliberate.
  */
 describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MWL5PAP2001XYYF)', () => {
   /** A fleet with a bought, fully-equipped ship plus un-flown spare parts. */
@@ -1928,24 +1936,27 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     expect(consumed.ownedModifiers).toEqual(['anti_maw_plating']);
   });
 
-  it('deletes only the consumed ids’ permanent level rows', () => {
+  it.fails('retains the flown weapon’s bought level (AC-a)', () => {
     const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
 
-    // The flown weapon's row is gone; the starter and un-flown weapon rows stay.
+    // The flown weapon's row survives — level and row order preserved — so a
+    // re-buy comes back at the level the player paid for.
     expect(consumed.weaponLevels).toEqual([
+      { id: 'wave_laser', level: 3 },
       { id: 'spread', level: 2 },
       { id: 'ricochet', level: 2 },
     ]);
-    // No un-flown power-up row is collateral damage.
+    // Un-flown rows are untouched: no un-flown power-up row is collateral
+    // damage and the starter weapon's row is unchanged (AC-b).
     expect(consumed.powerUpLevels).toEqual([
       { id: 'shield', level: 2 },
       { id: 'magnet', level: 3 },
     ]);
   });
 
-  it('prunes both level-row kinds for a consumed id', () => {
-    // A ship whose modifier id also has a power-up level row: the reducer is
-    // role-agnostic about level rows, so the consumed id loses **both** kinds.
+  it.fails('retains both level-row kinds for a consumed id', () => {
+    // A ship whose modifier id also has a power-up level row: the retention
+    // rule is role-agnostic, so the consumed id keeps **both** kinds.
     const hangar = hangarWith({
       unlockedHulls: ['hull-1', 'hull-2'],
       ownedModifiers: ['shield'],
@@ -1967,8 +1978,14 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
       modifiers: ['shield'],
     });
 
-    expect(consumed.weaponLevels).toEqual([{ id: 'spread', level: 2 }]);
-    expect(consumed.powerUpLevels).toEqual([{ id: 'magnet', level: 3 }]);
+    expect(consumed.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+      { id: 'wave_laser', level: 3 },
+    ]);
+    expect(consumed.powerUpLevels).toEqual([
+      { id: 'shield', level: 2 },
+      { id: 'magnet', level: 3 },
+    ]);
   });
 
   it('never removes the free starter kit, even when it was flown', () => {
@@ -2037,6 +2054,57 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     expect(hangar).toEqual(before);
   });
 
+  it.fails('is idempotent over the retained level rows (AC-c)', () => {
+    const hangar = stockedHangar();
+
+    const once = consumeDeployedShip(hangar, FLOWN_SHIP);
+    const twice = consumeDeployedShip(once, FLOWN_SHIP);
+
+    // Spending the same ship twice must not keep pruning a row it already kept.
+    expect(twice.weaponLevels).toEqual([
+      { id: 'wave_laser', level: 3 },
+      { id: 'spread', level: 2 },
+      { id: 'ricochet', level: 2 },
+    ]);
+    expect(twice.powerUpLevels).toEqual([
+      { id: 'shield', level: 2 },
+      { id: 'magnet', level: 3 },
+    ]);
+  });
+
+  it.fails('a re-buy restores the retained level at the unlock price (AC-e)', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+    // Re-buying the spent weapon only restores ownership ...
+    const rebought = buy(consumed, entry('wave_laser'), { ringIndex: 1 });
+
+    expect(rebought.ok).toBe(true);
+    expect(rebought.spent).toEqual(entry('wave_laser').price);
+    expect(rebought.hangar.unlockedWeapons).toContain('wave_laser');
+    // ... and the surviving row means it deploys at the bought level again.
+    expect(
+      currentUpgradeLevel(hangarPermanentLevels(rebought.hangar), 'wave_laser'),
+    ).toBe(3);
+  });
+
+  it.fails('a retained level row never resurrects ownership (AC-f)', () => {
+    const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
+
+    // The row survives the consumption ...
+    expect(consumed.weaponLevels).toContainEqual({ id: 'wave_laser', level: 3 });
+    // ... yet the consumed id stays out of the owned set and every resolution
+    // path: ownership is the sole authority, a row is only a bought level.
+    expect(consumed.unlockedWeapons).not.toContain('wave_laser');
+    expect(resolveActiveLoadout(consumed).startingWeapons).toEqual([]);
+    expect(
+      costToUpgrade(
+        consumed,
+        'wave_laser',
+        hangarPermanentLevels(consumed),
+        { ringIndex: 1 },
+      ),
+    ).toMatchObject({ ok: false, reason: 'unowned' });
+  });
+
   it('ignores unknown/stale ids and never throws on a corrupt save', () => {
     const hangar = stockedHangar();
 
@@ -2057,7 +2125,7 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     ]);
   });
 
-  it('tolerates missing level-row fields entirely (no rows to prune)', () => {
+  it('leaves an old save with no level-row fields entirely unchanged (AC-d)', () => {
     const hangar = hangarWith({
       unlockedHulls: ['hull-1', 'hull-2'],
       unlockedWeapons: ['spread', 'wave_laser'],

@@ -9,8 +9,8 @@
  * the consumed one — and that it deep-equals the game's own pure resolver
  * result for the same payload and inputs.
  *
- * The consumption assertion was authored red under Vitest's `it.fails` by the
- * test-first child AH-0MWL9E7PH001VPG5 and is now a plain `it`: the battle-end
+ * The consumption assertions were authored red under Vitest's `it.fails` by the
+ * test-first child AH-0MWL9E7PH001VPG5 and are now plain `it`s: the battle-end
  * consumption item landed the reducer behind the shared resolver. The deep-equal
  * parity case is a guard that both sides keep sharing one resolver.
  */
@@ -134,6 +134,29 @@ describe('GymHexWar — the capture spends the flown ship (AH-0MWL5PAP2001XYYF)'
     expect(hangar.unlockedHulls).toContain('hull-3');
     expect(hangar.unlockedWeapons).toContain('ricochet');
     expect(hangar.ownedModifiers).toContain('anti_maw_plating');
+  });
+
+  it.fails('keeps the flown weapon’s bought level (ownership only is spent)', async () => {
+    // TEST-FIRST (AH-0MWWGH13W007U49Q): authored red under `it.fails` until
+    // `consumeDeployedShip` stops pruning the consumed ids' level rows
+    // (AH-0MWWGH3FV004AF1O). The gym asserts the same rule as the game through
+    // the shared pure reducer — no divergent copy (docs/GYM_PARITY.md).
+    const scene = await bootHexWar(equippedWar());
+
+    const result = scene.captureHex('target', 'hull-2', zeroSalvage());
+
+    expect(result.ok).toBe(true);
+    // The flown weapon leaves the owned set …
+    expect(scene.getPayload().hangar.unlockedWeapons).not.toContain('wave_laser');
+    // … but its permanent level row survives, level and order preserved.
+    expect(scene.getPayload().hangar.weaponLevels).toEqual([
+      { id: 'wave_laser', level: 3 },
+      { id: 'spread', level: 2 },
+      { id: 'ricochet', level: 2 },
+    ]);
+    expect(scene.getPayload().hangar.powerUpLevels).toEqual([
+      { id: 'shield', level: 2 },
+    ]);
   });
 
   it('deep-equals the game’s pure capture for the same payload and inputs', async () => {
