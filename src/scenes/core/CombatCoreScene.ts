@@ -200,9 +200,11 @@ import {
 } from '../../audio/effects';
 import {
   mineralChimeStep,
+  mineralChimeStepForFill,
   noteMineralCollected as advanceMineralChime,
   resetMineralChimeStreak,
 } from '../../audio/mineralChime';
+import { resolveHullFillMineralChimeEnabled } from '../../core/featureFlags';
 import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
@@ -897,15 +899,30 @@ export class CombatCoreScene<
 
   /**
    * The single shared **player** mineral-pickup dispatcher
-   * (AH-0MWNMRDY60005Z4K).
+   * (AH-0MWNMRDY60005Z4K, AH-0MWW3725H001KFW3).
    *
    * Every player collection path in the game and the gyms calls this exactly
-   * once per collected mineral. It reads the **scene clock** (`this.time.now`,
-   * game time — it pauses with the scene, never wall time), advances the one
-   * shared A-minor escalation state machine and plays the baked chime at the
-   * resulting ladder step. The escalation rule, ladder and reset gap live in
-   * `audio/mineralChime.ts`, so no scene ever re-implements them
-   * (AGENTS.md gym↔game parity).
+   * once per collected mineral, passing the collecting scene's **post-credit**
+   * hold snapshot `{ store, capacity }` — the state *after* the pickup has
+   * been credited, so the mineral that fills the hold sounds the full-hull
+   * note rather than one step behind the HUD. The escalation rule, the fill →
+   * pitch mapping, the ladder and reset gap live in `audio/mineralChime.ts`,
+   * so no scene ever re-implements them (AGENTS.md gym↔game parity).
+   *
+   * The dispatch resolves the persisted `hullFillMineralChime` flag **once per
+   * call** ({@link resolveHullFillMineralChimeEnabled}) and chooses one path:
+   *
+   * - **Flag ON** — plays `mineralChimeStepForFill(fill.store, fill.capacity)`.
+   *   The pitch is derived from the post-credit hold state alone: neither the
+   *   shared streak machine nor its inactivity-gap reset is advanced, and
+   *   nothing is read from the scene or wall clock.
+   * - **Flag OFF** — the legacy streak behaviour is unchanged: reads the
+   *   **scene clock** (`this.time.now`, game time — it pauses with the scene,
+   *   never wall time), advances the one shared A-minor escalation state
+   *   machine and plays the baked chime at the resulting ladder step.
+   *
+   * The snapshot is optional only while the call sites are being migrated
+   * (AH-0MWW377CQ001QWQI): a call without one uses the legacy streak path.
    *
    * **Enemy absorption never calls this** — the feedback is player-only, so a
    * mineral hoovered up by an enemy stays silent.
@@ -913,8 +930,22 @@ export class CombatCoreScene<
    * Defined exactly once here; no scene calls
    * `playMineralCollectChimeSound` directly. The repo-wide guard in
    * `mineralChime.parity.test.ts` enforces both rules.
+   *
+   * @param fill - The collecting scene's post-credit hold snapshot.
    */
-  protected noteMineralCollected(): void {
+  protected noteMineralCollected(fill?: {
+    store: number;
+    capacity: number;
+  }): void {
+    if (resolveHullFillMineralChimeEnabled() && fill) {
+      // Hold-state pitch: no clock read, no streak/gap advance.
+      playMineralCollectChimeSound(
+        mineralChimeStepForFill(fill.store, fill.capacity),
+      );
+      return;
+    }
+
+    // Legacy streak pitch: the only path that reads the scene clock.
     advanceMineralChime(this.time.now);
     playMineralCollectChimeSound(mineralChimeStep());
   }
