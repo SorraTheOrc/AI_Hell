@@ -659,14 +659,17 @@ describe('overshoot filter (AH-0MWJ1680Z001QYV2 audit rejection)', () => {
 });
 
 /**
- * Collection re-tune — opportunistic forward sweep (AH-0MWLCGXGW004KA3J).
+ * Collection — opportunistic forward sweep mechanism (AH-0MWLCGXGW004KA3J).
  *
- * The pass-through bot leaves ~30–45 % of the minerals it flies past on the
- * field. The re-tune lowers the mineral diversion threshold (0.5 -> 0.35) so a
- * small forward cluster earns a diversion and is swept on the way through,
- * while a lone gold dot still does not pull the bot off its combat course.
+ * A lower mineral diversion threshold (0.5 -> 0.35) lets a small forward
+ * cluster earn a diversion and be swept on the way through, while a lone gold
+ * dot still does not pull the bot off its combat course. This pins the
+ * mechanism as a tunable property: the route-through re-tune that would have
+ * shipped the 0.35 default was de-scoped (producer ruling Q1 = (a) on
+ * AH-0MWLCGXGW004KA3J — income is already met via the supply side, so there is
+ * no collection shortfall to correct), so the shipped default stays 0.5.
  */
-describe('collection re-tune — opportunistic mineral sweep (AH-0MWLCGXGW004KA3J)', () => {
+describe('collection — opportunistic mineral sweep mechanism (AH-0MWLCGXGW004KA3J)', () => {
   // Three enemies, no incoming fire: the primary is combat but not urgent, so
   // the diversion gate (payoff vs threshold) is what decides collection.
   const enemyPrimary = (extra: Parameters<typeof makeSnapshot>[0]) =>
@@ -677,8 +680,8 @@ describe('collection re-tune — opportunistic mineral sweep (AH-0MWLCGXGW004KA3
     });
 
   // Four gold dots spaced 12 px apart sit inside `mineralClusterRadius` (120):
-  // summed value 4 / depositValue 10 = payoff 0.4, between the old 0.5
-  // threshold and the re-tuned 0.35.
+  // summed value 4 / depositValue 10 = payoff 0.4, between the shipped 0.5
+  // threshold and the 0.35 the mechanism test exercises.
   const smallCluster = [660, 672, 684, 696].map((x) => mineral(x, 270));
 
   it('still does not divert for a lone gold dot (no over-collection under fire)', () => {
@@ -695,13 +698,4 @@ describe('collection re-tune — opportunistic mineral sweep (AH-0MWLCGXGW004KA3
     brain.decide(enemyPrimary({ minerals: smallCluster }), 0.1);
     expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
   });
-
-  it.fails(
-    'sweeps the small cluster under the shipped default threshold (RED-first: flips to `it` once AH-0MWLLPA1Q0006U2P sets the default to 0.35)',
-    () => {
-      const brain = createCompetentBotBrain({ fallback: null });
-      brain.decide(enemyPrimary({ minerals: smallCluster }), 0.1);
-      expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
-    },
-  );
 });

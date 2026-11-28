@@ -4259,10 +4259,11 @@ the minerals it banks per captured sortie (122.6 / 131.1 on seeds 1–3, 124.2 /
 141.0 on the wider set) are what the field supplies. No economy-side change
 (spawn/drop rate or capture rate) is made here — nothing in the measurement
 indicates a collection-side shortfall to correct. The remaining question, how
-much of the available field the bot's routing actually sweeps up, is owned by
-the route-through collection re-tune (**AH-0MWLLPA1Q0006U2P**) and its review
-(**AH-0MWLCGXGW004KA3J**), which will re-pin this artifact when it lands
-(**AH-0MWLLPAQL003IEXE**). What the ruling *does* record is the consequence for
+much of the available field the bot's routing actually sweeps up, was reviewed
+on **AH-0MWLCGXGW004KA3J**: with income already met and no measured collection
+shortfall, the route-through re-tune (**AH-0MWLLPA1Q0006U2P**) was **de-scoped**
+(producer ruling Q1 = (a), 2026-11-27) and this artifact needs no further
+re-pin. What the ruling *does* record is the consequence for
 the unlock tree: the pace is now very short (2–8 deployments), so any retune of
 prices is a balance decision of its own, never a correction of this measurement.
 

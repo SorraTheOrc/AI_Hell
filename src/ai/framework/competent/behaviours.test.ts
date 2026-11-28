@@ -424,31 +424,19 @@ describe('collect behaviour — overshoot is accepted (AH-0MWJ1680Z001QYV2 audit
   });
 });
 
-describe('collect behaviour — coast-through arrival re-tune (AH-0MWLCGXGW004KA3J)', () => {
-  // The pass-through re-tune widens `collectArrivalRadius` (18 -> 60). At speed
-  // the ship only thrusts while its friction stopping distance fits the gap
-  // `distance - arrivalRadius`; a wider arrival band shrinks that gap, so the
+describe('collect behaviour — coast-through arrival mechanism (collectArrivalRadius tunable)', () => {
+  // A wider `collectArrivalRadius` shrinks the gap `distance - arrivalRadius`
+  // that the forward model must fit its friction stopping distance into, so the
   // bot **coasts through** a pickup instead of thrusting at its centre (no
-  // precision braking). A pickup 70 px ahead at 100 px/s sits between the two:
-  // stopping distance 25 px fits the 52 px gap at radius 18 (thrust) but not
-  // the 10 px gap at radius 60 (coast).
+  // precision braking). This pins the mechanism as a tunable property. The
+  // route-through re-tune that would have shipped a 60 px radius was de-scoped
+  // on AH-0MWLCGXGW004KA3J (producer ruling Q1 = (a): income is already met via
+  // the supply side, so there is no collection shortfall to correct), so the
+  // shipped default stays 18. A pickup 70 px ahead at 100 px/s sits between the
+  // two: stopping distance 25 px fits the 52 px gap at radius 18 (thrust) but
+  // not the 10 px gap at radius 60 (coast).
   const MOVING = { x: 480, y: 270, vx: 100, vy: 0 };
   const AHEAD = mineral(550, 270); // 70 px ahead of (480, 270)
-
-  it.fails(
-    'coasts (no thrust) at a 70 px pickup under the shipped defaults (RED-first: flips to `it` once AH-0MWLLPA1Q0006U2P widens the arrival radius to 60)',
-    () => {
-      const intent = collect.run(
-        context(
-          makeSnapshot({ player: MOVING, minerals: [AHEAD] }),
-          COMPETENT_GOAL_IDS.collectMineral,
-        ),
-      );
-      expect(intent).not.toBeNull();
-      expect(intent!.thrust).toBe(false);
-      expect(intent!.reverse).toBe(false);
-    },
-  );
 
   it('coasts through the same pickup when the arrival radius is 60 (mechanism)', () => {
     const wide = createCompetentBehaviours(
