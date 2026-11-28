@@ -20,9 +20,9 @@
  *
  * **TEST-FIRST (AH-0MWWGH13W007U49Q).** A battle spends ownership only: the
  * pinned permanent level rows survive a consumption on both the win and the loss
- * path. Those cases are authored red under Vitest's `it.fails` until the pruning
- * is withdrawn from `consumeDeployedShip` (AH-0MWWGH3FV004AF1O); a leftover
- * `it.fails` fails the suite, so the flip back to a plain `it` is deliberate.
+ * path. Those cases were authored red under Vitest's `it.fails` and are now
+ * plain `it` cases: the pruning was withdrawn from `consumeDeployedShip`
+ * (AH-0MWWGH3FV004AF1O). A leftover `it.fails` fails the suite.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -139,7 +139,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       expect(hangar.unlockedWeapons).toContain('rapid');
     });
 
-    it.fails('retains every permanent level row (the win spends ownership only)', () => {
+    it('retains every permanent level row (the win spends ownership only)', () => {
       const payload = stockedWar();
 
       const result = resolveHexCapture(payload, {
@@ -246,8 +246,8 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       expect(hangar.unlockedHulls).toContain('hull-3');
       expect(hangar.unlockedWeapons).toContain('ricochet');
       expect(hangar.ownedModifiers).toContain('anti_maw_plating');
-      // Only the flown weapon's level row is removed.
-      expect(rowIds(hangar.weaponLevels)).not.toContain('wave_laser');
+      // Every level row survives — consumption spends ownership only.
+      expect(rowIds(hangar.weaponLevels)).toContain('wave_laser');
       expect(rowIds(hangar.weaponLevels)).toContain('spread');
       expect(rowIds(hangar.weaponLevels)).toContain('ricochet');
       expect(rowIds(hangar.powerUpLevels)).toEqual(
@@ -255,7 +255,7 @@ describe('completing a hex battle consumes the flown ship (AH-0MWL5PAP2001XYYF)'
       );
     });
 
-    it.fails('retains every permanent level row (the loss spends ownership only)', () => {
+    it('retains every permanent level row (the loss spends ownership only)', () => {
       const payload = stockedWar();
 
       const outcome = resolveDeploymentDefeat(payload, {

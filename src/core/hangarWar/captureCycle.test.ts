@@ -633,7 +633,7 @@ describe('resolveDeploymentDefeat — the loss path', () => {
     expect(result.banked.minerals).toBe(0);
   });
 
-  it('spends a bought ship on a loss (hull, weapon, modifier and level rows)', () => {
+  it('spends a bought ship on a loss (ownership only, level rows survive)', () => {
     const payload = boughtShipPayload();
 
     const result = resolveDeploymentDefeat(payload, {
@@ -651,7 +651,10 @@ describe('resolveDeploymentDefeat — the loss path', () => {
       'hardened_plating',
     );
     expect(result.payload.hangar.activeHull).toBe('hull-1');
+    // The flown weapon's bought level row survives — consumption spends
+    // ownership only — while the un-flown spare rows are untouched.
     expect(result.payload.hangar.weaponLevels).toEqual([
+      { id: 'wave_laser', level: 3 },
       { id: 'ricochet', level: 2 },
     ]);
     // The un-flown spare parts and both balances survive.

@@ -1888,12 +1888,11 @@ describe('hangar permanent-level state (AH-0MWI5AG1X0007XZH)', () => {
  * un-flown items and the free starter kit survive, and the hangar resets to the
  * starter kit with an empty loadout.
  *
- * **TEST-FIRST (AH-0MWWGH13W007U49Q).** The retention cases below are authored
- * red under Vitest's `it.fails` (the repo's red-before/green-after convention):
- * `consumeDeployedShip` still prunes the consumed ids' permanent level rows, so
- * every retention case fails until the pruning is withdrawn
- * (AH-0MWWGH3FV004AF1O). A leftover `it.fails` fails the suite, so the flip back
- * to a plain `it` is deliberate.
+ * **TEST-FIRST (AH-0MWWGH13W007U49Q).** The retention cases below were authored
+ * red under Vitest's `it.fails` (the repo's red-before/green-after convention)
+ * and are now plain `it` cases: the pruning was withdrawn from
+ * `consumeDeployedShip` (AH-0MWWGH3FV004AF1O), so a regression that prunes a
+ * retained level row fails here. A leftover `it.fails` fails the suite.
  */
 describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MWL5PAP2001XYYF)', () => {
   /** A fleet with a bought, fully-equipped ship plus un-flown spare parts. */
@@ -1936,7 +1935,7 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     expect(consumed.ownedModifiers).toEqual(['anti_maw_plating']);
   });
 
-  it.fails('retains the flown weapon’s bought level (AC-a)', () => {
+  it('retains the flown weapon’s bought level (AC-a)', () => {
     const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
 
     // The flown weapon's row survives — level and row order preserved — so a
@@ -1954,7 +1953,7 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     ]);
   });
 
-  it.fails('retains both level-row kinds for a consumed id', () => {
+  it('retains both level-row kinds for a consumed id', () => {
     // A ship whose modifier id also has a power-up level row: the retention
     // rule is role-agnostic, so the consumed id keeps **both** kinds.
     const hangar = hangarWith({
@@ -2054,7 +2053,7 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     expect(hangar).toEqual(before);
   });
 
-  it.fails('is idempotent over the retained level rows (AC-c)', () => {
+  it('is idempotent over the retained level rows (AC-c)', () => {
     const hangar = stockedHangar();
 
     const once = consumeDeployedShip(hangar, FLOWN_SHIP);
@@ -2072,7 +2071,7 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     ]);
   });
 
-  it.fails('a re-buy restores the retained level at the unlock price (AC-e)', () => {
+  it('a re-buy restores the retained level at the unlock price (AC-e)', () => {
     const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
     // Re-buying the spent weapon only restores ownership ...
     const rebought = buy(consumed, entry('wave_laser'), { ringIndex: 1 });
@@ -2086,7 +2085,7 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     ).toBe(3);
   });
 
-  it.fails('a retained level row never resurrects ownership (AC-f)', () => {
+  it('a retained level row never resurrects ownership (AC-f)', () => {
     const consumed = consumeDeployedShip(stockedHangar(), FLOWN_SHIP);
 
     // The row survives the consumption ...

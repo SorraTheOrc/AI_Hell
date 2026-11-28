@@ -178,7 +178,7 @@ describe('power-up selection field and persistence (A1, AC4)', () => {
     expect(filtered.activeLoadout.powerUps).toEqual(['bomb']);
   });
 
-  it.fails('keeps the consumption reset well-formed and retains the bought levels', () => {
+  it('keeps the consumption reset well-formed and retains the bought levels', () => {
     const payload = fleet();
     payload.hangar.weaponLevels = [
       { id: 'wave_laser', level: 2 },

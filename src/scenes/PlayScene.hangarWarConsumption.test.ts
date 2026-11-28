@@ -53,7 +53,10 @@ function boughtPayload(): HangarWarPayload {
     { id: 'wave_laser', level: 3 },
     { id: 'ricochet', level: 2 },
   ];
-  payload.hangar.powerUpLevels = [{ id: 'shield', level: 2 }];
+  // A **level-bearing** power-up row (Magnet, not the consumable Shield): the
+  // store's normaliser drops a consumable row, so only a level-bearing kind can
+  // witness the retention rule through a persisted round-trip.
+  payload.hangar.powerUpLevels = [{ id: 'magnet', level: 2 }];
   return payload;
 }
 
@@ -123,7 +126,7 @@ describe('PlayScene — a hex deployment spends its ship (AH-0MWL5PAP2001XYYF)',
     return bootPlay({ demo, hangarWar: deployment });
   }
 
-  it.fails('persists the consumed ship and the retained levels on a winning deployment', async () => {
+  it('persists the consumed ship and the retained levels on a winning deployment', async () => {
     const scene = await bootDeployed();
 
     winMiniBoss(scene);
@@ -145,10 +148,10 @@ describe('PlayScene — a hex deployment spends its ship (AH-0MWL5PAP2001XYYF)',
       { id: 'wave_laser', level: 3 },
       { id: 'ricochet', level: 2 },
     ]);
-    expect(stored.hangar.powerUpLevels).toEqual([{ id: 'shield', level: 2 }]);
+    expect(stored.hangar.powerUpLevels).toEqual([{ id: 'magnet', level: 2 }]);
   });
 
-  it.fails('persists the consumed ship and the retained levels on a lost deployment', async () => {
+  it('persists the consumed ship and the retained levels on a lost deployment', async () => {
     const scene = await bootDeployed();
 
     killPlayer(scene);
@@ -173,7 +176,7 @@ describe('PlayScene — a hex deployment spends its ship (AH-0MWL5PAP2001XYYF)',
       { id: 'wave_laser', level: 3 },
       { id: 'ricochet', level: 2 },
     ]);
-    expect(stored.hangar.powerUpLevels).toEqual([{ id: 'shield', level: 2 }]);
+    expect(stored.hangar.powerUpLevels).toEqual([{ id: 'magnet', level: 2 }]);
   });
 
   it('never overwrites the stored war in demo mode (win path)', async () => {

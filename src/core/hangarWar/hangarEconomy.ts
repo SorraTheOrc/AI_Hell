@@ -1368,11 +1368,13 @@ export function equipLoadout(
  * Spends the exact ship a deployment flew (parent AH-0MWL5PAP2001XYYF).
  *
  * A hex battle is a one-battle consumable sortie: on **win or loss** the flown
- * hull, every starting weapon and every modifier on the active loadout — plus
- * the consumed ids' bought permanent level rows — are removed. Everything the
- * player did **not** fly survives, and the free starter kit (`hull-1` plus
- * `spread`) is never removed, so a battle can never soft-lock the fleet
- * (AH-0MVZJ6V1J001DA9D: an empty loadout is a legal deployment).
+ * hull, every starting weapon and every modifier on the active loadout are
+ * removed from the owned sets. A battle spends **ownership only** — the
+ * consumed ids' bought permanent level rows (`weaponLevels` / `powerUpLevels`)
+ * are retained, so a re-buy comes back at the level the player paid for.
+ * Everything the player did **not** fly survives, and the free starter kit
+ * (`hull-1` plus `spread`) is never removed, so a battle can never soft-lock
+ * the fleet (AH-0MVZJ6V1J001DA9D: an empty loadout is a legal deployment).
  *
  * The hangar is then reset to the starter kit — `activeHull` is the starter
  * hull and `activeLoadout` is empty — so the next deployment uses only the
@@ -1426,23 +1428,8 @@ export function consumeDeployedShip(
   next.unlockedWeapons = next.unlockedWeapons.filter((id) => !weaponIds.has(id));
   next.ownedModifiers = next.ownedModifiers.filter((id) => !modifierIds.has(id));
 
-  // Only the consumed ids lose their bought permanent levels. A row for any
-  // un-flown id — weapon or power-up — survives untouched.
-  const consumedIds = new Set<string>([
-    ...hullIds,
-    ...weaponIds,
-    ...modifierIds,
-  ]);
-  if (next.weaponLevels !== undefined) {
-    next.weaponLevels = next.weaponLevels.filter(
-      (row) => !consumedIds.has(row.id),
-    );
-  }
-  if (next.powerUpLevels !== undefined) {
-    next.powerUpLevels = next.powerUpLevels.filter(
-      (row) => !consumedIds.has(row.id),
-    );
-  }
+  // The bought permanent level rows are deliberately untouched: a battle spends
+  // ownership, never the mineral investment, so a re-buy restores the level.
 
   // The next sortie starts from the free starter kit until the player refits.
   next.activeHull = STARTER_HULL_ID;

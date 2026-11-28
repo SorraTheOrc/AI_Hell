@@ -119,7 +119,10 @@ function boughtWar(): HangarWarPayload {
     { id: 'wave_laser', level: 3 },
     { id: 'ricochet', level: 2 },
   ];
-  war.hangar.powerUpLevels = [{ id: 'shield', level: 2 }];
+  // A **level-bearing** power-up row (Magnet, not the consumable Shield): the
+  // store's normaliser drops a consumable row, so only a level-bearing kind can
+  // witness the retention rule through a persisted round-trip.
+  war.hangar.powerUpLevels = [{ id: 'magnet', level: 2 }];
   return war;
 }
 
@@ -342,7 +345,7 @@ function dismissResults(): void {
     },
   );
 
-  it.fails(
+  it(
     'spends the flown ship when a deployment is lost end to end',
     async () => {
       // Seed a bought ship over the beforeEach starter-only war.
@@ -404,7 +407,7 @@ function dismissResults(): void {
         { id: 'wave_laser', level: 3 },
         { id: 'ricochet', level: 2 },
       ]);
-      expect(stored.hangar.powerUpLevels).toEqual([{ id: 'shield', level: 2 }]);
+      expect(stored.hangar.powerUpLevels).toEqual([{ id: 'magnet', level: 2 }]);
     },
   );
 

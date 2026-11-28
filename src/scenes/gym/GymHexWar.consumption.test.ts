@@ -136,9 +136,9 @@ describe('GymHexWar — the capture spends the flown ship (AH-0MWL5PAP2001XYYF)'
     expect(hangar.ownedModifiers).toContain('anti_maw_plating');
   });
 
-  it.fails('keeps the flown weapon’s bought level (ownership only is spent)', async () => {
-    // TEST-FIRST (AH-0MWWGH13W007U49Q): authored red under `it.fails` until
-    // `consumeDeployedShip` stops pruning the consumed ids' level rows
+  it('keeps the flown weapon’s bought level (ownership only is spent)', async () => {
+    // TEST-FIRST (AH-0MWWGH13W007U49Q): authored red under `it.fails` and now a
+    // plain `it`: the pruning was withdrawn from `consumeDeployedShip`
     // (AH-0MWWGH3FV004AF1O). The gym asserts the same rule as the game through
     // the shared pure reducer — no divergent copy (docs/GYM_PARITY.md).
     const scene = await bootHexWar(equippedWar());
