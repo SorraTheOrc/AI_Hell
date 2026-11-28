@@ -2104,6 +2104,27 @@ describe('consumeDeployedShip — a battle spends exactly the flown ship (AH-0MW
     ).toMatchObject({ ok: false, reason: 'unowned' });
   });
 
+  it('a retained level row adds nothing to player strength (AC-f)', () => {
+    const retained = hangarWith({
+      unlockedHulls: ['hull-1'],
+      unlockedWeapons: ['spread'],
+      ownedModifiers: [],
+      activeHull: 'hull-1',
+      // A stale persisted selection still names the consumed weapon.
+      activeLoadout: { startingWeapons: ['wave_laser'], modifiers: [] },
+      weaponLevels: [{ id: 'wave_laser', level: 3 }],
+    });
+    const baseline: HangarState = { ...retained };
+    delete baseline.weaponLevels;
+
+    // The consumed weapon is selected but not owned, so it is never armed and
+    // the surviving row adds no strength: the metric reads ownership, not the
+    // level rows. Deleting the row changes nothing, and the fleet is left at
+    // the bare starter-kit floor (AH-0MWWGH60O008WG8Y AC-f).
+    expect(resolvePlayerStrength(retained)).toBe(resolvePlayerStrength(baseline));
+    expect(resolvePlayerStrength(retained)).toBe(MINIMUM_PLAYER_STRENGTH);
+  });
+
   it('ignores unknown/stale ids and never throws on a corrupt save', () => {
     const hangar = stockedHangar();
 

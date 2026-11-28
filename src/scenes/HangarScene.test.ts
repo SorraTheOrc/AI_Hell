@@ -282,6 +282,79 @@ describe('hangar screen model (pure)', () => {
     expect(atRingTwo.actionable).toBe(true);
   });
 
+  it('renders a retained level row as a purchase row until the id is bought again (AH-0MWWGH60O008WG8Y)', () => {
+    const payload = clonePayload(VALID_HANGAR_WAR_PAYLOAD);
+    payload.hangar.bankedMinerals = 5_000;
+    payload.hangar.bankedCores = 50;
+    payload.hangar.unlockedHulls = ['hull-1'];
+    payload.hangar.unlockedWeapons = ['spread'];
+    payload.hangar.ownedModifiers = [];
+    payload.hangar.activeHull = 'hull-1';
+    payload.hangar.activeLoadout = { startingWeapons: ['spread'], modifiers: [] };
+    // A consumed weapon keeps its bought level but leaves the owned set.
+    payload.hangar.weaponLevels = [{ id: 'wave_laser', level: 3 }];
+
+    // The surviving row is not ownership: the row stays a plain purchase row,
+    // with no level and no upgrade action to click.
+    const purchase = buildHangarUnlockRows(payload).find(
+      (row) => row.id === 'wave_laser',
+    )!;
+    expect(purchase.state).toBe('buyable');
+    expect(purchase.actionable).toBe(true);
+    expect(purchase.level).toBeNull();
+    expect(purchase.upgradePriceLabel).toBeNull();
+    expect(purchase.actionLabel).toBe('BUY');
+    expect(purchase.label).not.toContain('LV 3/5');
+
+    // Re-buying restores ownership only, which surfaces the retained level and
+    // the priced next-level action on the very next render.
+    payload.hangar.unlockedWeapons = ['spread', 'wave_laser'];
+    const owned = buildHangarUnlockRows(payload).find(
+      (row) => row.id === 'wave_laser',
+    )!;
+    expect(owned.state).toBe('upgradable');
+    expect(owned.actionable).toBe(true);
+    expect(owned.level).toBe(3);
+    expect(owned.maxLevel).toBe(MAX_PERMANENT_LEVEL);
+    expect(owned.actionLabel).toMatch(/^UPGRADE · /);
+    expect(owned.label).toContain('LV 3/5');
+    expect(owned.label).toContain(owned.actionLabel!);
+  });
+
+  it('keeps a retained un-owned weapon out of the suggested buildout row (AH-0MWWGH60O008WG8Y)', () => {
+    const payload: HangarWarPayload = {
+      ...clonePayload(VALID_HANGAR_WAR_PAYLOAD),
+      hangar: {
+        ...clonePayload(VALID_HANGAR_WAR_PAYLOAD).hangar,
+        bankedMinerals: 0,
+        bankedCores: 0,
+        unlockedHulls: ['hull-1'],
+        unlockedWeapons: ['spread'],
+        ownedModifiers: [],
+        activeHull: 'hull-1',
+        activeLoadout: { startingWeapons: [], modifiers: [] },
+        // The highest-level weapon in the hangar is the consumed one. A level
+        // row must not put it in the auto-fit suggestion or the ⚡ row count.
+        weaponLevels: [{ id: 'wave_laser', level: 3 }],
+      },
+      // No target hex keeps the boss matchup neutral.
+      ring: { ringIndex: 1, hexes: [] },
+      pendingAttacks: [],
+    };
+
+    const model = buildHangarScreenModel(payload);
+
+    expect(model.suggestedLoadout.startingWeapons).not.toContain('wave_laser');
+    expect(
+      model.suggestedLoadout.picks.some((pick) => pick.id === 'wave_laser'),
+    ).toBe(false);
+    // The suggestion is the owned weapon alone, and the ⚡ row's count agrees.
+    expect(model.suggestedLoadout.startingWeapons).toEqual(['spread']);
+    expect(model.buildoutRow.label).toBe(
+      '⚡ APPLY SUGGESTED BUILDOUT — 1 weapon',
+    );
+  });
+
   it('lists the deployment selector and only actionable rows in focus order', () => {
     const model = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
 

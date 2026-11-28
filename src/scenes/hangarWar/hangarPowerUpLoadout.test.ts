@@ -209,6 +209,27 @@ describe('power-up selection field and persistence (A1, AC4)', () => {
       { id: 'magnet', level: 1 },
     ]);
   });
+
+  it('retains the power-up row and its documented ownership tolerance (AH-0MWWGH60O008WG8Y)', () => {
+    const payload = fleet();
+    // A power-up row is its own ownership record even without a set entry.
+    payload.hangar.unlockedPowerUps = [];
+    payload.hangar.powerUpLevels = [{ id: 'bomb', level: 2 }];
+
+    // A consumption spends the flown hardware only, so the row survives ...
+    const consumed = consumeDeployedShip(payload.hangar, {
+      hullId: payload.hangar.activeHull,
+      startingWeapons: ['spread'],
+      modifiers: [],
+    });
+    expect(consumed.powerUpLevels).toEqual([{ id: 'bomb', level: 2 }]);
+    // ... and the unchanged tolerance still reads it as installable: retaining
+    // rows widens nothing for weapons, which stay ownership-gated.
+    expect(ownedLevelBearingPowerUpLevels(consumed)).toEqual([
+      { id: 'bomb', level: 2 },
+    ]);
+    expect(resolveActiveLoadout(consumed).powerUps).toEqual(['bomb']);
+  });
 });
 
 describe('deployment grants exactly the selected power-ups (AC2)', () => {

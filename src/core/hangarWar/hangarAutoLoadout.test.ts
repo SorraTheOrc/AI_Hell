@@ -754,3 +754,31 @@ describe('selectAutoLoadout — determinism and idempotence', () => {
     ).toBe(true);
   });
 });
+
+// ── Retention is not ownership (AH-0MWWGH60O008WG8Y) ───────────────
+
+describe('a retained level row is not ownership (AH-0MWWGH60O008WG8Y)', () => {
+  it('never offers a consumed weapon whose level row survives', async () => {
+    const { selectAutoLoadout } = await autoLoadout();
+    const payload = payloadOf({
+      // `wave_laser` is consumed (absent from the owned set) but keeps its
+      // bought level row, making it the highest-level weapon in the hangar.
+      // An ownership-blind selector would auto-fit it; ownership is the sole
+      // authority, so the suggestion must not.
+      weapons: ['spread'],
+      weaponLevels: [
+        { id: 'wave_laser', level: 3 },
+        { id: 'spread', level: 1 },
+      ],
+    });
+
+    const suggestion = selectAutoLoadout(payload, null);
+
+    expect(suggestion.startingWeapons).not.toContain('wave_laser');
+    expect(weaponPicks(suggestion).some((pick) => pick.id === 'wave_laser')).toBe(
+      false,
+    );
+    // The owned weapon is still fitted: the retained row disturbs nothing.
+    expect(suggestion.startingWeapons).toContain('spread');
+  });
+});

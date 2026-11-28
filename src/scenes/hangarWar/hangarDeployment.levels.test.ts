@@ -25,7 +25,14 @@ import Phaser from 'phaser';
 
 import { bootScene } from '../../test/gameHarness';
 import type { HangarWarPayload } from '../../core/hangarWar/types';
-import { MAX_PERMANENT_LEVEL } from '../../core/hangarWar/hangarEconomy';
+import {
+  MAX_PERMANENT_LEVEL,
+  buy,
+  consumeDeployedShip,
+  findHangarEntry,
+  resolveActiveLoadout,
+} from '../../core/hangarWar/hangarEconomy';
+import { HANGAR_CATALOGUE } from '../../data/hangarCatalogue';
 import {
   buyHangarUpgrade,
   createDefaultPayload,
@@ -151,5 +158,91 @@ describe('hangar deployment permanent levels — every purchase is effective (AH
     ]);
     // No temporary stack is opened by a purchase or a deploy grant.
     expect(upgraded.player.getTempPowerUpIds()).toEqual([]);
+  });
+
+  /**
+   * A war that flew a levelled `wave_laser` and lost it: the sortie spends the
+   * weapon (ownership leaves the set) but its bought level row survives.
+   */
+  function lostLevelledLaser(): HangarWarPayload {
+    const payload = createDefaultPayload(11);
+    payload.hangar.bankedMinerals = 5_000;
+    payload.hangar.bankedCores = 20;
+    payload.hangar.unlockedWeapons = ['spread', 'wave_laser'];
+    payload.hangar.weaponLevels = [
+      { id: 'wave_laser', level: 3 },
+      { id: 'spread', level: 1 },
+    ];
+    payload.hangar.activeLoadout = {
+      startingWeapons: ['wave_laser'],
+      modifiers: [],
+    };
+    const consumed = consumeDeployedShip(payload.hangar, {
+      hullId: payload.hangar.activeHull,
+      startingWeapons: ['wave_laser'],
+      modifiers: [],
+    });
+    return { ...payload, hangar: consumed };
+  }
+
+  /** Re-buys `wave_laser` at its catalogue unlock price and re-equips it. */
+  function rebuyLaser(payload: HangarWarPayload): HangarWarPayload {
+    const laser = findHangarEntry('wave_laser', HANGAR_CATALOGUE);
+    if (laser === null) throw new Error('wave_laser is not in the catalogue');
+    const result = buy(
+      payload.hangar,
+      laser,
+      { ringIndex: 1 },
+      { equipOnPurchase: true },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.spent).toEqual(laser.price);
+    return { ...payload, hangar: result.hangar };
+  }
+
+  it('deploys a re-bought weapon at its retained permanent level (AH-0MWWGH60O008WG8Y)', async () => {
+    const payload = rebuyLaser(lostLevelledLaser());
+
+    // Re-buying restored ownership only (the row was already kept), and the
+    // loadout resolves it again.
+    expect(payload.hangar.unlockedWeapons).toContain('wave_laser');
+    expect(resolveActiveLoadout(payload.hangar).startingWeapons).toContain(
+      'wave_laser',
+    );
+
+    // The shipped launch-data seam carries the retained level ...
+    const deployment = buildHangarDeployment(payload);
+    expect(deployment.weaponLevels).toContainEqual({
+      id: 'wave_laser',
+      level: 3,
+    });
+
+    // ... and the real grant path puts it on the run at level 3.
+    const { player } = await deployFresh(payload);
+    expect(
+      player.getWeaponLevels().find((row) => row.id === 'wave_laser')?.level,
+    ).toBe(3);
+  });
+
+  it('never installs a consumed id whose level row survives (AH-0MWWGH60O008WG8Y)', async () => {
+    const payload = lostLevelledLaser();
+    // A stale persisted selection still names the spent weapon.
+    payload.hangar.activeLoadout.startingWeapons = ['wave_laser'];
+
+    // Ownership is the sole authority: the retained row is not installed by
+    // the loadout resolver or the deployment, and the run is never granted it.
+    expect(resolveActiveLoadout(payload.hangar).startingWeapons).not.toContain(
+      'wave_laser',
+    );
+    const deployment = buildHangarDeployment(payload);
+    expect(deployment.startingWeapons).not.toContain('wave_laser');
+    expect(deployment.weaponLevels.some((row) => row.id === 'wave_laser')).toBe(
+      false,
+    );
+
+    const { player } = await deployFresh(payload);
+    expect(player.getWeaponLevels().some((row) => row.id === 'wave_laser')).toBe(
+      false,
+    );
   });
 });
