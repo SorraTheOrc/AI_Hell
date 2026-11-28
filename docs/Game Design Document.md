@@ -3646,6 +3646,12 @@ run, and is carried into the next deployment.
   permanent-grant seam** the hold-full reward and checkpoint resume use, so
   `Player.getWeaponLevels()` / `getPowerUpLevels()` read the bought levels and no
   temporary/timed stack is ever opened.
+- **A one-off investment that survives the sortie.** The buy-to-upgrade ladder
+  is bought once and kept: a completed deployment spends the flown ship's
+  **ownership only**, so a bought level survives a **lost** sortie even though
+  the weapon itself is spent. Re-buying the consumed weapon at its normal
+  unlock price brings it back at the retained level (§ *Spend the flown ship*
+  step 5) — the ladder is never paid for twice.
 - **The captured defender inherits them.** Because the capture snapshot reads
   those same accessors at the victory moment, a hex captured **after** an upgrade
   stores the higher permanent levels: a defender left behind inherits the
@@ -3757,10 +3763,14 @@ write:
    with **no assault at all**, exactly as it always has.
 5. **Spend the flown ship (parent AH-0MWL5PAP2001XYYF, producer Q2 = B).** The
    ship the deployment flew is a **one-battle consumable** on **both** outcomes:
-   its hull (left behind as the defender on a win, destroyed on a loss), every
-   starting weapon and modifier on the active loadout, and those ids' bought
-   permanent `weaponLevels` / `powerUpLevels` rows are removed through the pure
-   `consumeDeployedShip` rule. Every owned item the player **did not fly**
+   its hull (left behind as the defender on a win, destroyed on a loss) and
+   every starting weapon and modifier on the active loadout leave the owned
+   sets through the pure `consumeDeployedShip` rule. A battle spends
+   **ownership only**: those ids' bought permanent `weaponLevels` /
+   `powerUpLevels` rows are **retained**, so the bought levels survive a win or
+   a loss, and a normal-price re-purchase of a consumed id restores it at the
+   retained level (a row is not an owned item — it never resurrects ownership
+   on its own). Every owned item the player **did not fly**
    survives, and the free starter kit (`hull-1` + `spread`) is always owned, so
    a battle can never soft-lock the fleet. The hangar then resets to the starter
    kit — `activeHull` is the starter hull and `activeLoadout` is empty — so an

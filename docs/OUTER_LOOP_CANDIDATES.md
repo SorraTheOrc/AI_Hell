@@ -867,10 +867,12 @@ hangar survives — that is what winning this hell looks like.
   defends each, each hex's **frontier aggression**, and the **ring depth**. A run's
   temporary in-run loadout still dies with the ship (middle-loop semantics
   unchanged), and — unlike B — the **ship that flew a hex battle is a
-  one-battle consumable** (parent AH-0MWL5PAP2001XYYF): its hull, the active
-  starting weapons and modifiers, and their bought permanent levels are spent
-  on **win or loss**, while every un-flown owned item and the free starter kit
-  survive. The hangar itself and the ring still never do.
+  one-battle consumable** (parent AH-0MWL5PAP2001XYYF): its hull and the active
+  starting weapons and modifiers are spent on **win or loss**, while its bought
+  permanent levels are **retained** — a battle spends **ownership only**, so a
+  normal-price re-purchase restores the retained level — and every un-flown
+  owned item and the free starter kit survive. The hangar itself and the ring
+  still never do.
 
 ### States
 

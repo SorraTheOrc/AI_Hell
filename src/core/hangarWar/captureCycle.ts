@@ -59,8 +59,10 @@
  * ## The flown ship is a one-battle consumable
  *
  * A completed deployment — win or loss — spends exactly the ship it flew: the
- * deployed hull, every starting weapon and modifier on the active loadout, and
- * those ids' bought permanent level rows (the pure
+ * deployed hull, every starting weapon and every modifier on the active loadout
+ * are removed from the owned sets, but a battle spends **ownership only**:
+ * those ids' bought permanent level rows (`weaponLevels` / `powerUpLevels`) are
+ * retained, so a normal-price re-purchase restores the retained level (the pure
  * `consumeDeployedShip` rule in `./hangarEconomy`). The hangar then resets to
  * the free starter kit (`activeHull` = starter hull, empty loadout), so the
  * next sortie deploys with only the ship's permanent cannon until the player
@@ -831,7 +833,8 @@ export interface HexCaptureInput {
    * The exact ship this deployment flew (parent AH-0MWL5PAP2001XYYF).
    *
    * On a completed capture the hull, its equipped starting weapons and its
-   * modifiers are spent with their bought permanent levels. Omitted, the
+   * modifiers leave the owned sets, while their bought permanent levels are
+   * retained (a battle spends **ownership only**). Omitted, the
    * hangar's own resolved `activeHull` / `resolveActiveLoadout` is spent — the
    * same ship a deployment would have launched with — so the rule cannot be
    * skipped by a caller that does not pass the field.
@@ -1070,10 +1073,10 @@ export function resolveHexCapture(
   }
 
   // The sortie spent its ship (parent AH-0MWL5PAP2001XYYF, Q2 = B): on a win
-  // the flown hull, its equipped starting weapons and modifiers — and their
-  // bought permanent levels — are removed, after the defender has been derived
-  // from the hull and after the salvage settled (so consumption can never move
-  // a balance). Applying it **before** the grant keeps a newly captured entry
+  // the flown hull, its equipped starting weapons and modifiers leave the owned
+  // sets — their bought permanent levels are retained, because a battle spends
+  // **ownership only** — after the defender has been derived from the hull and
+  // after the salvage settled (so consumption can never move a balance). Applying it **before** the grant keeps a newly captured entry
   // (a reward the player just earned) out of the consumed set.
   next.hangar = consumeDeployedShip(
     next.hangar,
@@ -1200,8 +1203,9 @@ export interface DeploymentDefeatInput {
    * The exact ship this deployment flew (parent AH-0MWL5PAP2001XYYF).
    *
    * A loss spends the same ship a win does: the hull, its equipped starting
-   * weapons and its modifiers with their bought permanent levels. Omitted, the
-   * hangar's own resolved active ship is spent.
+   * weapons and its modifiers leave the owned sets, while their bought
+   * permanent levels are retained (a battle spends **ownership only**). Omitted,
+   * the hangar's own resolved active ship is spent.
    */
   readonly ship?: DeployedShip;
 }
@@ -1232,8 +1236,9 @@ export interface DeploymentDefeatResult {
  * The loss spends the ship the deployment flew (parent AH-0MWL5PAP2001XYYF,
  * producer Q2 = B: a win leaves the hull as the hex's defender and a loss
  * destroys it, but **both** spend it) — the flown hull, its equipped starting
- * weapons and modifiers, and their bought permanent levels. Everything the
- * player did not fly, the free starter kit, the ring and the banked balances
+ * weapons and modifiers leave the owned sets while their bought permanent
+ * levels are retained, because a battle spends **ownership only**. Everything
+ * the player did not fly, the free starter kit, the ring and the banked balances
  * survive; only the salvage earned since this run's last bank is forfeited
  * through the shipped {@link forfeitUnbankedSalvage} rule. Consumption runs
  * after the forfeit settled, so spending the ship can never move a balance.
