@@ -6,8 +6,9 @@
  * Design of record: `docs/OUTER_LOOP_CANDIDATES.md` Candidate D § UI / scene
  * surface. A finished hex deployment must end on one readable summary: the
  * outcome and the run's final score, every reward the capture actually paid,
- * and — on a defeat — what the defending boss was strong and weak against and
- * what the loss cost.
+ * and — on a defeat — what the defending boss was strong and weak against.
+ * (The copy is sentence case throughout; a defeat does not dwell on what was
+ * not claimed.)
  *
  * ## A pure view, never a rule
  *
@@ -20,9 +21,9 @@
  *   `HexCaptureResult` (child of AH-0MVUXCAW0001VUM6) — `bankedDelta`,
  *   `grant`, `specialReward`, `contractBonus`, `cachePayout` — plus the
  *   landing's `winBonusMinerals`;
- * - on a defeat, the strengths/weaknesses/grant come straight from the target
- *   hex's authored `HexRingDefinition`, and the forfeited salvage from the
- *   defence report's own `forfeited` amounts.
+ * - on a defeat, the strengths/weaknesses come straight from the target hex's
+ *   authored `HexRingDefinition` (the record's `forfeited` amounts stay on the
+ *   type for other consumers but are no longer rendered).
  *
  * Nothing is re-derived, computed, mutated or persisted here: a reward field
  * added to the capture cycle later reaches the dialog without a second copy
@@ -32,9 +33,9 @@
  *
  * ## Rows, in draw order
  *
- * The outcome + score row is always first (`VICTORY · SCORE 1200`). A victory
+ * The outcome + score row is always first (`Victory · score 1200`). A victory
  * then draws `salvage`, `grant`, `special`, `contract`, `cache`, `win-bonus`;
- * a defeat draws `strengths`, `weaknesses`, `grant-missed`, `forfeited`.
+ * a defeat draws only `strengths` and `weaknesses`.
  * **A reward that was not paid contributes no row** — a `null`, zero or empty
  * reward is omitted rather than rendered as a zero line, so the dialog never
  * advertises salvage that was not banked.
@@ -55,7 +56,7 @@ import type { HexRingDefinition } from './hexRing';
 import type { SalvageAmounts } from './salvageBanking';
 
 /** The dialog's fixed title. */
-export const SORTIE_RESULT_TITLE = 'SORTIE RESULTS';
+export const SORTIE_RESULT_TITLE = 'Sortie results';
 
 /**
  * The capture-cycle fields the results view reads.
@@ -106,9 +107,7 @@ export type SortieResultRowKey =
   | 'cache'
   | 'win-bonus'
   | 'strengths'
-  | 'weaknesses'
-  | 'grant-missed'
-  | 'forfeited';
+  | 'weaknesses';
 
 /** One rendered dialog row: its kind and the whole line to draw. */
 export interface SortieResultRow {
@@ -137,44 +136,23 @@ function toCount(value: unknown): number {
   return integer < 0 ? 0 : integer;
 }
 
-/** The `<n> CORES` fragment, singular for one core. */
+/** The `<n> core` fragment, singular for one core. */
 function coresText(cores: number): string {
-  return `${cores} CORE${cores === 1 ? '' : 'S'}`;
+  return `${cores} core${cores === 1 ? '' : 's'}`;
 }
 
 /**
- * The `120 MINERALS, 1 CORE` fragment for amounts, zero parts omitted, or `''`
- * when both are zero. `signed` prefixes each part with `+` for amounts that
- * were paid, and leaves it off for amounts that were forfeited.
- */
-function amountsText(
-  amounts: SalvageAmounts | null | undefined,
-  signed: boolean,
-): string {
-  if (!amounts) return '';
-  const parts: string[] = [];
-  const sign = signed ? '+' : '';
-  const minerals = toCount(amounts.minerals);
-  const cores = toCount(amounts.cores);
-  if (minerals > 0) parts.push(`${sign}${minerals} MINERALS`);
-  if (cores > 0) parts.push(`${sign}${coresText(cores)}`);
-  return parts.join(', ');
-}
-
-/**
- * The `+120 MINERALS, +1 CORE` fragment for amounts a capture **paid**, or
- * `''` when nothing was paid (so the caller draws no row).
+ * The `+120 minerals, +1 core` fragment for amounts a capture **paid**, zero
+ * parts omitted, or `''` when nothing was paid (so the caller draws no row).
  */
 function paidAmounts(amounts: SalvageAmounts | null | undefined): string {
-  return amountsText(amounts, true);
-}
-
-/**
- * The `30 MINERALS, 2 CORES` fragment for amounts a loss **forfeited**, or
- * `''` when it forfeited nothing (so the caller draws no row).
- */
-function forfeitedAmounts(amounts: SalvageAmounts | null | undefined): string {
-  return amountsText(amounts, false);
+  if (!amounts) return '';
+  const parts: string[] = [];
+  const minerals = toCount(amounts.minerals);
+  const cores = toCount(amounts.cores);
+  if (minerals > 0) parts.push(`+${minerals} minerals`);
+  if (cores > 0) parts.push(`+${coresText(cores)}`);
+  return parts.join(', ');
 }
 
 /** Every victory row after the outcome, copied from the carried record. */
@@ -185,12 +163,15 @@ function victoryRows(record: SortieResultRecord): SortieResultRow[] {
   if (capture) {
     const salvage = paidAmounts(capture.bankedDelta);
     if (salvage) {
-      rows.push({ key: 'salvage', text: `SALVAGE BANKED: ${salvage}` });
+      rows.push({ key: 'salvage', text: `Salvage banked: ${salvage}` });
     }
 
     const grant = capture.grant;
     if (grant && grant.entryId) {
-      rows.push({ key: 'grant', text: `GRANT CLAIMED: ${grant.entryId}` });
+      rows.push({
+        key: 'grant',
+        text: `Technology recovered: ${grant.entryId}`,
+      });
     }
 
     const special = capture.specialReward;
@@ -199,18 +180,18 @@ function victoryRows(record: SortieResultRecord): SortieResultRow[] {
       // fallback for a reward authored without one.
       const name = special.hull?.name ?? special.hullId;
       if (name) {
-        rows.push({ key: 'special', text: `SPECIAL REWARD: ${name}` });
+        rows.push({ key: 'special', text: `Special reward: ${name}` });
       }
     }
 
     const contract = paidAmounts(capture.contractBonus);
     if (contract) {
-      rows.push({ key: 'contract', text: `CONTRACT BONUS: ${contract}` });
+      rows.push({ key: 'contract', text: `Contract bonus: ${contract}` });
     }
 
     const cache = paidAmounts(capture.cachePayout);
     if (cache) {
-      rows.push({ key: 'cache', text: `CACHE PAYOUT: ${cache}` });
+      rows.push({ key: 'cache', text: `Cache payout: ${cache}` });
     }
   }
 
@@ -218,14 +199,14 @@ function victoryRows(record: SortieResultRecord): SortieResultRow[] {
   if (winBonus > 0) {
     rows.push({
       key: 'win-bonus',
-      text: `WIN BONUS BANKED: +${winBonus} MINERALS`,
+      text: `Win bonus banked: +${winBonus} minerals`,
     });
   }
 
   return rows;
 }
 
-/** Every defeat row after the outcome: boss intel, the missed grant, the loss. */
+/** Every defeat row after the outcome: the defending boss's authored intel. */
 function defeatRows(
   record: SortieResultRecord,
   definitions: readonly HexRingDefinition[],
@@ -240,7 +221,7 @@ function defeatRows(
     if (strengths.length > 0) {
       rows.push({
         key: 'strengths',
-        text: `STRONG AGAINST: ${strengths.join(', ')}`,
+        text: `Strong against: ${strengths.join(', ')}`,
       });
     }
 
@@ -250,21 +231,9 @@ function defeatRows(
     if (weaknesses.length > 0) {
       rows.push({
         key: 'weaknesses',
-        text: `WEAK AGAINST: ${weaknesses.join(', ')}`,
+        text: `Weak against: ${weaknesses.join(', ')}`,
       });
     }
-
-    if (definition.grants) {
-      rows.push({
-        key: 'grant-missed',
-        text: `GRANT NOT CLAIMED: ${definition.grants}`,
-      });
-    }
-  }
-
-  const forfeited = forfeitedAmounts(record.forfeited);
-  if (forfeited) {
-    rows.push({ key: 'forfeited', text: `SALVAGE FORFEITED: ${forfeited}` });
   }
 
   return rows;
@@ -275,8 +244,8 @@ function defeatRows(
  *
  * Pure and total: every figure and every strength/weakness string is copied
  * from `record` or the authored `definitions`, and neither argument is
- * mutated. An unknown target hex, a `null` capture and a forfeit of nothing
- * each simply contribute no row.
+ * mutated. An unknown target hex and a `null` capture each simply contribute
+ * no row.
  *
  * @param record — the finished deployment's own record.
  * @param definitions — the authored hex definitions to read boss intel from;
@@ -288,8 +257,12 @@ export function buildSortieResultView(
   definitions: readonly HexRingDefinition[] = HEX_RING_DEFINITIONS,
 ): SortieResultView {
   const outcome = record.won ? 'VICTORY' : 'DEFEAT';
+  const outcomeLabel = record.won ? 'Victory' : 'Defeat';
   const rows: SortieResultRow[] = [
-    { key: 'outcome', text: `${outcome} · SCORE ${toCount(record.score)}` },
+    {
+      key: 'outcome',
+      text: `${outcomeLabel} · score ${toCount(record.score)}`,
+    },
   ];
 
   if (record.won) {

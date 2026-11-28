@@ -29,7 +29,7 @@
  *   for the player.
  *
  * One confirm input dismisses it: `Enter`, `Space` or a pointer press (either
- * on the `▶ CONTINUE` row or anywhere on the overlay). The dismissal is
+ * on the `▶ Continue` row or anywhere on the overlay). The dismissal is
  * idempotent, so a repeat key, a second click or the demo timer racing the
  * player can never fire `onDismiss` twice.
  *
@@ -54,13 +54,13 @@ import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 export const HEX_COMBAT_RESULT_SCENE_KEY = 'HexCombatResultScene';
 
 /** Heading copy used when neither `title` nor `view.title` is supplied. */
-export const HEX_COMBAT_RESULT_DEFAULT_TITLE = 'SORTIE RESULTS';
+export const HEX_COMBAT_RESULT_DEFAULT_TITLE = 'Sortie results';
 
 /**
  * The single confirm affordance's copy. The row is the pointer target as well
  * as the on-screen instruction ("one confirm to dismiss").
  */
-export const HEX_COMBAT_RESULT_CONFIRM_COPY = '▶ CONTINUE';
+export const HEX_COMBAT_RESULT_CONFIRM_COPY = '▶ Continue';
 
 /** Semi-opaque backdrop: the paused map stays visible behind the dialog. */
 const RESULT_BACKDROP_ALPHA = 0.92;
@@ -184,7 +184,7 @@ export class HexCombatResultScene extends Phaser.Scene {
   private keydownHandler: ((event: KeyboardEvent) => void) | null = null;
   /** The bound scene-level pointer listener (removed on dismissal/shutdown). */
   private pointerdownHandler: (() => void) | null = null;
-  /** The `▶ CONTINUE` row (the explicit pointer target). */
+  /** The `▶ Continue` row (the explicit pointer target). */
   private confirmRow: Phaser.GameObjects.Text | null = null;
   /** Every text object this scene created, so teardown is total. */
   private textObjects: Phaser.GameObjects.Text[] = [];
@@ -351,7 +351,7 @@ export class HexCombatResultScene extends Phaser.Scene {
     return this.origin;
   }
 
-  /** The rendered confirm row copy (e.g. `▶ CONTINUE`), or null before `create`. */
+  /** The rendered confirm row copy (e.g. `▶ Continue`), or null before `create`. */
   getConfirmText(): string | null {
     return this.confirmRow?.text ?? null;
   }

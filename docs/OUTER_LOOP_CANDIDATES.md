@@ -1130,13 +1130,13 @@ trade has to stay live; see *Effort and risk*).
   were attacked, which held, which fell, and what it would take to retake them
   — from the frontier-tick record the finished deployment hands over.
 - A **post-battle results dialog** over the paused map on every deployment
-  landing (parent AH-0MWMFGXD6005WTMN): it names the outcome
-  (`VICTORY`/`DEFEAT`) and the run's final score and, on a victory, itemises
-  every reward that was **actually paid** — salvage banked, any granted
-  weapon/upgrade, any special-mission reward, any contract and/or cache bonus
-  and the banked win bonus, each only when paid; on a defeat it summarises the
-  target hex boss's authored **strengths and weaknesses**, the grant the player
-  did not claim and the unbanked salvage that was **forfeited**. The single
+  landing (parent AH-0MWMFGXD6005WTMN): it names the outcome in sentence case
+  (`Victory`/`Defeat`) and the run's final score and, on a victory, itemises
+  every reward that was **actually paid** — salvage banked, the technology
+  recovered, any special-mission reward, any contract and/or cache bonus and
+  the banked win bonus, each only when paid; on a defeat it summarises only the
+  target hex boss's authored **strengths and weaknesses** (the unclaimed grant
+  and forfeited salvage rows were removed). The single
   source of the dialog text is the pure builder `buildSortieResultView`
   (`src/core/hangarWar/sortieResult.ts`) and the overlay that draws it is
   `HexCombatResultScene` (launch → pause → `onDismiss` → resume, the shipped

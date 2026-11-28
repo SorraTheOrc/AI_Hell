@@ -676,7 +676,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       const map = await landOnMap(scene);
       expect(map.getWinBonusLine()).toBeNull();
       expect(map.getResultsText()).toContain(
-        `WIN BONUS BANKED: +${bonus} MINERALS`,
+        `Win bonus banked: +${bonus} minerals`,
       );
     },
     30_000,
@@ -712,7 +712,7 @@ describe('PlayScene — a hex deployment ends on its mini-boss (AH-0MWCOW3Z90015
       const map = await landOnMap(scene);
       expect(map.getWinBonusLine()).toBeNull();
       expect(map.getResultsText()).toContain(
-        `WIN BONUS BANKED: +${bonus} MINERALS`,
+        `Win bonus banked: +${bonus} minerals`,
       );
     },
     30_000,

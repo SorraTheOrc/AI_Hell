@@ -1509,7 +1509,7 @@ describe('HexMapScene', () => {
    *   `{ view, onDismiss, autoDismissMs }`, where `view` is the pure builder's
    *   output and `autoDismissMs` is the demo dwell only.
    * - One confirm input dismisses it: the `Enter`/`Space` keys and a pointer
-   *   press on the `▶ CONTINUE` row. Dismissal resumes the map, which then
+   *   press on the `▶ Continue` row. Dismissal resumes the map, which then
    *   presents any carried reward and restarts the demo dwell.
    * - In demo/attract mode the dialog auto-dismisses after the shared dwell
    *   (`demoDwellMs`, else `HANGAR_WAR_TRAVERSAL_DWELL_MS`) and the traversal
@@ -1675,13 +1675,13 @@ describe('HexMapScene', () => {
 
         // Its text names the outcome, the score and every paid reward.
         const text = screenText(dialog);
-        expect(text).toContain('SORTIE RESULTS');
-        expect(text).toContain('VICTORY');
-        expect(text).toContain('SCORE 1200');
-        expect(text).toContain('SALVAGE BANKED: +120 MINERALS, +1 CORE');
-        expect(text).toContain('GRANT CLAIMED: hull-2');
-        expect(text).toContain('WIN BONUS BANKED: +250 MINERALS');
-        expect(seams(map).getResultsText?.()).toContain('VICTORY');
+        expect(text).toContain('Sortie results');
+        expect(text).toContain('Victory');
+        expect(text).toContain('score 1200');
+        expect(text).toContain('Salvage banked: +120 minerals, +1 core');
+        expect(text).toContain('Technology recovered: hull-2');
+        expect(text).toContain('Win bonus banked: +250 minerals');
+        expect(seams(map).getResultsText?.()).toContain('Victory');
 
         // The thin run line and the banked win-bonus line are folded into the
         // dialog (parent assumption A1): the landing shows each fact once.
@@ -1717,9 +1717,9 @@ describe('HexMapScene', () => {
         const confirm = dialog.children.list.find(
           (child): child is Phaser.GameObjects.Text =>
             child instanceof Phaser.GameObjects.Text &&
-            child.text.startsWith('▶ CONTINUE'),
+            child.text.startsWith('▶ Continue'),
         );
-        expect(confirm, 'the dialog has a ▶ CONTINUE row').toBeDefined();
+        expect(confirm, 'the dialog has a ▶ Continue row').toBeDefined();
         confirm!.emit('pointerdown');
         await advanceGame(booted!.game, 200);
 
@@ -1741,13 +1741,14 @@ describe('HexMapScene', () => {
         });
 
         const text = screenText(dialog);
-        expect(text).toContain('DEFEAT');
-        expect(text).toContain('SCORE 42');
+        expect(text).toContain('Defeat');
+        expect(text).toContain('score 42');
         // The authored `HEX_RING_DEFINITIONS` row for the target hex.
-        expect(text).toContain('STRONG AGAINST: rapid');
-        expect(text).toContain('WEAK AGAINST: mortar');
-        expect(text).toContain('GRANT NOT CLAIMED: rapid');
-        expect(text).toContain('SALVAGE FORFEITED: 30 MINERALS, 2 CORES');
+        expect(text).toContain('Strong against: rapid');
+        expect(text).toContain('Weak against: mortar');
+        // The unclaimed grant and forfeited salvage rows are gone.
+        expect(text).not.toContain('GRANT NOT CLAIMED');
+        expect(text).not.toContain('SALVAGE FORFEITED');
       },
     );
 
@@ -1828,7 +1829,7 @@ describe('HexMapScene', () => {
       expect(seams(scene).getSortieResult?.() ?? null).toBeNull();
       expect(seams(scene).isResultsVisible?.() ?? false).toBe(false);
       expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(false);
-      expect(screenText(scene)).not.toContain('SORTIE RESULTS');
+      expect(screenText(scene)).not.toContain('Sortie results');
     });
 
     it('goes straight to the map when the results overlay is not registered', async () => {

@@ -47,10 +47,10 @@ class HarnessScene extends Phaser.Scene {
 
 /** The rows a finished victory lands with (the builder's own output shape). */
 const VICTORY_ROWS = [
-  { key: 'outcome', text: 'VICTORY · SCORE 1200' },
-  { key: 'salvage', text: 'SALVAGE BANKED: +120 MINERALS, +1 CORE' },
-  { key: 'grant', text: 'GRANT CLAIMED: hull-2' },
-  { key: 'win-bonus', text: 'WIN BONUS BANKED: +250 MINERALS' },
+  { key: 'outcome', text: 'Victory · score 1200' },
+  { key: 'salvage', text: 'Salvage banked: +120 minerals, +1 core' },
+  { key: 'grant', text: 'Technology recovered: hull-2' },
+  { key: 'win-bonus', text: 'Win bonus banked: +250 minerals' },
 ] as const;
 
 /** Every rendered text child, joined — the dialog's whole on-screen copy. */
@@ -64,14 +64,14 @@ function screenText(scene: Phaser.Scene): string {
     .join('\n');
 }
 
-/** The scene's rendered `▶ CONTINUE` row. */
+/** The scene's rendered `▶ Continue` row. */
 function confirmRow(scene: Phaser.Scene): Phaser.GameObjects.Text {
   const row = scene.children.list.find(
     (child): child is Phaser.GameObjects.Text =>
       child instanceof Phaser.GameObjects.Text &&
       child.text.startsWith(HEX_COMBAT_RESULT_CONFIRM_COPY),
   );
-  if (!row) throw new Error('the dialog has no ▶ CONTINUE row');
+  if (!row) throw new Error('the dialog has no ▶ Continue row');
   return row;
 }
 
@@ -116,23 +116,23 @@ describe('HexCombatResultScene', () => {
   it('renders the heading and every row verbatim, in the order handed over', async () => {
     const scene = await bootDialog({
       origin: 'hex-map',
-      title: 'SORTIE RESULTS',
+      title: 'Sortie results',
       rows: VICTORY_ROWS.map((row) => row.text),
       onDismiss: () => {},
     });
 
-    expect(scene.getTitle()).toBe('SORTIE RESULTS');
+    expect(scene.getTitle()).toBe('Sortie results');
     expect(scene.getRows()).toEqual(VICTORY_ROWS.map((row) => row.text));
     expect(scene.getOrigin()).toBe('hex-map');
 
     const text = screenText(scene);
-    expect(text).toContain('SORTIE RESULTS');
+    expect(text).toContain('Sortie results');
     // Every supplied line is on screen exactly as handed over …
     for (const row of VICTORY_ROWS) {
       expect(text).toContain(row.text);
     }
     // … and in draw order, one labelled line per row.
-    const heading = text.indexOf('SORTIE RESULTS');
+    const heading = text.indexOf('Sortie results');
     const positions = VICTORY_ROWS.map((row) => text.indexOf(row.text));
     expect(heading).toBeLessThan(positions[0]);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
@@ -150,31 +150,31 @@ describe('HexCombatResultScene', () => {
   it('accepts the pure builder view whole (title + ordered rows)', async () => {
     const onDismiss = vi.fn();
     const scene = await bootDialog({
-      view: { title: 'SORTIE RESULTS', outcome: 'VICTORY', rows: VICTORY_ROWS },
+      view: { title: 'Sortie results', outcome: 'VICTORY', rows: VICTORY_ROWS },
       onDismiss,
     });
 
-    expect(scene.getTitle()).toBe('SORTIE RESULTS');
+    expect(scene.getTitle()).toBe('Sortie results');
     expect(scene.getRows()).toEqual(VICTORY_ROWS.map((row) => row.text));
     expect(screenText(scene)).toContain(
-      'SALVAGE BANKED: +120 MINERALS, +1 CORE',
+      'Salvage banked: +120 minerals, +1 core',
     );
     expect(scene.getDismissCallCount()).toBe(0);
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it('falls back to the fixed title when none is supplied', async () => {
-    const scene = await bootDialog({ rows: ['DEFEAT · SCORE 42'] });
+    const scene = await bootDialog({ rows: ['Defeat · score 42'] });
 
-    expect(HEX_COMBAT_RESULT_DEFAULT_TITLE).toBe('SORTIE RESULTS');
+    expect(HEX_COMBAT_RESULT_DEFAULT_TITLE).toBe('Sortie results');
     expect(scene.getTitle()).toBe(HEX_COMBAT_RESULT_DEFAULT_TITLE);
-    expect(screenText(scene)).toContain('DEFEAT · SCORE 42');
+    expect(screenText(scene)).toContain('Defeat · score 42');
   });
 
   it('dismisses from Enter and fires onDismiss exactly once', async () => {
     const onDismiss = vi.fn();
     const scene = await bootDialog({
-      title: 'SORTIE RESULTS',
+      title: 'Sortie results',
       rows: VICTORY_ROWS.map((row) => row.text),
       onDismiss,
     });
@@ -199,7 +199,7 @@ describe('HexCombatResultScene', () => {
 
   it('dismisses from Space', async () => {
     const onDismiss = vi.fn();
-    const scene = await bootDialog({ rows: ['DEFEAT · SCORE 42'], onDismiss });
+    const scene = await bootDialog({ rows: ['Defeat · score 42'], onDismiss });
 
     pressKey(scene, ' ');
     await advanceGame(booted!.game, 100);
@@ -210,7 +210,7 @@ describe('HexCombatResultScene', () => {
 
   it('ignores keys that are not a confirm input', async () => {
     const onDismiss = vi.fn();
-    const scene = await bootDialog({ rows: ['VICTORY · SCORE 10'], onDismiss });
+    const scene = await bootDialog({ rows: ['Victory · score 10'], onDismiss });
 
     for (const key of ['Escape', 'a', 'ArrowDown']) pressKey(scene, key);
     await advanceGame(booted!.game, 200);
@@ -220,7 +220,7 @@ describe('HexCombatResultScene', () => {
     expect(booted!.game.scene.isActive(HEX_COMBAT_RESULT_SCENE_KEY)).toBe(true);
   });
 
-  it('dismisses from a pointer press on the ▶ CONTINUE row', async () => {
+  it('dismisses from a pointer press on the ▶ Continue row', async () => {
     const onDismiss = vi.fn();
     const scene = await bootDialog({
       rows: VICTORY_ROWS.map((row) => row.text),
@@ -270,7 +270,7 @@ describe('HexCombatResultScene', () => {
   it('accepts the map handoff alias autoDismissMs', async () => {
     const onDismiss = vi.fn();
     const scene = await bootDialog({
-      view: { title: 'SORTIE RESULTS', rows: VICTORY_ROWS },
+      view: { title: 'Sortie results', rows: VICTORY_ROWS },
       onDismiss,
       autoDismissMs: 250,
     });
@@ -294,7 +294,7 @@ describe('HexCombatResultScene', () => {
   });
 
   it('closes without a callback when onDismiss is omitted (isolated tests)', async () => {
-    const scene = await bootDialog({ rows: ['VICTORY · SCORE 10'] });
+    const scene = await bootDialog({ rows: ['Victory · score 10'] });
 
     expect(scene.confirm()).toBe(true);
     await advanceGame(booted!.game, 100);

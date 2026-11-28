@@ -162,8 +162,9 @@ above were re-checked against that shipped code by this item.
 A finished deployment lands on the game's `HexMapScene` with a **sortie result**
 (launch data only) and the map presents one results dialog over the paused map:
 the outcome and final score, every reward the capture actually paid, and — on a
-defeat — the target hex's authored strengths/weaknesses, the unclaimed grant and
-the forfeited unbanked salvage. The dialog's title and rows come from the pure
+defeat — only the target hex's authored strengths/weaknesses in sentence case
+(the unclaimed grant and forfeited salvage rows were removed, so the dialog no
+longer dwells on the loss). The dialog's title and rows come from the pure
 builder `buildSortieResultView` (`src/core/hangarWar/sortieResult.ts`) and the
 overlay that draws them is `src/scenes/HexCombatResultScene.ts`; both are
 game-landing surfaces, not gameplay objects. `GymHexWar` is a read-only ring

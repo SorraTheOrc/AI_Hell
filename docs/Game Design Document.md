@@ -3291,7 +3291,7 @@ applies to **both** modes through one seam (AH-0MVUXC118004B4OX):
   spending minerals in-run never lowers the persistent balance.
 - **Death:** a lost run forfeits **only** the salvage earned since its last
   bank; the persistent balance and the ring survive. The forfeited amount is
-  reported for the end-of-run summary, and nothing is written at death.
+  not carried forward, and nothing is written at death.
 
 The banked balance itself is written through the versioned hangar-war store, so
 a defence result can never be persisted without the hangar state it depends on.
@@ -3440,12 +3440,18 @@ same single-overlay contract as `MineralChoiceScene`), with one confirm input
 
 - **On a victory** the dialog states the outcome and the run's final score and
   itemises every reward that was **actually paid** — salvage banked
-  (minerals/cores), any granted weapon/upgrade, any special-mission reward, any
-  contract and/or cache bonus and the banked win bonus — and draws **no** line
-  for a reward that was not paid (never a zero row).
-- **On a defeat** it states the outcome and score, the target hex's authored
-  **strengths** and **weaknesses** and the grant the player did not claim (from
-  `HEX_RING_DEFINITIONS`), and the unbanked salvage that was **forfeited**.
+  (minerals/cores), the technology recovered (a granted weapon/upgrade), any
+  special-mission reward, any contract and/or cache bonus and the banked win
+  bonus — and draws **no** line for a reward that was not paid (never a zero
+  row).
+- **On a defeat** it states the outcome and score and the target hex's authored
+  **strengths** and **weaknesses** (from `HEX_RING_DEFINITIONS`). It does not
+  list the grant the player did not claim or the unbanked salvage that was
+  forfeited; those rows were removed so the screen does not dwell on the loss.
+- **All dialog copy is sentence case** (AH-0MWW5FW4Y009GNBN): the title is
+  `Sortie results`, the outcome row reads `Victory · score N` / `Defeat ·
+  score N`, units stay lower-case (`minerals`, `core`/`cores`), and the confirm
+  affordance is `▶ Continue`.
 - Because the dialog carries the outcome, score and win bonus, the thin
   `RUN: VICTORY|DEFEAT · score N` line and the `WIN BONUS BANKED` line are
   **folded into it** on a deployment landing rather than drawn twice (parent

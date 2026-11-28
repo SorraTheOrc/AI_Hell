@@ -537,10 +537,10 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(map!.getRecord()).not.toBeNull();
     expect(map!.getSortieResult()).not.toBeNull();
     expect(map!.isResultsVisible()).toBe(true);
-    expect(map!.getResultsText()).toContain('VICTORY');
+    expect(map!.getResultsText()).toContain('Victory');
     // A reward this sortie actually paid — never a zero line, so the banked
     // salvage appears only when the run earned some.
-    expect(map!.getResultsText()).toContain('WIN BONUS BANKED');
+    expect(map!.getResultsText()).toContain('Win bonus banked');
     expect(map!.getRunLine()).toBeNull();
     expect(wm.waveNumber).toBe(5);
     expect(scene.getAliveCount()).toBe(0);

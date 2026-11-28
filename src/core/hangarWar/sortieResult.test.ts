@@ -37,7 +37,7 @@
  * }
  *
  * export interface SortieResultView {
- *   readonly title: string;              // 'SORTIE RESULTS'
+ *   readonly title: string;              // 'Sortie results'
  *   readonly outcome: 'VICTORY' | 'DEFEAT';
  *   readonly hexId: string | null;
  *   readonly rows: readonly SortieResultRow[];
@@ -51,9 +51,10 @@
  *
  * **Order.** The outcome + score row is always `rows[0]`. Every later row
  * follows the draw order `salvage`, `grant`, `special`, `contract`, `cache`,
- * `win-bonus` on a victory, and `strengths`, `weaknesses`, `grant-missed`,
- * `forfeited` on a defeat. **No row is emitted for a reward that was not
- * paid** — a `null`/zero reward contributes no line.
+ * `win-bonus` on a victory, and `strengths`, `weaknesses` on a defeat. **No
+ * row is emitted for a reward that was not paid** — a `null`/zero reward
+ * contributes no line. A defeat draws no row for what was not claimed or
+ * forfeited.
  *
  * **No re-derivation.** Every figure is read from the carried record (or, for
  * the defeat intel, from the authored `HEX_RING_DEFINITIONS` row the record's
@@ -118,9 +119,7 @@ type SortieResultRowKey =
   | 'cache'
   | 'win-bonus'
   | 'strengths'
-  | 'weaknesses'
-  | 'grant-missed'
-  | 'forfeited';
+  | 'weaknesses';
 
 /** One rendered row. */
 interface SortieResultRowLike {
@@ -239,12 +238,12 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(winningRecord());
 
-    expect(view.title).toBe('SORTIE RESULTS');
+    expect(view.title).toBe('Sortie results');
     expect(view.outcome).toBe('VICTORY');
     expect(view.hexId).toBe('hex-r2-3');
     expect(view.rows.length).toBeGreaterThan(0);
     expect(view.rows[0].key).toBe('outcome');
-    expect(view.rows[0].text).toBe('VICTORY · SCORE 1200');
+    expect(view.rows[0].text).toBe('Victory · score 1200');
   });
 
   it('itemises every reward that was actually paid, in draw order', async () => {
@@ -261,16 +260,16 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
       'win-bonus',
     ]);
     expect(rowText(view, 'salvage')).toBe(
-      'SALVAGE BANKED: +120 MINERALS, +1 CORE',
+      'Salvage banked: +120 minerals, +1 core',
     );
-    expect(rowText(view, 'grant')).toBe('GRANT CLAIMED: wave_laser');
-    expect(rowText(view, 'special')).toBe('SPECIAL REWARD: Juggernaut Hull');
+    expect(rowText(view, 'grant')).toBe('Technology recovered: wave_laser');
+    expect(rowText(view, 'special')).toBe('Special reward: Juggernaut Hull');
     expect(rowText(view, 'contract')).toBe(
-      'CONTRACT BONUS: +60 MINERALS, +1 CORE',
+      'Contract bonus: +60 minerals, +1 core',
     );
-    expect(rowText(view, 'cache')).toBe('CACHE PAYOUT: +140 MINERALS');
+    expect(rowText(view, 'cache')).toBe('Cache payout: +140 minerals');
     expect(rowText(view, 'win-bonus')).toBe(
-      'WIN BONUS BANKED: +250 MINERALS',
+      'Win bonus banked: +250 minerals',
     );
   });
 
@@ -294,7 +293,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     );
 
     expect(rowKeys(view)).toEqual(['outcome']);
-    expect(view.rows[0].text).toBe('VICTORY · SCORE 1200');
+    expect(view.rows[0].text).toBe('Victory · score 1200');
   });
 
   it('pays the win bonus its own row even with no capture record at all', async () => {
@@ -310,49 +309,37 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     expect(view.hexId).toBeNull();
     expect(rowKeys(view)).toEqual(['outcome', 'win-bonus']);
     expect(rowText(view, 'win-bonus')).toBe(
-      'WIN BONUS BANKED: +250 MINERALS',
+      'Win bonus banked: +250 minerals',
     );
   });
 
   // ── The defeat view ───────────────────────────────────────────────
 
-  it('shows the target hex boss intel, the unclaimed grant and the forfeited salvage', async () => {
+  it('shows the target hex boss intel and no unclaimed grant or forfeited salvage', async () => {
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(losingRecord());
 
-    expect(view.title).toBe('SORTIE RESULTS');
+    expect(view.title).toBe('Sortie results');
     expect(view.outcome).toBe('DEFEAT');
     expect(view.hexId).toBe('hex-r1-3');
     expect(view.rows[0].key).toBe('outcome');
-    expect(view.rows[0].text).toBe('DEFEAT · SCORE 42');
-    expect(rowKeys(view)).toEqual([
-      'outcome',
-      'strengths',
-      'weaknesses',
-      'grant-missed',
-      'forfeited',
-    ]);
+    expect(view.rows[0].text).toBe('Defeat · score 42');
+    expect(rowKeys(view)).toEqual(['outcome', 'strengths', 'weaknesses']);
     // The authored `HEX_RING_DEFINITIONS` row for `hex-r1-3`.
-    expect(rowText(view, 'strengths')).toBe('STRONG AGAINST: rapid');
-    expect(rowText(view, 'weaknesses')).toBe('WEAK AGAINST: mortar');
-    expect(rowText(view, 'grant-missed')).toBe('GRANT NOT CLAIMED: rapid');
-    expect(rowText(view, 'forfeited')).toBe(
-      'SALVAGE FORFEITED: 30 MINERALS, 2 CORES',
-    );
+    expect(rowText(view, 'strengths')).toBe('Strong against: rapid');
+    expect(rowText(view, 'weaknesses')).toBe('Weak against: mortar');
+    // The removed claim/forfeit rows are gone, not merely reworded.
+    expect(rowKeys(view)).not.toContain('grant-missed');
+    expect(rowKeys(view)).not.toContain('forfeited');
   });
 
-  it('omits the forfeited row when the loss forfeited nothing', async () => {
+  it('never draws a forfeited row, whatever the loss forfeited', async () => {
     const { buildSortieResultView } = await sortieResult();
     const view = buildSortieResultView(
       losingRecord({ forfeited: { minerals: 0, cores: 0 } }),
     );
 
-    expect(rowKeys(view)).toEqual([
-      'outcome',
-      'strengths',
-      'weaknesses',
-      'grant-missed',
-    ]);
+    expect(rowKeys(view)).toEqual(['outcome', 'strengths', 'weaknesses']);
   });
 
   it('carries no intel rows for a hex the authored table does not name', async () => {
@@ -363,7 +350,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
 
     expect(view.outcome).toBe('DEFEAT');
     expect(view.hexId).toBe('hex-not-authored');
-    expect(rowKeys(view)).toEqual(['outcome', 'forfeited']);
+    expect(rowKeys(view)).toEqual(['outcome']);
   });
 
   it('copies every authored strength and weakness, in order', async () => {
@@ -377,8 +364,8 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
       },
     ]);
 
-    expect(rowText(view, 'strengths')).toBe('STRONG AGAINST: rapid, arc');
-    expect(rowText(view, 'weaknesses')).toBe('WEAK AGAINST: mortar, nova');
+    expect(rowText(view, 'strengths')).toBe('Strong against: rapid, arc');
+    expect(rowText(view, 'weaknesses')).toBe('Weak against: mortar, nova');
   });
 
   it('invents no intel for an authored hex with no strengths or weaknesses', async () => {
@@ -389,7 +376,7 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
       { ...authored, strengths: [], weaknesses: [], grants: '' },
     ]);
 
-    expect(rowKeys(view)).toEqual(['outcome', 'forfeited']);
+    expect(rowKeys(view)).toEqual(['outcome']);
   });
 
   it('reads the target hex from the injected definitions, never a hard-coded table', async () => {
@@ -405,13 +392,10 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
     ]);
 
     expect(rowText(view, 'strengths')).toBe(
-      'STRONG AGAINST: injected-strength',
+      'Strong against: injected-strength',
     );
     expect(rowText(view, 'weaknesses')).toBe(
-      'WEAK AGAINST: injected-weakness',
-    );
-    expect(rowText(view, 'grant-missed')).toBe(
-      'GRANT NOT CLAIMED: injected-grant',
+      'Weak against: injected-weakness',
     );
   });
 
@@ -550,8 +534,6 @@ describe('sortie results view (test-first contract, AH-0MWMGPPIR009DOKR)', () =>
       'outcome',
       'strengths',
       'weaknesses',
-      'grant-missed',
-      'forfeited',
     ]);
     expect(record).toEqual(losingRecord());
   });

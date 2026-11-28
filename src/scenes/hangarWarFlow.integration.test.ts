@@ -285,7 +285,7 @@ function dismissResults(): void {
       expect(recordOf(landed)).toBeDefined();
       const dialog = resultsDialog();
       expect(dialog?.sys.isActive()).toBe(true);
-      expect(resultsDialog()!.getRows()[0]).toMatch(/^DEFEAT · SCORE \d+$/);
+      expect(resultsDialog()!.getRows()[0]).toMatch(/^Defeat · score \d+$/);
 
       // One confirm dismisses it and the map is a live surface again; the run
       // line and win-bonus line were folded into the dialog (assumption A1).
@@ -510,8 +510,8 @@ function dismissResults(): void {
       expect(dialog?.sys.isActive()).toBe(true);
       expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
       const dialogText = [dialog!.getTitle(), ...dialog!.getRows()].join('\n');
-      expect(dialogText).toContain('SORTIE RESULTS');
-      expect(dialogText).toMatch(/^VICTORY · SCORE \d+$/m);
+      expect(dialogText).toContain('Sortie results');
+      expect(dialogText).toMatch(/^Victory · score \d+$/m);
       expect(dialogText).toMatch(/win bonus banked: \+\d+ minerals/i);
 
       // One confirm resumes the map; the run line and the banked win-bonus
@@ -598,7 +598,7 @@ function dismissResults(): void {
       // The defeat's summary lives in the results dialog, not a run line.
       const dialog = resultsDialog();
       expect(dialog?.sys.isActive()).toBe(true);
-      expect(dialog!.getRows()[0]).toMatch(/^DEFEAT · SCORE \d+$/);
+      expect(dialog!.getRows()[0]).toMatch(/^Defeat · score \d+$/);
       dismissResults();
       until('the resumed map is interactive', () => active(HEX_MAP_SCENE_KEY));
       expect(runLineOf(map)).toBeNull();
@@ -645,16 +645,16 @@ function dismissResults(): void {
         expect(booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY)).toBe(true);
         expect(map.isResultsVisible()).toBe(true);
         const text = dialogText();
-        expect(text).toContain('SORTIE RESULTS');
-        expect(text).toMatch(/^VICTORY · SCORE \d+$/m);
+        expect(text).toContain('Sortie results');
+        expect(text).toMatch(/^Victory · score \d+$/m);
         // The hex's authored grant and the fixed win bonus were both paid, so
         // both have a row…
-        expect(text).toMatch(/GRANT CLAIMED: \S+/);
-        expect(text).toMatch(/WIN BONUS BANKED: \+\d+ MINERALS/);
+        expect(text).toMatch(/Technology recovered: \S+/);
+        expect(text).toMatch(/Win bonus banked: \+\d+ minerals/);
         // …while the salvage this run earned was already banked at the
         // mini-boss checkpoint, so the capture paid no delta and the dialog
-        // draws **no** `SALVAGE BANKED` line rather than a zero row.
-        expect(text).not.toContain('SALVAGE BANKED');
+        // draws **no** salvage line rather than a zero row.
+        expect(text).not.toContain('Salvage banked');
         // The dialog is the builder's rows: the map draws no second copy of the
         // outcome or the win bonus (parent assumption A1).
         expect(runLineOf(map)).toBeNull();
@@ -681,7 +681,7 @@ function dismissResults(): void {
     );
 
     it(
-      'a lost deployment presents the boss intel, the unclaimed grant and the forfeited salvage',
+      'a lost deployment presents the boss intel without the unclaimed grant or forfeited salvage',
       async () => {
         // Target the authored `hex-r1-3` (iron-crusher: strong against `rapid`,
         // weak against `mortar`, grants `rapid`) so the intel rows are exact.
@@ -713,15 +713,15 @@ function dismissResults(): void {
             booted!.game.scene.isPaused(HEX_MAP_SCENE_KEY),
         );
 
-        // The defeat's own summary: outcome + score, the target boss's authored
-        // strengths/weaknesses, the grant the player did not claim and the
-        // unbanked salvage the loss forfeited.
+        // The defeat's own summary: outcome + score and the target boss's
+        // authored strengths/weaknesses. The grant the player did not claim and
+        // the unbanked salvage the loss forfeited are no longer shown.
         const text = dialogText();
-        expect(text).toMatch(/^DEFEAT · SCORE \d+$/m);
-        expect(text).toContain('STRONG AGAINST: rapid');
-        expect(text).toContain('WEAK AGAINST: mortar');
-        expect(text).toContain('GRANT NOT CLAIMED: rapid');
-        expect(text).toMatch(/SALVAGE FORFEITED: 30 MINERALS/);
+        expect(text).toMatch(/^Defeat · score \d+$/m);
+        expect(text).toContain('Strong against: rapid');
+        expect(text).toContain('Weak against: mortar');
+        expect(text).not.toContain('GRANT NOT CLAIMED');
+        expect(text).not.toContain('SALVAGE FORFEITED');
 
         // Dismissing resumes the map; the landed map is interactive.
         dismissResults();
